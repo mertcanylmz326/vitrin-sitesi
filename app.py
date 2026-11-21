@@ -39,7 +39,7 @@ WHATSAPP_NUMBER = os.environ.get("WHATSAPP_NUMBER", "905418007395")
 IBAN_HOLDER = os.environ.get("IBAN_HOLDER", "Mertcan Yılmaz / KOLAY Otomasyon")
 IBAN_BANK = os.environ.get("IBAN_BANK", "Türkiye İş Bankası / Kuveyt Türk")
 IBAN_NUMBER = os.environ.get("IBAN_NUMBER", "TR00 0000 0000 0000 0000 0000 00")
-PLAN_PRICE_FREE = os.environ.get("PLAN_PRICE_FREE", "499 TL / Ay")
+PLAN_PRICE_STARTER = os.environ.get("PLAN_PRICE_STARTER", os.environ.get("PLAN_PRICE_FREE", "499 TL / Ay"))
 PLAN_PRICE_PRO = os.environ.get("PLAN_PRICE_PRO", "999 TL / Ay")
 
 SERVICES_DATA = [
@@ -170,7 +170,7 @@ def init_db():
                         business_name TEXT NOT NULL,
                         owner_email TEXT NOT NULL,
                         password_hash TEXT NOT NULL,
-                        plan TEXT NOT NULL DEFAULT 'free',
+                        plan TEXT NOT NULL DEFAULT 'starter',
                         module_type TEXT NOT NULL DEFAULT 'genel',
                         whatsapp_number TEXT DEFAULT '',
                         payment_note TEXT DEFAULT '',
@@ -185,6 +185,7 @@ def init_db():
                 cur.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS payment_note TEXT DEFAULT '';")
                 cur.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS payment_requested BOOLEAN NOT NULL DEFAULT FALSE;")
                 cur.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS activated_at TIMESTAMP;")
+                cur.execute("UPDATE tenants SET plan = 'starter' WHERE plan = 'free';")
 
                 cur.execute(
                     """
@@ -283,10 +284,11 @@ def get_all_tenants():
             return cur.fetchall()
 
 
-def create_tenant(business_name, owner_email, password, raw_slug="", plan="free", module_type="genel", whatsapp_number=""):
+def create_tenant(business_name, owner_email, password, raw_slug="", plan="starter", module_type="genel", whatsapp_number=""):
     base_slug = slugify(raw_slug or business_name)
     valid_modules = {"genel", "kafe-randevu", "berber-randevu", "masa-qr"}
     mod = module_type if module_type in valid_modules else "genel"
+    chosen_plan = plan if plan in {"starter", "pro"} else "starter"
     with get_db() as conn:
         with conn.cursor() as cur:
             candidate = base_slug
@@ -312,7 +314,7 @@ def create_tenant(business_name, owner_email, password, raw_slug="", plan="free"
                     business_name.strip(),
                     owner_email.strip().lower(),
                     generate_password_hash(password),
-                    plan if plan in {"free", "pro"} else "free",
+                    chosen_plan,
                     mod,
                     whatsapp_number.strip(),
                 ),
@@ -337,7 +339,7 @@ def load_tickets(tenant_id):
             for r in rows:
                 d = dict(r)
                 clean_p = normalize_phone(d.get("phone"))
-                txt = f"Merhaba {d['name']}, {d['business_name'] if 'business_name' in d else ''} talebinizle ilgili donus yapiyorum."
+                txt = f"Merhaba {d['name']}, talebinizle ilgili donus yapiyorum."
                 d["wa_link"] = f"https://wa.me/{clean_p}?text={quote(txt)}" if clean_p else ""
                 result.append(d)
             return result
@@ -453,15 +455,13 @@ INDEX_HTML = """
     .hero p { color: var(--muted); font-size: 1rem; max-width: 630px; margin-bottom: 22px; }
     .hero-actions { display: flex; gap: 12px; flex-wrap: wrap; }
 
-    .btn-primary, .btn-secondary, .btn-wa, .btn-sm, .btn-amber-sm {
+    .btn-primary, .btn-secondary, .btn-wa {
       text-decoration: none; padding: 11px 17px; border-radius: 11px; font-weight: 700; font-size: 0.9rem;
-      display: inline-flex; align-items: center; gap: 8px; cursor: pointer; transition: transform 0.2s ease;
+      display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
     }
     .btn-primary { background: linear-gradient(135deg, var(--accent-bright), var(--accent)); color: #04130d; border: none; }
     .btn-secondary { background: var(--card); color: var(--text); border: 1px solid var(--border); }
     .btn-wa { background: linear-gradient(135deg, #22c55e, #16a34a); color: #052e16; border: none; }
-    .btn-sm { padding: 7px 11px; font-size: 0.8rem; border-radius: 9px; background: rgba(16, 185, 129, 0.14); color: var(--accent-bright); border: 1px solid rgba(16, 185, 129, 0.35); }
-    .btn-amber-sm { padding: 7px 11px; font-size: 0.8rem; border-radius: 9px; background: rgba(245, 158, 11, 0.15); color: #fcd34d; border: 1px solid rgba(245, 158, 11, 0.38); font-weight: 700; }
 
     .hero-panel { background: linear-gradient(160deg, rgba(19, 32, 27, 0.94), rgba(10, 17, 14, 0.94)); border: 1px solid var(--border); border-radius: 20px; padding: 22px; }
     .panel-title { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent-2); margin-bottom: 12px; font-weight: 800; }
@@ -525,7 +525,7 @@ INDEX_HTML = """
         <a href="#hizmetler" class="nav-btn">Modüller</a>
         <a href="#saas-basla" class="nav-btn nav-cta">Hesap Aç &amp; IBAN</a>
         <a href="{{ url_for('superadmin_panel') }}" class="nav-btn">Admin Onay</a>
-        <a href="https://wa.me/{{ wa_number }}?text={{ 'Merhaba KOLAY Otomasyon, IBAN odeme ve sistem hakkinda bilgi almak istiyorum.' | urlencode }}" target="_blank" rel="noopener noreferrer" class="nav-btn nav-wa" aria-label="WhatsApp">
+        <a href="https://wa.me/{{ wa_number }}?text={{ 'Merhaba KOLAY Otomasyon, IBAN odeme ve paketler hakkinda bilgi almak istiyorum.' | urlencode }}" target="_blank" rel="noopener noreferrer" class="nav-btn nav-wa" aria-label="WhatsApp">
           <svg class="wp-icon"><use href="#icon-whatsapp"></use></svg>
           <span>WhatsApp</span>
         </a>
@@ -556,7 +556,7 @@ INDEX_HTML = """
         <aside class="hero-panel">
           <div class="panel-title">Paket &amp; Aktivasyon Akışı</div>
           <ul class="mini-list">
-            <li><span>Standart Paket</span><span class="pill">{{ price_free }}</span></li>
+            <li><span>Starter Paket</span><span class="pill">{{ price_starter }}</span></li>
             <li><span>Pro Paket</span><span class="pill-amber">{{ price_pro }}</span></li>
             <li><span>Ödeme Yöntemi</span><span class="pill">IBAN Havale / FAST</span></li>
             <li><span>Aktivasyon</span><span class="pill">Admin Onayı Sonrası</span></li>
@@ -653,7 +653,7 @@ INDEX_HTML = """
               <div>
                 <label for="plan">Paket Seçimi</label>
                 <select id="plan" name="plan">
-                  <option value="free">Standart — {{ price_free }}</option>
+                  <option value="starter">Starter — {{ price_starter }}</option>
                   <option value="pro">Pro — {{ price_pro }}</option>
                 </select>
               </div>
@@ -797,7 +797,7 @@ TENANT_PENDING_HTML = """
       <div style="font-size:0.86rem;color:#e5e7eb;display:grid;gap:4px;">
         <div><strong>Alıcı:</strong> {{ iban_holder }}</div>
         <div><strong>Banka:</strong> {{ iban_bank }}</div>
-        <div><strong>Paket:</strong> {{ tenant.plan|upper }} ({{ price_pro if tenant.plan == 'pro' else price_free }})</div>
+        <div><strong>Paket:</strong> {{ tenant.plan|upper }} ({{ price_pro if tenant.plan == 'pro' else price_starter }})</div>
       </div>
       <div class="iban">{{ iban_number }}</div>
 
@@ -1105,7 +1105,7 @@ SUPERADMIN_HTML = """
 
           <form method="POST" action="{{ url_for('superadmin_tenant_plan', tenant_id=tn.id) }}" style="display:flex;gap:6px;">
             <select name="plan">
-              <option value="free" {% if tn.plan=='free' %}selected{% endif %}>FREE</option>
+              <option value="starter" {% if tn.plan!='pro' %}selected{% endif %}>STARTER</option>
               <option value="pro" {% if tn.plan=='pro' %}selected{% endif %}>PRO</option>
             </select>
             <button type="submit" class="btn">Plan Kaydet</button>
@@ -1155,7 +1155,7 @@ def index():
         iban_holder=IBAN_HOLDER,
         iban_bank=IBAN_BANK,
         iban_number=IBAN_NUMBER,
-        price_free=PLAN_PRICE_FREE,
+        price_starter=PLAN_PRICE_STARTER,
         price_pro=PLAN_PRICE_PRO,
         created_tenant=created_tenant,
         saas_error=saas_error,
@@ -1169,7 +1169,7 @@ def register_tenant():
     owner_email = request.form.get("owner_email", "").strip()
     whatsapp_number = request.form.get("whatsapp_number", "").strip()
     password = request.form.get("password", "").strip()
-    plan = request.form.get("plan", "free").strip()
+    plan = request.form.get("plan", "starter").strip()
     module_type = request.form.get("module_type", "genel").strip()
 
     if not business_name or not owner_email or len(password) < 4:
@@ -1236,7 +1236,7 @@ def tenant_public(slug):
             iban_holder=IBAN_HOLDER,
             iban_bank=IBAN_BANK,
             iban_number=IBAN_NUMBER,
-            price_free=PLAN_PRICE_FREE,
+            price_starter=PLAN_PRICE_STARTER,
             price_pro=PLAN_PRICE_PRO,
             wa_number=WHATSAPP_NUMBER,
         )
@@ -1295,7 +1295,7 @@ def tenant_panel(slug):
             iban_holder=IBAN_HOLDER,
             iban_bank=IBAN_BANK,
             iban_number=IBAN_NUMBER,
-            price_free=PLAN_PRICE_FREE,
+            price_starter=PLAN_PRICE_STARTER,
             price_pro=PLAN_PRICE_PRO,
             wa_number=WHATSAPP_NUMBER,
         )
@@ -1403,9 +1403,9 @@ def superadmin_suspend_tenant(tenant_id):
 @app.route("/admin/tenant/<int:tenant_id>/plan", methods=["POST"])
 @superadmin_required
 def superadmin_tenant_plan(tenant_id):
-    plan = request.form.get("plan", "free").strip()
-    if plan not in {"free", "pro"}:
-        plan = "free"
+    plan = request.form.get("plan", "starter").strip()
+    if plan not in {"starter", "pro"}:
+        plan = "starter"
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("UPDATE tenants SET plan = %s WHERE id = %s", (plan, tenant_id))
