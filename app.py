@@ -831,16 +831,19 @@ TENANT_PUBLIC_HTML = """
     .btn { text-decoration:none; padding:9px 14px; border-radius:10px; font-weight:700; font-size:0.88rem; border:1px solid rgba(16,185,129,0.28); background:#121d18; color:#34d399; }
     .btn-main { background:linear-gradient(135deg,#34d399,#10b981); color:#04130d; border:none; }
     .card { background:#121d18; border:1px solid rgba(16,185,129,0.22); border-radius:16px; padding:22px; display:grid; gap:14px; }
+    .row-2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
     label { display:block; font-size:0.84rem; color:#d1d5db; margin-bottom:6px; font-weight:600; }
     input, select, textarea { width:100%; padding:10px 12px; border-radius:10px; border:1px solid rgba(16,185,129,0.22); background:#0f1714; color:#f8fafc; }
     .ok { padding:12px 14px; border-radius:10px; background:rgba(16,185,129,0.16); border:1px solid rgba(16,185,129,0.4); color:#a7f3d0; font-weight:600; }
+    .badge { font-size:0.75rem; color:#34d399; background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.28); padding:4px 10px; border-radius:999px; font-weight:700; display:inline-block; margin-bottom:6px; }
+    @media (max-width:720px) { .row-2 { grid-template-columns:1fr; } }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="top">
       <div>
-        <div style="font-size:0.78rem;color:#34d399;font-weight:800;">AKTİF İŞLETME SAYFASI • /i/{{ tenant.slug }}</div>
+        <div class="badge">MODÜL: {{ mod_label }} • /i/{{ tenant.slug }}</div>
         <h1 style="font-size:1.5rem;">{{ tenant.business_name }}</h1>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
@@ -850,22 +853,81 @@ TENANT_PUBLIC_HTML = """
     </div>
 
     {% if sent %}
-    <div class="ok">Talebiniz <strong>{{ tenant.business_name }}</strong> paneline başarıyla kaydedildi!</div>
+    <div class="ok">Kaydınız <strong>{{ tenant.business_name }}</strong> paneline başarıyla iletildi!</div>
     {% endif %}
 
     <form class="card" method="POST">
-      <h2 style="font-size:1.12rem;">Talep / Randevu / Sipariş Bırak</h2>
-      <div><label>Ad Soyad</label><input type="text" name="name" required /></div>
-      <div><label>Telefon</label><input type="text" name="phone" placeholder="05xx xxx xx xx" required /></div>
-      <div>
-        <label>Konu / Hizmet</label>
-        <select name="service">
-          {% for srv in services %}
-          <option value="{{ srv.tag }} - {{ srv.title }}">{{ srv.tag }} — {{ srv.title }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div><label>Mesaj / Not</label><textarea name="message" rows="4" required></textarea></div>
+      <h2 style="font-size:1.14rem;">{{ form_title }}</h2>
+
+      {% if tenant.module_type == 'kafe-randevu' %}
+        <div class="row-2">
+          <div><label>Ad Soyad</label><input type="text" name="name" placeholder="Adınız Soyadınız" required /></div>
+          <div><label>Telefon</label><input type="text" name="phone" placeholder="05xx xxx xx xx" required /></div>
+        </div>
+        <div class="row-2">
+          <div>
+            <label>Kişi Sayısı</label>
+            <select name="guest_count">
+              <option value="2 Kişilik Masa">2 Kişilik Masa</option>
+              <option value="4 Kişilik Masa">4 Kişilik Masa</option>
+              <option value="6 Kişilik Masa">6 Kişilik Masa</option>
+              <option value="8+ Kişilik Grup">8+ Kişilik Grup</option>
+            </select>
+          </div>
+          <div><label>Tercih Edilen Saat / Tarih</label><input type="text" name="slot_time" placeholder="Örn: Bugün 20:30 veya Cuma 19:00" required /></div>
+        </div>
+        <div><label>Masa Tercihi / Özel Not</label><textarea name="message" rows="3" placeholder="Bahçe / cam kenarı veya özel notunuz..." required></textarea></div>
+
+      {% elif tenant.module_type == 'berber-randevu' %}
+        <div class="row-2">
+          <div><label>Ad Soyad</label><input type="text" name="name" placeholder="Adınız Soyadınız" required /></div>
+          <div><label>Telefon</label><input type="text" name="phone" placeholder="05xx xxx xx xx" required /></div>
+        </div>
+        <div class="row-2">
+          <div>
+            <label>Hizmet Seçimi</label>
+            <select name="service">
+              <option value="Saç Kesimi">Saç Kesimi</option>
+              <option value="Saç + Sakal Tıraşı">Saç + Sakal Tıraşı</option>
+              <option value="Sakal Tıraşı & Bakım">Sakal Tıraşı &amp; Bakım</option>
+              <option value="Damat / Özel Bakım">Damat / Özel Bakım</option>
+            </select>
+          </div>
+          <div><label>İstenen Gün ve Saat</label><input type="text" name="slot_time" placeholder="Örn: Yarın 15:30" required /></div>
+        </div>
+        <div><label>Usta Tercihi / Ek Not</label><textarea name="message" rows="3" placeholder="Model veya saat ile ilgili notunuz..." required></textarea></div>
+
+      {% elif tenant.module_type == 'masa-qr' %}
+        <div class="row-2">
+          <div><label>Masa Numarası / Adı</label><input type="text" name="name" placeholder="Örn: Masa 4 veya Bahçe 2" required /></div>
+          <div><label>İletişim / Not Kodu (Opsiyonel)</label><input type="text" name="phone" placeholder="Opsiyonel" /></div>
+        </div>
+        <div>
+          <label>Masa İsteği</label>
+          <select name="service">
+            <option value="Garson Çağır">Garson Çağır</option>
+            <option value="Hesap İste">Hesap İste</option>
+            <option value="Sipariş Notu / İstek">Sipariş Notu / İstek</option>
+          </select>
+        </div>
+        <div><label>Sipariş veya İstek Detayı</label><textarea name="message" rows="3" placeholder="Örn: 2 Türk kahvesi, su veya hesap rica ediyoruz..." required></textarea></div>
+
+      {% else %}
+        <div class="row-2">
+          <div><label>Ad Soyad</label><input type="text" name="name" required /></div>
+          <div><label>Telefon</label><input type="text" name="phone" placeholder="05xx xxx xx xx" required /></div>
+        </div>
+        <div>
+          <label>Konu / Hizmet</label>
+          <select name="service">
+            {% for srv in services %}
+            <option value="{{ srv.tag }} - {{ srv.title }}">{{ srv.tag }} — {{ srv.title }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div><label>Mesaj / Not</label><textarea name="message" rows="4" required></textarea></div>
+      {% endif %}
+
       <button type="submit" class="btn btn-main" style="cursor:pointer;">Gönder</button>
     </form>
   </div>
@@ -1241,17 +1303,61 @@ def tenant_public(slug):
             wa_number=WHATSAPP_NUMBER,
         )
 
+    mod_type = tenant.get("module_type") or "genel"
+    mod_meta = {
+        "kafe-randevu": ("Kafe & Restoran Masa Randevu", "Masa Rezervasyon Talebi"),
+        "berber-randevu": ("Berber & Kuaför Saat Randevu", "Randevu Talebi Oluştur"),
+        "masa-qr": ("Masa QR Sipariş & Garson Çağır", "Masa İsteği Gönder"),
+        "genel": ("Genel Talep Formu", "Talep / Randevu / Sipariş Bırak"),
+    }
+    mod_label, form_title = mod_meta.get(mod_type, mod_meta["genel"])
+
     if request.method == "POST":
         name = request.form.get("name", "").strip()
         phone = request.form.get("phone", "").strip()
-        service = request.form.get("service", "").strip()
-        message = request.form.get("message", "").strip()
+        raw_service = request.form.get("service", "").strip()
+        slot_time = request.form.get("slot_time", "").strip()
+        guest_count = request.form.get("guest_count", "").strip()
+        raw_message = request.form.get("message", "").strip()
+
+        if mod_type == "kafe-randevu":
+            service = f"Masa Randevu ({guest_count or 'Masa'})"
+            parts = []
+            if guest_count:
+                parts.append(f"Kişi: {guest_count}")
+            if slot_time:
+                parts.append(f"Saat: {slot_time}")
+            if raw_message:
+                parts.append(f"Not: {raw_message}")
+            message = " | ".join(parts)
+        elif mod_type == "berber-randevu":
+            service = raw_service or "Salon Randevu"
+            parts = []
+            if slot_time:
+                parts.append(f"Saat: {slot_time}")
+            if raw_message:
+                parts.append(f"Not: {raw_message}")
+            message = " | ".join(parts)
+        elif mod_type == "masa-qr":
+            service = raw_service or "Masa QR İsteği"
+            message = raw_message
+        else:
+            service = raw_service or "Genel Talep"
+            message = raw_message
+
         if name and message:
             add_ticket(tenant["id"], name, phone, service, message)
         return redirect(url_for("tenant_public", slug=slug, sent="1"))
 
     sent = request.args.get("sent") == "1"
-    return render_template_string(TENANT_PUBLIC_HTML, tenant=tenant, services=SERVICES_DATA, sent=sent)
+    return render_template_string(
+        TENANT_PUBLIC_HTML,
+        tenant=tenant,
+        services=SERVICES_DATA,
+        mod_label=mod_label,
+        form_title=form_title,
+        sent=sent,
+    )
 
 
 @app.route("/i/<slug>/login", methods=["GET", "POST"])
