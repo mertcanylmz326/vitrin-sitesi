@@ -1,10 +1,15 @@
 import functools
 import json
 import os
-import sqlite3
+import re
 import uuid
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse
+
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from werkzeug.security import check_password_hash, generate_password_hash
 from flask import (
     Flask,
     abort,
@@ -21,12 +26,16 @@ app.secret_key = os.environ.get("FLASK_SECRET_KEY", "kolay-otomasyon-gizli-anaht
 
 BASE_DIR = Path(__file__).resolve().parent
 IMAGES_DIR = BASE_DIR / "images"
-DB_FILE = BASE_DIR / "tickets.db"
 LEGACY_JSON_FILE = BASE_DIR / "tickets.json"
 
-ADMIN_USERNAME = "rootadmin"
-ADMIN_PASSWORD = "adminroot"
-WHATSAPP_NUMBER = "905418007395"
+DEFAULT_DATABASE_URL = (
+    "postgresql://postgres:kolayvitrinsaas@db.wpthfxzdhwinkamyrpyo.supabase.co:5432/postgres"
+)
+DATABASE_URL = os.environ.get("DATABASE_URL", DEFAULT_DATABASE_URL).strip()
+
+SUPERADMIN_USERNAME = os.environ.get("SUPERADMIN_USERNAME", "rootadmin")
+SUPERADMIN_PASSWORD = os.environ.get("SUPERADMIN_PASSWORD", "adminroot")
+WHATSAPP_NUMBER = os.environ.get("WHATSAPP_NUMBER", "905418007395")
 
 SERVICES_DATA = [
     {
@@ -116,90 +125,227 @@ SERVICES_DATA = [
 ]
 
 
+def slugify(text):
+    tr_map = str.maketrans("çğıöşüÇĞİÖŞÜ", "cgiosuCGIOSU")
+    cleaned = text.translate(tr_map).lower()
+    cleaned = re.sub(r"[^a-z0-9]+", "-", cleaned).strip("-")
+    return cleaned or f"isletme-{uuid.uuid4().hex[:6]}"
+
+
 def get_db():
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row
-    return conn
+    parsed = urlparse(DATABASE_URL)
+    sslmode = "require" if "supabase.co" in (parsed.hostname or "") or "pooler.supabase.com" in (parsed.hostname or "") else "prefer"
+    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor, sslmode=sslmode)
 
 
 def init_db():
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS tenants (
+                        id SERIAL PRIMARY KEY,
+                        slug TEXT UNIQUE NOT NULL,
+                        business_name TEXT NOT NULL,
+                        owner_email TEXT NOT NULL,
+                        password_hash TEXT NOT NULL,
+                        plan TEXT NOT NULL DEFAULT 'free',
+                        whatsapp_number TEXT DEFAULT '',
+                        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+                    );
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS tickets (
+                        id TEXT PRIMARY KEY,
+                        tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
+                        name TEXT NOT NULL,
+                        phone TEXT,
+                        service TEXT,
+                        message TEXT NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'Yeni',
+                        created_at TEXT NOT NULL
+                    );
+                    """
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_tickets_tenant_id ON tickets(tenant_id);")
+
+                cur.execute("SELECT id FROM tenants WHERE slug = %s", ("kolay-vitrin",))
+                default_tenant = cur.fetchone()
+                if not default_tenant:
+                    cur.execute(
+                        """
+                        INSERT INTO tenants (slug, business_name, owner_email, password_hash, plan, whatsapp_number, is_active)
+                        VALUES (%s, %s, %s, %s, %s, %s, TRUE)
+                        RETURNING id
+                        """,
+                        (
+                            "kolay-vitrin",
+                            "KOLAY Otomasyon Ana Vitrin",
+                            "iletisim@kolayotomasyon.local",
+                            generate_password_hash("kolay1234"),
+                            "pro",
+                            WHATSAPP_NUMBER,
+                        ),
+                    )
+                    default_tenant_id = cur.fetchone()["id"]
+                else:
+                    default_tenant_id = default_tenant["id"]
+
+                cur.execute("SELECT COUNT(*) AS cnt FROM tickets")
+                cnt = cur.fetchone()["cnt"]
+                if cnt == 0 and LEGACY_JSON_FILE.exists():
+                    try:
+                        raw = json.loads(LEGACY_JSON_FILE.read_text(encoding="utf-8"))
+                        if isinstance(raw, list):
+                            for item in reversed(raw):
+                                if isinstance(item, dict) and item.get("name") and item.get("message"):
+                                    t_id = str(item.get("id") or uuid.uuid4().hex[:8])
+                                    cur.execute(
+                                        """
+                                        INSERT INTO tickets (id, tenant_id, name, phone, service, message, status, created_at)
+                                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                                        ON CONFLICT (id) DO NOTHING
+                                        """,
+                                        (
+                                            t_id,
+                                            default_tenant_id,
+                                            str(item.get("name", "")).strip(),
+                                            str(item.get("phone", "")).strip(),
+                                            str(item.get("service", "")).strip(),
+                                            str(item.get("message", "")).strip(),
+                                            str(item.get("status") or "Yeni").strip(),
+                                            str(item.get("created_at") or datetime.now().strftime("%d.%m.%Y %H:%M")).strip(),
+                                        ),
+                                    )
+                    except Exception:
+                        pass
+    except Exception as exc:
+        app.logger.error("Veritabani baslatma hatasi: %s", exc)
+
+
+def get_tenant_by_slug(slug):
     with get_db() as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS tickets (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                phone TEXT,
-                service TEXT,
-                message TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'Yeni',
-                created_at TEXT NOT NULL
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM tenants WHERE slug = %s", (slug,))
+            return cur.fetchone()
+
+
+def get_all_tenants():
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT t.*, COUNT(tk.id) AS ticket_count
+                FROM tenants t
+                LEFT JOIN tickets tk ON tk.tenant_id = t.id
+                GROUP BY t.id
+                ORDER BY t.id DESC
+                """
             )
-            """
-        )
-        count = conn.execute("SELECT COUNT(*) AS cnt FROM tickets").fetchone()["cnt"]
-        if count == 0 and LEGACY_JSON_FILE.exists():
-            try:
-                raw = json.loads(LEGACY_JSON_FILE.read_text(encoding="utf-8"))
-                if isinstance(raw, list):
-                    for item in reversed(raw):
-                        if isinstance(item, dict) and item.get("name") and item.get("message"):
-                            t_id = str(item.get("id") or uuid.uuid4().hex[:8])
-                            conn.execute(
-                                """
-                                INSERT OR IGNORE INTO tickets (id, name, phone, service, message, status, created_at)
-                                VALUES (?, ?, ?, ?, ?, ?, ?)
-                                """,
-                                (
-                                    t_id,
-                                    str(item.get("name", "")).strip(),
-                                    str(item.get("phone", "")).strip(),
-                                    str(item.get("service", "")).strip(),
-                                    str(item.get("message", "")).strip(),
-                                    str(item.get("status") or "Yeni").strip(),
-                                    str(item.get("created_at") or datetime.now().strftime("%d.%m.%Y %H:%M")).strip(),
-                                ),
-                            )
-            except Exception:
-                pass
+            return cur.fetchall()
 
 
-def load_tickets():
+def create_tenant(business_name, owner_email, password, raw_slug="", plan="free", whatsapp_number=""):
+    base_slug = slugify(raw_slug or business_name)
     with get_db() as conn:
-        rows = conn.execute(
-            "SELECT id, name, phone, service, message, status, created_at FROM tickets ORDER BY rowid DESC"
-        ).fetchall()
-        return [dict(r) for r in rows]
+        with conn.cursor() as cur:
+            candidate = base_slug
+            suffix = 1
+            while True:
+                cur.execute("SELECT id FROM tenants WHERE slug = %s", (candidate,))
+                if not cur.fetchone():
+                    break
+                suffix += 1
+                candidate = f"{base_slug}-{suffix}"
+
+            cur.execute(
+                """
+                INSERT INTO tenants (slug, business_name, owner_email, password_hash, plan, whatsapp_number, is_active)
+                VALUES (%s, %s, %s, %s, %s, %s, TRUE)
+                RETURNING *
+                """,
+                (
+                    candidate,
+                    business_name.strip(),
+                    owner_email.strip().lower(),
+                    generate_password_hash(password),
+                    plan if plan in {"free", "pro"} else "free",
+                    whatsapp_number.strip(),
+                ),
+            )
+            return cur.fetchone()
 
 
-def add_ticket(name, phone, service, message):
+def load_tickets(tenant_id):
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, tenant_id, name, phone, service, message, status, created_at
+                FROM tickets
+                WHERE tenant_id = %s
+                ORDER BY created_at DESC, id DESC
+                """,
+                (tenant_id,),
+            )
+            return cur.fetchall()
+
+
+def add_ticket(tenant_id, name, phone, service, message):
     ticket_id = uuid.uuid4().hex[:8]
     created_at = datetime.now().strftime("%d.%m.%Y %H:%M")
     with get_db() as conn:
-        conn.execute(
-            """
-            INSERT INTO tickets (id, name, phone, service, message, status, created_at)
-            VALUES (?, ?, ?, ?, ?, 'Yeni', ?)
-            """,
-            (ticket_id, name, phone, service, message, created_at),
-        )
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO tickets (id, tenant_id, name, phone, service, message, status, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, 'Yeni', %s)
+                """,
+                (ticket_id, tenant_id, name, phone, service, message, created_at),
+            )
 
 
-def update_ticket_status(ticket_id, new_status):
+def update_ticket_status(tenant_id, ticket_id, new_status):
     with get_db() as conn:
-        conn.execute("UPDATE tickets SET status = ? WHERE id = ?", (new_status, ticket_id))
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE tickets SET status = %s WHERE id = %s AND tenant_id = %s",
+                (new_status, ticket_id, tenant_id),
+            )
 
 
-def delete_ticket_by_id(ticket_id):
+def delete_ticket_by_id(tenant_id, ticket_id):
     with get_db() as conn:
-        conn.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM tickets WHERE id = %s AND tenant_id = %s",
+                (ticket_id, tenant_id),
+            )
 
 
-def login_required(view_func):
+def tenant_login_required(view_func):
+    @functools.wraps(view_func)
+    def wrapped(slug, *args, **kwargs):
+        tenant = get_tenant_by_slug(slug)
+        if not tenant:
+            abort(404)
+        authed_slugs = session.get("tenant_auth_slugs", [])
+        if slug not in authed_slugs:
+            return redirect(url_for("tenant_login", slug=slug, next=request.path))
+        return view_func(slug, *args, **kwargs)
+
+    return wrapped
+
+
+def superadmin_required(view_func):
     @functools.wraps(view_func)
     def wrapped(*args, **kwargs):
-        if not session.get("panel_auth"):
-            return redirect(url_for("login", next=request.path))
+        if not session.get("superadmin_auth"):
+            return redirect(url_for("superadmin_login", next=request.path))
         return view_func(*args, **kwargs)
 
     return wrapped
@@ -207,13 +353,21 @@ def login_required(view_func):
 
 init_db()
 
+COMMON_WP_SVG = """
+<svg style="display:none;" aria-hidden="true">
+  <symbol id="icon-whatsapp" viewBox="0 0 24 24">
+    <path fill="currentColor" d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2.05 22l5.25-1.38c1.45.79 3.08 1.21 4.74 1.21 5.46 0 9.91-4.45 9.91-9.91S17.5 2 12.04 2zm5.82 14.05c-.24.68-1.41 1.3-1.95 1.38-.5.08-1.14.11-1.84-.11-.42-.13-.97-.31-1.67-.61-2.94-1.27-4.86-4.23-5.01-4.43-.15-.2-1.19-1.58-1.19-3.02 0-1.44.75-2.15 1.02-2.44.27-.29.59-.37.79-.37.2 0 .4.01.57.01.18 0 .43-.07.67.51.24.59.83 2.03.9 2.18.07.15.12.32.02.52-.1.2-.15.32-.3.5-.15.17-.31.39-.45.52-.15.15-.3.31-.13.61.17.3.77 1.27 1.65 2.06 1.14 1.02 2.1 1.34 2.4 1.49.3.15.48.12.66-.07.18-.2.76-.89.96-1.19.2-.3.41-.25.69-.15.28.1 1.78.84 2.08.99.3.15.5.22.58.35.07.12.07.72-.17 1.4z"/>
+  </symbol>
+</svg>
+"""
+
 INDEX_HTML = """
 <!DOCTYPE html>
 <html lang="tr">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>KOLAY Otomasyon ve Web Sistemleri</title>
+  <title>KOLAY Otomasyon — Mikro-SaaS &amp; Web Sistemleri</title>
   <style>
     :root {
       --bg: #080d0b;
@@ -225,7 +379,6 @@ INDEX_HTML = """
       --accent: #10b981;
       --accent-bright: #34d399;
       --accent-2: #f59e0b;
-      --wa: #22c55e;
       --border: rgba(16, 185, 129, 0.2);
       --glow: rgba(16, 185, 129, 0.18);
     }
@@ -237,9 +390,7 @@ INDEX_HTML = """
       font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
 
-    html {
-      scroll-behavior: smooth;
-    }
+    html { scroll-behavior: smooth; }
 
     body {
       background:
@@ -251,1151 +402,199 @@ INDEX_HTML = """
       overflow-x: hidden;
     }
 
-    .container {
-      max-width: 1180px;
-      margin: 0 auto;
-      padding: 0 22px;
-    }
-
-    .wp-icon {
-      width: 18px;
-      height: 18px;
-      flex-shrink: 0;
-      display: inline-block;
-    }
-
-    .wp-icon-lg {
-      width: 24px;
-      height: 24px;
-      flex-shrink: 0;
-      display: inline-block;
-    }
+    .container { max-width: 1180px; margin: 0 auto; padding: 0 22px; }
+    .wp-icon { width: 18px; height: 18px; flex-shrink: 0; display: inline-block; }
 
     .navbar {
-      position: sticky;
-      top: 0;
-      z-index: 40;
+      position: sticky; top: 0; z-index: 40;
       backdrop-filter: blur(14px);
       background: rgba(8, 13, 11, 0.84);
       border-bottom: 1px solid var(--border);
     }
 
     .nav-inner {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      min-height: 72px;
-      padding: 10px 0;
-      gap: 16px;
-      flex-wrap: wrap;
+      display: flex; align-items: center; justify-content: space-between;
+      min-height: 72px; padding: 10px 0; gap: 16px; flex-wrap: wrap;
     }
 
     .brand {
-      display: inline-flex;
-      align-items: center;
-      gap: 11px;
-      font-weight: 800;
-      font-size: 1.04rem;
-      letter-spacing: 0.2px;
-      color: var(--text);
-      text-decoration: none;
+      display: inline-flex; align-items: center; gap: 11px;
+      font-weight: 800; font-size: 1.04rem; color: var(--text); text-decoration: none;
     }
 
-    .brand-logo-img {
-      height: 40px;
-      width: auto;
-      max-width: 58px;
-      object-fit: contain;
-      border-radius: 10px;
-      display: block;
-    }
-
+    .brand-logo-img { height: 40px; width: auto; max-width: 58px; object-fit: contain; border-radius: 10px; display: block; }
     .brand-badge {
-      width: 32px;
-      height: 32px;
-      border-radius: 10px;
-      display: grid;
-      place-items: center;
-      font-weight: 900;
-      font-size: 0.95rem;
-      color: #04130d;
+      width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center;
+      font-weight: 900; font-size: 0.95rem; color: #04130d;
       background: linear-gradient(135deg, var(--accent-bright), var(--accent-2));
-      box-shadow: 0 0 18px rgba(16, 185, 129, 0.35);
     }
+    .brand-text small { display: block; font-size: 0.72rem; font-weight: 600; color: var(--accent-bright); }
 
-    .brand-text small {
-      display: block;
-      font-size: 0.72rem;
-      font-weight: 600;
-      color: var(--accent-bright);
-      letter-spacing: 0.4px;
-    }
-
-    .nav-links {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      flex-wrap: wrap;
-    }
-
+    .nav-links { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .nav-btn {
-      color: var(--muted);
-      text-decoration: none;
-      font-size: 0.92rem;
-      font-weight: 600;
-      padding: 9px 15px;
-      border-radius: 10px;
-      border: 1px solid transparent;
-      transition: all 0.24s ease;
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
+      color: var(--muted); text-decoration: none; font-size: 0.9rem; font-weight: 600;
+      padding: 8px 14px; border-radius: 10px; border: 1px solid transparent;
+      transition: all 0.2s ease; display: inline-flex; align-items: center; gap: 6px;
     }
-
-    .nav-btn:hover,
-    .nav-btn.active {
-      color: var(--text);
-      background: rgba(16, 185, 129, 0.12);
-      border-color: rgba(16, 185, 129, 0.32);
-      transform: translateY(-1px);
+    .nav-btn:hover, .nav-btn.active {
+      color: var(--text); background: rgba(16, 185, 129, 0.12); border-color: rgba(16, 185, 129, 0.32);
     }
+    .nav-cta { color: #04130d; background: linear-gradient(135deg, var(--accent-bright), var(--accent)); font-weight: 800; }
+    .nav-wa { color: #dcfce7; background: rgba(34, 197, 94, 0.16); border: 1px solid rgba(34, 197, 94, 0.42); font-weight: 700; }
 
-    .nav-cta {
-      color: #04130d;
-      background: linear-gradient(135deg, var(--accent-bright), var(--accent));
-      font-weight: 800;
-    }
+    .reveal { opacity: 0; transform: translateY(18px); transition: opacity 0.6s ease, transform 0.6s ease; }
+    .reveal.visible { opacity: 1; transform: translateY(0); }
 
-    .nav-cta:hover {
-      color: #04130d;
-      box-shadow: 0 8px 24px rgba(16, 185, 129, 0.3);
-    }
-
-    .nav-wa {
-      color: #dcfce7;
-      background: rgba(34, 197, 94, 0.16);
-      border: 1px solid rgba(34, 197, 94, 0.42);
-      font-weight: 700;
-    }
-
-    .nav-wa:hover {
-      color: #ffffff;
-      background: rgba(34, 197, 94, 0.28);
-      border-color: rgba(34, 197, 94, 0.68);
-      box-shadow: 0 8px 22px rgba(34, 197, 94, 0.22);
-    }
-
-    .reveal {
-      opacity: 0;
-      transform: translateY(20px);
-      transition: opacity 0.65s cubic-bezier(0.22, 1, 0.36, 1), transform 0.65s cubic-bezier(0.22, 1, 0.36, 1);
-    }
-
-    .reveal.visible {
-      opacity: 1;
-      transform: translateY(0);
-    }
-
-    .hero {
-      padding: 68px 0 46px;
-      display: grid;
-      grid-template-columns: 1.25fr 0.75fr;
-      gap: 28px;
-      align-items: center;
-    }
-
+    .hero { padding: 62px 0 42px; display: grid; grid-template-columns: 1.25fr 0.75fr; gap: 28px; align-items: center; }
     .badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 6px 14px;
-      border-radius: 999px;
-      font-size: 0.82rem;
-      font-weight: 700;
-      color: var(--accent-bright);
-      background: rgba(16, 185, 129, 0.12);
-      border: 1px solid rgba(16, 185, 129, 0.28);
-      margin-bottom: 18px;
+      display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px; border-radius: 999px;
+      font-size: 0.82rem; font-weight: 700; color: var(--accent-bright);
+      background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.28); margin-bottom: 16px;
     }
+    .hero h1 { font-size: clamp(2rem, 4.2vw, 3.15rem); line-height: 1.14; margin-bottom: 16px; }
+    .hero h1 span { background: linear-gradient(135deg, var(--accent-bright), var(--accent-2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .hero p { color: var(--muted); font-size: 1.02rem; max-width: 630px; margin-bottom: 24px; }
+    .hero-actions { display: flex; gap: 12px; flex-wrap: wrap; }
 
-    .hero h1 {
-      font-size: clamp(2.05rem, 4.3vw, 3.25rem);
-      line-height: 1.14;
-      letter-spacing: -0.02em;
-      margin-bottom: 18px;
+    .btn-primary, .btn-secondary, .btn-wa, .btn-sm, .btn-amber-sm {
+      text-decoration: none; padding: 11px 18px; border-radius: 11px; font-weight: 700; font-size: 0.9rem;
+      transition: transform 0.2s ease, box-shadow 0.2s ease; display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
     }
-
-    .hero h1 span {
-      background: linear-gradient(135deg, var(--accent-bright), var(--accent-2));
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-    }
-
-    .hero p {
-      color: var(--muted);
-      font-size: 1.03rem;
-      max-width: 630px;
-      margin-bottom: 26px;
-    }
-
-    .hero-actions {
-      display: flex;
-      gap: 12px;
-      flex-wrap: wrap;
-    }
-
-    .btn-primary,
-    .btn-secondary,
-    .btn-wa,
-    .btn-sm {
-      text-decoration: none;
-      padding: 12px 19px;
-      border-radius: 11px;
-      font-weight: 700;
-      font-size: 0.92rem;
-      transition: transform 0.22s ease, box-shadow 0.22s ease, background 0.22s ease;
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      cursor: pointer;
-    }
-
-    .btn-primary {
-      background: linear-gradient(135deg, var(--accent-bright), var(--accent));
-      color: #04130d;
-      border: none;
-      box-shadow: 0 10px 26px rgba(16, 185, 129, 0.22);
-    }
-
-    .btn-primary:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 14px 30px rgba(16, 185, 129, 0.34);
-    }
-
-    .btn-secondary {
-      background: var(--card);
-      color: var(--text);
-      border: 1px solid var(--border);
-    }
-
-    .btn-secondary:hover {
-      transform: translateY(-2px);
-      background: var(--card-hover);
-      border-color: rgba(16, 185, 129, 0.42);
-    }
-
-    .btn-wa {
-      background: linear-gradient(135deg, #22c55e, #16a34a);
-      color: #052e16;
-      border: none;
-      box-shadow: 0 10px 24px rgba(34, 197, 94, 0.24);
-    }
-
-    .btn-wa:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 14px 28px rgba(34, 197, 94, 0.36);
-    }
-
-    .btn-sm {
-      padding: 8px 12px;
-      font-size: 0.8rem;
-      border-radius: 9px;
-      background: rgba(16, 185, 129, 0.14);
-      color: var(--accent-bright);
-      border: 1px solid rgba(16, 185, 129, 0.35);
-    }
-
-    .btn-sm:hover {
-      background: rgba(16, 185, 129, 0.24);
-    }
-
-    .btn-amber-sm {
-      padding: 8px 12px;
-      font-size: 0.8rem;
-      border-radius: 9px;
-      background: rgba(245, 158, 11, 0.15);
-      color: #fcd34d;
-      border: 1px solid rgba(245, 158, 11, 0.38);
-      font-weight: 700;
-      cursor: pointer;
-    }
-
-    .btn-amber-sm:hover {
-      background: rgba(245, 158, 11, 0.25);
-    }
+    .btn-primary { background: linear-gradient(135deg, var(--accent-bright), var(--accent)); color: #04130d; border: none; }
+    .btn-secondary { background: var(--card); color: var(--text); border: 1px solid var(--border); }
+    .btn-wa { background: linear-gradient(135deg, #22c55e, #16a34a); color: #052e16; border: none; }
+    .btn-sm { padding: 8px 12px; font-size: 0.8rem; border-radius: 9px; background: rgba(16, 185, 129, 0.14); color: var(--accent-bright); border: 1px solid rgba(16, 185, 129, 0.35); }
+    .btn-amber-sm { padding: 8px 12px; font-size: 0.8rem; border-radius: 9px; background: rgba(245, 158, 11, 0.15); color: #fcd34d; border: 1px solid rgba(245, 158, 11, 0.38); font-weight: 700; }
 
     .hero-panel {
       background: linear-gradient(160deg, rgba(19, 32, 27, 0.94), rgba(10, 17, 14, 0.94));
-      border: 1px solid var(--border);
-      border-radius: 20px;
-      padding: 24px;
-      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.42);
-      animation: floatCard 5s ease-in-out infinite;
+      border: 1px solid var(--border); border-radius: 20px; padding: 22px;
     }
-
-    @keyframes floatCard {
-      0%, 100% { transform: translateY(0px); }
-      50% { transform: translateY(-6px); }
-    }
-
-    .panel-title {
-      font-size: 0.82rem;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--accent-2);
-      margin-bottom: 14px;
-      font-weight: 800;
-    }
-
-    .mini-list {
-      list-style: none;
-      display: grid;
-      gap: 10px;
-    }
-
+    .panel-title { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent-2); margin-bottom: 12px; font-weight: 800; }
+    .mini-list { list-style: none; display: grid; gap: 10px; }
     .mini-list li {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 11px 14px;
-      border-radius: 12px;
-      background: rgba(8, 13, 11, 0.65);
-      border: 1px solid rgba(16, 185, 129, 0.14);
-      font-size: 0.91rem;
-      gap: 8px;
+      display: flex; justify-content: space-between; align-items: center; padding: 10px 13px; border-radius: 12px;
+      background: rgba(8, 13, 11, 0.65); border: 1px solid rgba(16, 185, 129, 0.14); font-size: 0.9rem; gap: 8px;
     }
 
-    .pill {
-      font-size: 0.73rem;
-      padding: 3px 9px;
-      border-radius: 999px;
-      background: rgba(16, 185, 129, 0.16);
-      color: var(--accent-bright);
-      font-weight: 700;
-      white-space: nowrap;
-      border: 1px solid rgba(16, 185, 129, 0.3);
-    }
+    .pill { font-size: 0.73rem; padding: 3px 9px; border-radius: 999px; background: rgba(16, 185, 129, 0.16); color: var(--accent-bright); font-weight: 700; border: 1px solid rgba(16, 185, 129, 0.3); }
+    .pill-amber { font-size: 0.73rem; padding: 3px 9px; border-radius: 999px; background: rgba(245, 158, 11, 0.16); color: #fcd34d; font-weight: 700; border: 1px solid rgba(245, 158, 11, 0.36); }
+    .pill-blue { font-size: 0.73rem; padding: 3px 9px; border-radius: 999px; background: rgba(56, 189, 248, 0.15); color: #7dd3fc; font-weight: 700; border: 1px solid rgba(56, 189, 248, 0.34); }
 
-    .pill-amber {
-      font-size: 0.73rem;
-      padding: 3px 9px;
-      border-radius: 999px;
-      background: rgba(245, 158, 11, 0.16);
-      color: #fcd34d;
-      font-weight: 700;
-      white-space: nowrap;
-      border: 1px solid rgba(245, 158, 11, 0.36);
-    }
+    section.block { padding: 54px 0; }
+    .section-head { margin-bottom: 22px; }
+    .section-head span { color: var(--accent-2); font-size: 0.82rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
+    .section-head h2 { font-size: clamp(1.55rem, 3vw, 2.2rem); margin-top: 6px; margin-bottom: 8px; }
+    .section-head p { color: var(--muted); max-width: 760px; }
 
-    .pill-blue {
-      font-size: 0.73rem;
-      padding: 3px 9px;
-      border-radius: 999px;
-      background: rgba(56, 189, 248, 0.15);
-      color: #7dd3fc;
-      font-weight: 700;
-      white-space: nowrap;
-      border: 1px solid rgba(56, 189, 248, 0.34);
-    }
-
-    section.block {
-      padding: 60px 0;
-    }
-
-    .section-head {
-      margin-bottom: 24px;
-    }
-
-    .section-head span {
-      color: var(--accent-2);
-      font-size: 0.82rem;
-      font-weight: 800;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-    }
-
-    .section-head h2 {
-      font-size: clamp(1.6rem, 3vw, 2.25rem);
-      margin-top: 6px;
-      margin-bottom: 10px;
-    }
-
-    .section-head p {
-      color: var(--muted);
-      max-width: 760px;
-    }
-
-    .demo-tabs {
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-      margin-bottom: 16px;
-    }
-
+    .demo-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
     .demo-tab {
-      background: var(--card);
-      color: var(--muted);
-      border: 1px solid var(--border);
-      padding: 10px 15px;
-      border-radius: 11px;
-      font-size: 0.88rem;
-      font-weight: 700;
-      cursor: pointer;
-      transition: all 0.2s ease;
-    }
-
-    .demo-tab:hover {
-      color: var(--text);
-      border-color: rgba(16, 185, 129, 0.45);
-      background: var(--card-hover);
-    }
-
-    .demo-tab.active {
-      color: #04130d;
-      background: linear-gradient(135deg, var(--accent-bright), var(--accent));
-      border-color: transparent;
-      box-shadow: 0 8px 22px rgba(16, 185, 129, 0.25);
-    }
-
-    .sim-frame {
-      background: #0c1411;
-      border: 1px solid rgba(16, 185, 129, 0.28);
-      border-radius: 18px;
-      overflow: hidden;
-      box-shadow: 0 28px 68px rgba(0, 0, 0, 0.56);
-    }
-
-    .sim-topbar {
-      background: #070c0a;
-      border-bottom: 1px solid rgba(16, 185, 129, 0.16);
-      padding: 10px 16px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      flex-wrap: wrap;
-    }
-
-    .sim-dots {
-      display: inline-flex;
-      gap: 6px;
-      align-items: center;
-    }
-
-    .sim-dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-    }
-
-    .sim-header-strip {
-      background: #0d1613;
-      border-bottom: 1px solid rgba(16, 185, 129, 0.16);
-      padding: 14px 18px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 14px;
-      flex-wrap: wrap;
-    }
-
-    .sim-title-group {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      flex-wrap: wrap;
-    }
-
-    .sim-title-group strong {
-      font-size: 1.08rem;
-      color: var(--text);
-    }
-
-    .sim-subpill {
-      font-size: 0.76rem;
-      font-weight: 700;
-      color: var(--accent-bright);
-      background: rgba(16, 185, 129, 0.12);
-      border: 1px solid rgba(16, 185, 129, 0.28);
-      padding: 3px 10px;
-      border-radius: 8px;
-    }
-
-    .sim-kpi-row {
-      display: flex;
-      gap: 10px;
-      flex-wrap: wrap;
-    }
-
-    .sim-kpi {
-      background: #080e0c;
-      border: 1px solid rgba(16, 185, 129, 0.16);
-      border-radius: 10px;
-      padding: 7px 12px;
-      min-width: 118px;
-    }
-
-    .sim-kpi span {
-      display: block;
-      font-size: 0.7rem;
-      color: var(--muted);
-    }
-
-    .sim-kpi strong {
-      font-size: 0.94rem;
-      color: var(--text);
-    }
-
-    .sim-kpi.ok strong {
-      color: var(--accent-bright);
-    }
-
-    .sim-kpi.warn strong {
-      color: #fbbf24;
-    }
-
-    .sim-grid {
-      padding: 18px;
-      display: grid;
-      grid-template-columns: 0.96fr 1.14fr;
-      gap: 18px;
-      align-items: start;
-    }
-
-    .sim-card {
-      background: #0e1814;
-      border: 1px solid rgba(16, 185, 129, 0.18);
-      border-radius: 14px;
-      padding: 16px;
-      display: grid;
-      gap: 14px;
-    }
-
-    .sim-card-head {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 8px;
-      flex-wrap: wrap;
-      padding-bottom: 10px;
-      border-bottom: 1px solid rgba(16, 185, 129, 0.12);
-    }
-
-    .sim-card-head h3 {
-      font-size: 0.86rem;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
-      color: #d1fae5;
-    }
-
-    .sim-highlight {
-      background: linear-gradient(145deg, rgba(16, 185, 129, 0.12), rgba(8, 14, 12, 0.92));
-      border: 1px solid rgba(16, 185, 129, 0.34);
-      border-radius: 13px;
-      padding: 15px;
-      display: grid;
-      gap: 10px;
-    }
-
-    .sim-bar {
-      width: 100%;
-      height: 8px;
-      border-radius: 999px;
-      background: rgba(255, 255, 255, 0.08);
-      overflow: hidden;
-    }
-
-    .sim-bar-fill {
-      height: 100%;
-      border-radius: 999px;
-      background: linear-gradient(90deg, var(--accent), var(--accent-bright));
-      transition: width 0.3s ease;
-    }
-
-    .sim-3col {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 8px;
-    }
-
-    .sim-mini-box {
-      background: #080e0c;
-      border: 1px solid rgba(16, 185, 129, 0.14);
-      border-radius: 10px;
-      padding: 9px 10px;
-    }
-
-    .sim-mini-box small {
-      display: block;
-      font-size: 0.71rem;
-      color: var(--muted);
-    }
-
-    .sim-mini-box strong {
-      font-size: 0.86rem;
-      color: var(--text);
-    }
-
-    .sim-filters {
-      display: flex;
-      gap: 7px;
-      flex-wrap: wrap;
-      align-items: center;
-    }
-
-    .sim-chip {
-      padding: 5px 11px;
-      border-radius: 999px;
-      font-size: 0.76rem;
-      font-weight: 700;
-      background: #080e0c;
-      color: var(--muted);
-      border: 1px solid rgba(16, 185, 129, 0.18);
-      cursor: pointer;
-    }
-
-    .sim-chip.active {
-      background: rgba(16, 185, 129, 0.18);
-      color: var(--accent-bright);
-      border-color: rgba(16, 185, 129, 0.45);
-    }
-
-    .sim-rows {
-      display: grid;
-      gap: 8px;
-    }
-
-    .sim-row {
-      background: #09100d;
-      border: 1px solid rgba(16, 185, 129, 0.14);
-      border-radius: 11px;
-      padding: 11px 13px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 10px;
-      flex-wrap: wrap;
-    }
-
-    .sim-row strong {
-      display: block;
-      font-size: 0.87rem;
-      color: var(--text);
-    }
-
-    .sim-row small {
-      color: var(--muted);
-      font-size: 0.77rem;
-    }
-
-    .table-grid {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 8px;
-    }
-
-    .table-chip {
-      padding: 10px;
-      border-radius: 10px;
-      border: 1px solid rgba(16, 185, 129, 0.2);
-      background: #09100d;
-      cursor: pointer;
-      text-align: left;
-      transition: transform 0.15s ease;
-    }
-
-    .table-chip:hover {
-      transform: translateY(-1px);
-    }
-
-    .table-chip strong {
-      display: block;
-      font-size: 0.84rem;
-      color: var(--text);
-    }
-
-    .table-chip span {
-      font-size: 0.73rem;
-      color: var(--muted);
-    }
-
-    .table-chip.free {
-      border-color: rgba(16, 185, 129, 0.45);
-      background: rgba(16, 185, 129, 0.11);
-    }
-
-    .table-chip.busy {
-      border-color: rgba(245, 158, 11, 0.48);
-      background: rgba(245, 158, 11, 0.12);
-    }
-
-    .slot-grid {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 8px;
-    }
-
-    .slot-btn {
-      padding: 9px;
-      border-radius: 9px;
-      border: 1px solid rgba(16, 185, 129, 0.25);
-      background: #09100d;
-      color: var(--text);
-      font-size: 0.81rem;
-      font-weight: 700;
-      cursor: pointer;
-    }
-
-    .slot-btn.booked {
-      background: rgba(239, 68, 68, 0.14);
-      border-color: rgba(239, 68, 68, 0.36);
-      color: #fca5a5;
-    }
-
-    .slot-btn.selected {
-      background: rgba(16, 185, 129, 0.22);
-      border-color: var(--accent-bright);
-      color: #a7f3d0;
-    }
-
-    .sim-log {
-      background: #060a08;
-      border: 1px solid rgba(16, 185, 129, 0.16);
-      border-radius: 10px;
-      padding: 11px 12px;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      font-size: 0.77rem;
-      color: #a7f3d0;
-      max-height: 128px;
-      overflow-y: auto;
-      display: grid;
-      gap: 4px;
-    }
-
-    .sim-footer {
-      background: #080d0b;
-      border-top: 1px solid rgba(16, 185, 129, 0.16);
-      padding: 12px 18px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 12px;
-      flex-wrap: wrap;
-    }
-
-    .ref-shot-box {
-      margin-top: 14px;
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 14px;
-      display: none;
-    }
-
-    .ref-shot-box.open {
-      display: block;
-    }
-
-    .ref-shot-box img {
-      width: 100%;
-      max-height: 360px;
-      object-fit: contain;
-      border-radius: 10px;
-      background: #060a08;
-      display: block;
-    }
-
-    .services-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-      gap: 18px;
-    }
-
-    .card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 18px;
-      overflow: hidden;
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-      cursor: pointer;
-      transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease, background 0.25s ease;
-    }
-
-    .card:hover {
-      transform: translateY(-5px);
-      background: var(--card-hover);
-      border-color: rgba(16, 185, 129, 0.48);
-      box-shadow: 0 18px 40px var(--glow);
-    }
-
-    .card-thumb {
-      width: 100%;
-      aspect-ratio: 16 / 9;
-      object-fit: cover;
-      display: block;
-      border-bottom: 1px solid rgba(16, 185, 129, 0.16);
-      background: var(--bg-soft);
-    }
-
-    .card-body {
-      padding: 20px 22px 14px;
-    }
-
-    .card-tag {
-      display: inline-block;
-      font-size: 0.76rem;
-      font-weight: 700;
-      color: var(--accent-bright);
-      background: rgba(16, 185, 129, 0.12);
-      padding: 4px 10px;
-      border-radius: 8px;
-      margin-bottom: 10px;
-    }
-
-    .card h3 {
-      font-size: 1.14rem;
-      margin-bottom: 8px;
-    }
-
-    .card p {
-      color: var(--muted);
-      font-size: 0.93rem;
-    }
-
-    .card-footer {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 12px 22px 18px;
-      margin-top: 8px;
-      border-top: 1px solid rgba(156, 163, 175, 0.12);
-    }
-
-    .detail-link {
-      background: transparent;
-      border: none;
-      color: var(--accent-2);
-      font-weight: 700;
-      font-size: 0.9rem;
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      transition: transform 0.2s ease, color 0.2s ease;
-    }
-
-    .card:hover .detail-link {
-      color: #fbbf24;
-      transform: translateX(3px);
-    }
-
-    .modal-backdrop {
-      position: fixed;
-      inset: 0;
-      z-index: 90;
-      background: rgba(4, 8, 6, 0.78);
-      backdrop-filter: blur(8px);
-      display: none;
-      align-items: center;
-      justify-content: center;
-      padding: 20px;
-      animation: fadeIn 0.2s ease;
-    }
-
-    .modal-backdrop.open {
-      display: flex;
-    }
-
-    @keyframes fadeIn {
-      from { opacity: 0; }
-      to { opacity: 1; }
-    }
-
-    .modal-box {
-      width: 100%;
-      max-width: 600px;
-      max-height: 90vh;
-      overflow-y: auto;
-      background: #101915;
-      border: 1px solid rgba(16, 185, 129, 0.35);
-      border-radius: 22px;
-      padding: 26px;
-      box-shadow: 0 28px 70px rgba(0, 0, 0, 0.6);
-      transform: scale(0.96);
-      animation: popIn 0.22s ease forwards;
-    }
-
-    @keyframes popIn {
-      to { transform: scale(1); }
-    }
-
-    .modal-top {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      gap: 12px;
-      margin-bottom: 14px;
-    }
-
-    .modal-img {
-      width: 100%;
-      aspect-ratio: 16 / 9;
-      object-fit: cover;
-      border-radius: 14px;
-      border: 1px solid rgba(16, 185, 129, 0.22);
-      margin-bottom: 16px;
-      display: block;
-    }
-
-    .modal-close {
-      background: rgba(255, 255, 255, 0.06);
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      color: var(--text);
-      width: 34px;
-      height: 34px;
-      border-radius: 10px;
-      font-size: 1.1rem;
-      cursor: pointer;
-    }
-
-    .modal-close:hover {
-      background: rgba(239, 68, 68, 0.18);
-      border-color: rgba(239, 68, 68, 0.4);
-    }
-
-    .modal-box h3 {
-      font-size: 1.38rem;
-      margin-bottom: 10px;
-    }
-
-    .modal-desc {
-      color: #d1d5db;
-      font-size: 0.96rem;
-      margin-bottom: 18px;
-    }
-
-    .modal-list {
-      list-style: none;
-      display: grid;
-      gap: 9px;
-      margin-bottom: 22px;
-    }
-
-    .modal-list li {
-      padding: 10px 13px;
-      border-radius: 10px;
-      background: rgba(8, 13, 11, 0.72);
-      border: 1px solid rgba(16, 185, 129, 0.16);
-      font-size: 0.91rem;
-      color: #e5e7eb;
-    }
-
-    .modal-list li::before {
-      content: "✓ ";
-      color: var(--accent-bright);
-      font-weight: 800;
-      margin-right: 6px;
-    }
-
-    .modal-actions {
-      display: flex;
-      gap: 10px;
-      justify-content: flex-end;
-      flex-wrap: wrap;
-    }
-
-    .contact-wrap {
-      display: grid;
-      grid-template-columns: 0.9fr 1.1fr;
-      gap: 24px;
-      align-items: start;
-    }
-
-    .contact-info {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 18px;
-      padding: 24px;
-      display: grid;
-      gap: 14px;
-    }
-
-    .info-item {
-      padding: 14px;
-      border-radius: 12px;
-      background: var(--bg-soft);
-      border: 1px solid rgba(16, 185, 129, 0.12);
-    }
-
-    .info-item strong {
-      display: block;
-      font-size: 0.92rem;
-      margin-bottom: 4px;
-      color: var(--accent-bright);
-    }
-
-    .info-item span {
-      color: var(--muted);
-      font-size: 0.88rem;
-    }
-
-    .wa-box {
-      padding: 18px;
-      border-radius: 14px;
-      background: rgba(34, 197, 94, 0.08);
-      border: 1px solid rgba(34, 197, 94, 0.3);
-      display: grid;
-      gap: 10px;
-    }
-
-    .wa-head {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-
-    .wa-head strong {
-      color: #86efac;
-      font-size: 1rem;
-    }
-
-    .contact-form {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 18px;
-      padding: 26px;
-      display: grid;
-      gap: 14px;
-    }
-
-    .alert-ok {
-      padding: 12px 14px;
-      border-radius: 10px;
-      background: rgba(16, 185, 129, 0.15);
-      border: 1px solid rgba(16, 185, 129, 0.4);
-      color: #a7f3d0;
-      font-size: 0.9rem;
-      font-weight: 600;
-    }
-
-    .row-2 {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 12px;
-    }
-
-    label {
-      display: block;
-      font-size: 0.85rem;
-      color: #d1d5db;
-      margin-bottom: 6px;
-      font-weight: 600;
-    }
-
-    input,
-    select,
-    textarea {
-      width: 100%;
-      padding: 10px 12px;
-      border-radius: 10px;
-      border: 1px solid var(--border);
-      background: var(--bg-soft);
-      color: var(--text);
-      font-size: 0.92rem;
-      transition: border-color 0.2s ease, box-shadow 0.2s ease;
-    }
-
-    input:focus,
-    select:focus,
-    textarea:focus {
-      outline: none;
-      border-color: var(--accent);
-      box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.18);
-    }
-
-    .submit-btn {
-      padding: 13px 18px;
-      border-radius: 11px;
-      border: none;
-      cursor: pointer;
-      font-weight: 800;
-      font-size: 0.96rem;
-      color: #04130d;
-      background: linear-gradient(135deg, var(--accent-bright), var(--accent-2));
-      transition: transform 0.2s ease, box-shadow 0.2s ease;
-    }
-
-    .submit-btn:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 12px 26px rgba(16, 185, 129, 0.28);
-    }
-
-    footer {
-      border-top: 1px solid var(--border);
-      padding: 26px 0;
-      margin-top: 30px;
-      color: var(--muted);
-      font-size: 0.88rem;
-      display: flex;
-      justify-content: space-between;
-      flex-wrap: wrap;
-      gap: 12px;
-    }
-
-    footer a {
-      color: var(--muted);
-      text-decoration: none;
-    }
-
-    footer a:hover {
-      color: var(--accent-bright);
-    }
+      background: var(--card); color: var(--muted); border: 1px solid var(--border);
+      padding: 9px 14px; border-radius: 11px; font-size: 0.86rem; font-weight: 700; cursor: pointer;
+    }
+    .demo-tab.active { color: #04130d; background: linear-gradient(135deg, var(--accent-bright), var(--accent)); border-color: transparent; }
+
+    .sim-frame { background: #0c1411; border: 1px solid rgba(16, 185, 129, 0.28); border-radius: 18px; overflow: hidden; }
+    .sim-topbar { background: #070c0a; border-bottom: 1px solid rgba(16, 185, 129, 0.16); padding: 10px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .sim-dots { display: inline-flex; gap: 6px; align-items: center; }
+    .sim-dot { width: 10px; height: 10px; border-radius: 50%; }
+    .sim-header-strip { background: #0d1613; border-bottom: 1px solid rgba(16, 185, 129, 0.16); padding: 14px 18px; display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+    .sim-title-group { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .sim-subpill { font-size: 0.76rem; font-weight: 700; color: var(--accent-bright); background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.28); padding: 3px 10px; border-radius: 8px; }
+    .sim-kpi-row { display: flex; gap: 10px; flex-wrap: wrap; }
+    .sim-kpi { background: #080e0c; border: 1px solid rgba(16, 185, 129, 0.16); border-radius: 10px; padding: 7px 12px; min-width: 116px; }
+    .sim-kpi span { display: block; font-size: 0.7rem; color: var(--muted); }
+    .sim-kpi strong { font-size: 0.92rem; }
+    .sim-kpi.ok strong { color: var(--accent-bright); }
+    .sim-kpi.warn strong { color: #fbbf24; }
+
+    .sim-grid { padding: 18px; display: grid; grid-template-columns: 0.96fr 1.14fr; gap: 18px; align-items: start; }
+    .sim-card { background: #0e1814; border: 1px solid rgba(16, 185, 129, 0.18); border-radius: 14px; padding: 16px; display: grid; gap: 14px; }
+    .sim-card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; padding-bottom: 10px; border-bottom: 1px solid rgba(16, 185, 129, 0.12); }
+    .sim-card-head h3 { font-size: 0.84rem; letter-spacing: 0.04em; text-transform: uppercase; color: #d1fae5; }
+    .sim-highlight { background: linear-gradient(145deg, rgba(16, 185, 129, 0.12), rgba(8, 14, 12, 0.92)); border: 1px solid rgba(16, 185, 129, 0.34); border-radius: 13px; padding: 14px; display: grid; gap: 10px; }
+    .sim-bar { width: 100%; height: 8px; border-radius: 999px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
+    .sim-bar-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--accent), var(--accent-bright)); }
+    .sim-3col { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .sim-mini-box { background: #080e0c; border: 1px solid rgba(16, 185, 129, 0.14); border-radius: 10px; padding: 9px 10px; }
+    .sim-mini-box small { display: block; font-size: 0.71rem; color: var(--muted); }
+    .sim-filters { display: flex; gap: 7px; flex-wrap: wrap; align-items: center; }
+    .sim-chip { padding: 5px 11px; border-radius: 999px; font-size: 0.76rem; font-weight: 700; background: #080e0c; color: var(--muted); border: 1px solid rgba(16, 185, 129, 0.18); cursor: pointer; }
+    .sim-chip.active { background: rgba(16, 185, 129, 0.18); color: var(--accent-bright); border-color: rgba(16, 185, 129, 0.45); }
+    .sim-rows { display: grid; gap: 8px; }
+    .sim-row { background: #09100d; border: 1px solid rgba(16, 185, 129, 0.14); border-radius: 11px; padding: 11px 13px; display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .sim-row strong { display: block; font-size: 0.87rem; }
+    .sim-row small { color: var(--muted); font-size: 0.77rem; }
+    .table-grid, .slot-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .table-chip { padding: 10px; border-radius: 10px; border: 1px solid rgba(16, 185, 129, 0.2); background: #09100d; cursor: pointer; text-align: left; }
+    .table-chip strong { display: block; font-size: 0.84rem; color: var(--text); }
+    .table-chip span { font-size: 0.73rem; color: var(--muted); }
+    .table-chip.free { border-color: rgba(16, 185, 129, 0.45); background: rgba(16, 185, 129, 0.11); }
+    .table-chip.busy { border-color: rgba(245, 158, 11, 0.48); background: rgba(245, 158, 11, 0.12); }
+    .slot-btn { padding: 9px; border-radius: 9px; border: 1px solid rgba(16, 185, 129, 0.25); background: #09100d; color: var(--text); font-size: 0.81rem; font-weight: 700; cursor: pointer; }
+    .slot-btn.booked { background: rgba(239, 68, 68, 0.14); border-color: rgba(239, 68, 68, 0.36); color: #fca5a5; }
+    .slot-btn.selected { background: rgba(16, 185, 129, 0.22); border-color: var(--accent-bright); color: #a7f3d0; }
+    .sim-log { background: #060a08; border: 1px solid rgba(16, 185, 129, 0.16); border-radius: 10px; padding: 11px 12px; font-family: monospace; font-size: 0.77rem; color: #a7f3d0; max-height: 120px; overflow-y: auto; display: grid; gap: 4px; }
+    .sim-footer { background: #080d0b; border-top: 1px solid rgba(16, 185, 129, 0.16); padding: 12px 18px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+
+    .ref-shot-box { margin-top: 14px; background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 14px; display: none; }
+    .ref-shot-box.open { display: block; }
+    .ref-shot-box img { width: 100%; max-height: 360px; object-fit: contain; border-radius: 10px; background: #060a08; display: block; }
+
+    .services-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 18px; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between; cursor: pointer; transition: transform 0.22s ease, border-color 0.22s ease; }
+    .card:hover { transform: translateY(-4px); border-color: rgba(16, 185, 129, 0.48); }
+    .card-thumb { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; display: block; border-bottom: 1px solid rgba(16, 185, 129, 0.16); }
+    .card-body { padding: 18px 20px 12px; }
+    .card-tag { display: inline-block; font-size: 0.76rem; font-weight: 700; color: var(--accent-bright); background: rgba(16, 185, 129, 0.12); padding: 4px 10px; border-radius: 8px; margin-bottom: 8px; }
+    .card h3 { font-size: 1.12rem; margin-bottom: 6px; }
+    .card p { color: var(--muted); font-size: 0.92rem; }
+    .card-footer { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px 16px; border-top: 1px solid rgba(156, 163, 175, 0.12); }
+    .detail-link { background: transparent; border: none; color: var(--accent-2); font-weight: 700; font-size: 0.9rem; cursor: pointer; }
+
+    .saas-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; align-items: start; }
+    .saas-card { background: var(--card); border: 1px solid var(--border); border-radius: 18px; padding: 24px; display: grid; gap: 14px; }
+    .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    label { display: block; font-size: 0.84rem; color: #d1d5db; margin-bottom: 6px; font-weight: 600; }
+    input, select, textarea { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-soft); color: var(--text); font-size: 0.92rem; }
+    .submit-btn { padding: 12px 18px; border-radius: 11px; border: none; cursor: pointer; font-weight: 800; font-size: 0.94rem; color: #04130d; background: linear-gradient(135deg, var(--accent-bright), var(--accent-2)); }
+    .alert-ok { padding: 12px 14px; border-radius: 10px; background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); color: #a7f3d0; font-size: 0.9rem; font-weight: 600; }
+    .alert-err { padding: 12px 14px; border-radius: 10px; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); color: #fca5a5; font-size: 0.9rem; font-weight: 600; }
+
+    .modal-backdrop { position: fixed; inset: 0; z-index: 90; background: rgba(4, 8, 6, 0.78); backdrop-filter: blur(8px); display: none; align-items: center; justify-content: center; padding: 20px; }
+    .modal-backdrop.open { display: flex; }
+    .modal-box { width: 100%; max-width: 600px; max-height: 90vh; overflow-y: auto; background: #101915; border: 1px solid rgba(16, 185, 129, 0.35); border-radius: 22px; padding: 26px; }
+    .modal-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
+    .modal-img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 14px; margin-bottom: 16px; }
+    .modal-close { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); color: var(--text); width: 34px; height: 34px; border-radius: 10px; cursor: pointer; }
+    .modal-list { list-style: none; display: grid; gap: 8px; margin: 14px 0 20px; }
+    .modal-list li { padding: 9px 12px; border-radius: 10px; background: rgba(8, 13, 11, 0.72); border: 1px solid rgba(16, 185, 129, 0.16); font-size: 0.9rem; }
+    .modal-actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+
+    footer { border-top: 1px solid var(--border); padding: 24px 0; margin-top: 28px; color: var(--muted); font-size: 0.88rem; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+    footer a { color: var(--muted); text-decoration: none; }
 
     @media (max-width: 920px) {
-      .hero,
-      .sim-grid,
-      .contact-wrap,
-      .row-2,
-      .sim-3col {
-        grid-template-columns: 1fr;
-      }
-
-      .hero {
-        padding-top: 46px;
-      }
+      .hero, .sim-grid, .saas-grid, .row-2, .sim-3col { grid-template-columns: 1fr; }
     }
   </style>
 </head>
 <body>
-  <svg style="display:none;" aria-hidden="true">
-    <symbol id="icon-whatsapp" viewBox="0 0 24 24">
-      <path fill="currentColor" d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2.05 22l5.25-1.38c1.45.79 3.08 1.21 4.74 1.21 5.46 0 9.91-4.45 9.91-9.91S17.5 2 12.04 2zm5.82 14.05c-.24.68-1.41 1.3-1.95 1.38-.5.08-1.14.11-1.84-.11-.42-.13-.97-.31-1.67-.61-2.94-1.27-4.86-4.23-5.01-4.43-.15-.2-1.19-1.58-1.19-3.02 0-1.44.75-2.15 1.02-2.44.27-.29.59-.37.79-.37.2 0 .4.01.57.01.18 0 .43-.07.67.51.24.59.83 2.03.9 2.18.07.15.12.32.02.52-.1.2-.15.32-.3.5-.15.17-.31.39-.45.52-.15.15-.3.31-.13.61.17.3.77 1.27 1.65 2.06 1.14 1.02 2.1 1.34 2.4 1.49.3.15.48.12.66-.07.18-.2.76-.89.96-1.19.2-.3.41-.25.69-.15.28.1 1.78.84 2.08.99.3.15.5.22.58.35.07.12.07.72-.17 1.4z"/>
-    </symbol>
-  </svg>
-
+""" + COMMON_WP_SVG + """
   <header class="navbar">
     <div class="container nav-inner">
       <a href="#anasayfa" class="brand">
-        <img
-          src="/images/logo.png"
-          alt="KOLAY Otomasyon ve Web Sistemleri Logosu"
-          class="brand-logo-img"
-          onerror="if(!this.dataset.fb){this.dataset.fb='1';this.src='/logo.png';}else{this.style.display='none';document.getElementById('fallbackBadge').style.display='grid';}"
-        />
+        <img src="/images/logo.png" alt="KOLAY Otomasyon" class="brand-logo-img" onerror="if(!this.dataset.fb){this.dataset.fb='1';this.src='/logo.png';}else{this.style.display='none';document.getElementById('fallbackBadge').style.display='grid';}" />
         <span id="fallbackBadge" class="brand-badge" style="display: none;">K</span>
-        <span class="brand-text">
-          KOLAY
-          <small>Otomasyon ve Web Sistemleri</small>
-        </span>
+        <span class="brand-text">KOLAY <small>Mikro-SaaS &amp; Web Sistemleri</small></span>
       </a>
       <nav class="nav-links">
         <a href="#anasayfa" class="nav-btn active">Anasayfa</a>
         <a href="#canli-demo" class="nav-btn">Canlı Demo</a>
-        <a href="#hizmetler" class="nav-btn">Hizmetler</a>
-        <a href="#iletisim" class="nav-btn nav-cta">İletişim</a>
-        <a href="https://wa.me/{{ wa_number }}?text={{ 'Merhaba KOLAY Otomasyon, sistemleriniz hakkında bilgi almak istiyorum.' | urlencode }}" target="_blank" rel="noopener noreferrer" class="nav-btn nav-wa" aria-label="WhatsApp">
+        <a href="#hizmetler" class="nav-btn">Modüller</a>
+        <a href="#saas-basla" class="nav-btn nav-cta">İşletme Aç</a>
+        <a href="{{ url_for('superadmin_panel') }}" class="nav-btn">Admin</a>
+        <a href="https://wa.me/{{ wa_number }}?text={{ 'Merhaba KOLAY Otomasyon, mikro-SaaS altyapiniz hakkinda bilgi almak istiyorum.' | urlencode }}" target="_blank" rel="noopener noreferrer" class="nav-btn nav-wa" aria-label="WhatsApp">
           <svg class="wp-icon"><use href="#icon-whatsapp"></use></svg>
           <span>WhatsApp</span>
         </a>
@@ -1407,29 +606,29 @@ INDEX_HTML = """
     <section id="anasayfa" class="hero">
       <div class="container" style="display: contents;">
         <div class="reveal">
-          <div class="badge">KOLAY Otomasyon ve Web Sistemleri</div>
-          <h1>İşletmen İçin <span>Hızlı, Akıllı ve Kolay</span> Dijital Sistemler</h1>
+          <div class="badge">Supabase Çok Kiracılı Mikro-SaaS</div>
+          <h1>İşletmen İçin <span>Kendi Alanın ve Panelinle</span> Hazır Sistemler</h1>
           <p>
-            Mobil, web ve masaüstü otomasyonlardan kafe-restoran randevu ve masa QR sipariş/garson çağır sistemlerine,
-            berber-kuaför randevu altyapısına kadar tüm operasyonunu hızlandıran pratik yazılımlar geliştiriyoruz.
+            Kafe-restoran masa planı, berber-kuaför randevu, masa QR sipariş/garson çağır ve saha/web/kasa akışlarını
+            her işletmeye özel sayfa ve izole panel ile saniyeler içinde ayağa kaldır.
           </p>
           <div class="hero-actions">
-            <a href="#canli-demo" class="btn-primary">Simülasyonu Dene</a>
-            <a href="https://wa.me/{{ wa_number }}?text={{ 'Merhaba KOLAY Otomasyon, hızlı teklif almak istiyorum.' | urlencode }}" target="_blank" rel="noopener noreferrer" class="btn-wa" aria-label="WhatsApp">
+            <a href="#saas-basla" class="btn-primary">İşletme Sayfası Oluştur</a>
+            <a href="#canli-demo" class="btn-secondary">Canlı Simülasyonu Dene</a>
+            <a href="https://wa.me/{{ wa_number }}?text={{ 'Merhaba KOLAY Otomasyon, hizli teklif almak istiyorum.' | urlencode }}" target="_blank" rel="noopener noreferrer" class="btn-wa" aria-label="WhatsApp">
               <svg class="wp-icon"><use href="#icon-whatsapp"></use></svg>
               <span>WhatsApp</span>
             </a>
-            <a href="#iletisim" class="btn-secondary">Talep Formu</a>
           </div>
         </div>
 
         <aside class="hero-panel reveal">
-          <div class="panel-title">Öne Çıkan Çözümlerimiz</div>
+          <div class="panel-title">Örnek Aktif İşletme Alanı</div>
           <ul class="mini-list">
-            <li><span>Mobil, Web &amp; Masaüstü Otomasyon</span><span class="pill">Özel Yazılım</span></li>
-            <li><span>Kafe &amp; Restoran Randevu Sistemi</span><span class="pill">Masa Planı</span></li>
-            <li><span>Berber &amp; Kuaför Randevu Sistemi</span><span class="pill">Saat/Koltuk</span></li>
-            <li><span>Masa QR Sipariş &amp; Garson Çağır</span><span class="pill">Anlık Bildirim</span></li>
+            <li><span>Vitrin / Talep Linki</span><span class="pill">/i/kolay-vitrin</span></li>
+            <li><span>İşletme Yönetim Paneli</span><span class="pill">/i/kolay-vitrin/panel</span></li>
+            <li><span>Veritabanı Altyapısı</span><span class="pill-amber">Supabase PostgreSQL</span></li>
+            <li><span>Platform Yönetimi</span><span class="pill-blue">/admin</span></li>
           </ul>
         </aside>
       </div>
@@ -1439,10 +638,8 @@ INDEX_HTML = """
       <div class="container">
         <div class="section-head reveal">
           <span>Birebir Sistem Simülasyonu</span>
-          <h2>Görsellerdeki Kontrol Panellerini Canlı Kullan</h2>
-          <p>
-            Her sekmede panel yerleşimini, durum etiketlerini, sayaçları, senaryo tetikleyicilerini ve canlı sistem loglarını birebir etkileşimli simülasyon olarak çalıştırabilirsin.
-          </p>
+          <h2>Kontrol Panellerini Canlı Kullan</h2>
+          <p>Sekmeler arasında geçiş yaparak işletme senaryolarını, sayaçları ve sistem loglarını canlı test edebilirsin.</p>
         </div>
 
         <div class="demo-tabs reveal" role="tablist">
@@ -1460,18 +657,17 @@ INDEX_HTML = """
               <span class="sim-dot" style="background: #ef4444;"></span>
               <span class="sim-dot" style="background: #f59e0b;"></span>
               <span class="sim-dot" style="background: #10b981;"></span>
-              <span id="simWinLabel" style="font-size: 0.81rem; color: var(--muted); font-weight: 600; margin-left: 8px;">KOLAY Otomasyon • Simülasyon</span>
+              <span id="simWinLabel" style="font-size: 0.81rem; color: var(--muted); font-weight: 600; margin-left: 8px;">KOLAY Otomasyon</span>
             </div>
             <span class="pill">BİREBİR SİMÜLASYON</span>
           </div>
 
           <div id="simHeaderStrip" class="sim-header-strip"></div>
-
           <div id="simGrid" class="sim-grid"></div>
 
           <div class="sim-footer">
             <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-              <button type="button" class="btn-primary" onclick="applyDemoServiceToForm()">Bu Sistemi Formda Seç</button>
+              <a href="#saas-basla" class="btn-primary">Bu Modülle İşletme Aç</a>
               <button type="button" class="btn-secondary" onclick="toggleRefShot()">Görsel Ekranını Göster / Gizle</button>
               <a id="demoWaLink" href="https://wa.me/{{ wa_number }}" target="_blank" rel="noopener noreferrer" class="btn-sm" aria-label="WhatsApp">
                 <svg class="wp-icon"><use href="#icon-whatsapp"></use></svg>
@@ -1495,11 +691,9 @@ INDEX_HTML = """
     <section id="hizmetler" class="block">
       <div class="container">
         <div class="section-head reveal">
-          <span>Hizmetler</span>
-          <h2>İhtiyacına Uygun Sistemi Seç ve İncele</h2>
-          <p>
-            Herhangi bir hizmet kartına tıklayarak sistem arayüzünü, özelliklerini ve işletmene sağlayacağı avantajları detay penceresinde inceleyebilirsin.
-          </p>
+          <span>Modüller</span>
+          <h2>SaaS Paketlerine Dahil Sistemler</h2>
+          <p>Her modüle tıklayarak detaylarını inceleyebilirsin.</p>
         </div>
 
         <div class="services-grid">
@@ -1516,8 +710,8 @@ INDEX_HTML = """
               </div>
             </div>
             <div class="card-footer">
-              <span style="font-size: 0.8rem; color: var(--muted);">Özellikleri incele</span>
-              <button type="button" class="detail-link">Detayları Gör →</button>
+              <span style="font-size: 0.8rem; color: var(--muted);">Detayları gör</span>
+              <button type="button" class="detail-link">İncele →</button>
             </div>
           </article>
           {% endfor %}
@@ -1525,73 +719,87 @@ INDEX_HTML = """
       </div>
     </section>
 
-    <section id="iletisim" class="block">
+    <section id="saas-basla" class="block">
       <div class="container">
         <div class="section-head reveal">
-          <span>İletişim</span>
-          <h2>KOLAY Otomasyon İle Projeni Başlat</h2>
-          <p>
-            İster WhatsApp hattımızdan doğrudan yaz ister formu doldur; talebin veritabanına kaydedilsin.
-          </p>
+          <span>Mikro-SaaS Başlangıç</span>
+          <h2>Yeni İşletme Alanı Aç veya Panelinle Devam Et</h2>
+          <p>Yeni bir işletme oluşturduğunda Supabase üzerinde sana özel <code>/i/slug</code> vitrin sayfası ve <code>/i/slug/panel</code> yönetim ekranı açılır.</p>
         </div>
 
-        <div class="contact-wrap">
-          <div class="contact-info reveal">
-            <div class="wa-box">
-              <div class="wa-head">
-                <svg class="wp-icon-lg" style="color: #22c55e;"><use href="#icon-whatsapp"></use></svg>
-                <strong>WhatsApp İletişim</strong>
-              </div>
-              <span style="color: #d1fae5; font-size: 0.88rem;">Aklındaki sistemi tek mesajla sorabilir, hızlı teklif alabilirsin.</span>
-              <a href="https://wa.me/{{ wa_number }}?text={{ 'Merhaba KOLAY Otomasyon, işletmem için sistem hakkında bilgi almak istiyorum.' | urlencode }}" target="_blank" rel="noopener noreferrer" class="btn-wa" style="justify-content: center; margin-top: 4px;" aria-label="WhatsApp">
-                <svg class="wp-icon"><use href="#icon-whatsapp"></use></svg>
-                <span>WhatsApp Sohbetini Aç</span>
-              </a>
-            </div>
+        {% if created_tenant %}
+        <div class="alert-ok" style="margin-bottom: 18px;">
+          <strong>{{ created_tenant.business_name }}</strong> oluşturuldu!
+          Vitrin: <a href="{{ url_for('tenant_public', slug=created_tenant.slug) }}" style="color:#fff;text-decoration:underline;">/i/{{ created_tenant.slug }}</a> •
+          Panel: <a href="{{ url_for('tenant_panel', slug=created_tenant.slug) }}" style="color:#fff;text-decoration:underline;">/i/{{ created_tenant.slug }}/panel</a>
+        </div>
+        {% endif %}
 
-            <div class="info-item">
-              <strong>İşletmeye Özel Kurulum</strong>
-              <span>Hazır kalıplar yerine işletmenin günlük akışına birebir oturan sade arayüzler.</span>
-            </div>
+        {% if saas_error %}
+        <div class="alert-err" style="margin-bottom: 18px;">{{ saas_error }}</div>
+        {% endif %}
 
-            <div class="info-item">
-              <strong>Mobil, Web ve Masaüstü Uyum</strong>
-              <span>Telefon, tablet, kasa bilgisayarı ve tarayıcıdan kesintisiz kullanım.</span>
+        <div class="saas-grid">
+          <form class="saas-card reveal" method="POST" action="{{ url_for('register_tenant') }}">
+            <div>
+              <h3 style="font-size: 1.15rem; margin-bottom: 4px;">Yeni İşletme Kaydı</h3>
+              <p style="color: var(--muted); font-size: 0.88rem;">Kendi slug adresin ve işletme panel şifrenle anında başla.</p>
             </div>
-          </div>
-
-          <form class="contact-form reveal" method="POST" action="{{ url_for('index') }}">
-            {% if sent %}
-            <div class="alert-ok">Talebin başarıyla alındı ve veritabanına kaydedildi!</div>
-            {% endif %}
 
             <div class="row-2">
               <div>
-                <label for="name">Ad Soyad / İşletme Adı</label>
-                <input id="name" type="text" name="name" placeholder="Örn: Yılmaz Kafe / Mertcan" required />
+                <label for="business_name">İşletme Adı</label>
+                <input id="business_name" type="text" name="business_name" placeholder="Örn: Yıldız Kafe" required />
               </div>
               <div>
-                <label for="phone">Telefon veya İletişim</label>
-                <input id="phone" type="text" name="phone" placeholder="05xx xxx xx xx" required />
+                <label for="slug">Özel URL Adresi (Slug)</label>
+                <input id="slug" type="text" name="slug" placeholder="Örn: yildiz-kafe" />
+              </div>
+            </div>
+
+            <div class="row-2">
+              <div>
+                <label for="owner_email">E-posta</label>
+                <input id="owner_email" type="email" name="owner_email" placeholder="sahip@isletme.com" required />
+              </div>
+              <div>
+                <label for="password">Panel Şifresi</label>
+                <input id="password" type="password" name="password" placeholder="En az 6 karakter" required />
               </div>
             </div>
 
             <div>
-              <label for="service">İlgilendiğin Sistem</label>
-              <select id="service" name="service">
-                {% for srv in services %}
-                <option value="{{ srv.tag }} - {{ srv.title }}">{{ srv.tag }} — {{ srv.title }}</option>
-                {% endfor %}
-                <option value="Özel Otomasyon / Diğer">Özel Otomasyon / Diğer Sistem Talebi</option>
+              <label for="plan">Başlangıç Planı</label>
+              <select id="plan" name="plan">
+                <option value="free">Free (Başlangıç)</option>
+                <option value="pro">Pro (Tam Modül)</option>
               </select>
             </div>
 
+            <button type="submit" class="submit-btn">İşletme Alanımı Oluştur</button>
+          </form>
+
+          <form class="saas-card reveal" method="POST" action="{{ url_for('tenant_quick_login') }}">
             <div>
-              <label for="message">Detay / Not</label>
-              <textarea id="message" name="message" rows="4" placeholder="İşletmeni ve istediğin özellikleri kısaca yaz..." required></textarea>
+              <h3 style="font-size: 1.15rem; margin-bottom: 4px;">Mevcut İşletme Paneline Giriş</h3>
+              <p style="color: var(--muted); font-size: 0.88rem;">Kayıtlı işletme slug'ı ve şifrenle doğrudan kendi talep paneline git.</p>
             </div>
 
-            <button type="submit" class="submit-btn">Talebi Gönder</button>
+            <div>
+              <label for="login_slug">İşletme Slug</label>
+              <input id="login_slug" type="text" name="slug" placeholder="kolay-vitrin" required />
+            </div>
+
+            <div>
+              <label for="login_password">Şifre</label>
+              <input id="login_password" type="password" name="password" required />
+            </div>
+
+            <button type="submit" class="btn-secondary" style="justify-content: center; padding: 12px 16px;">İşletme Paneline Gir</button>
+
+            <div style="font-size: 0.82rem; color: var(--muted); border-top: 1px solid var(--border); padding-top: 12px;">
+              Demo alan: <code>kolay-vitrin</code> • Şifre: <code>kolay1234</code> • Süper Admin: <a href="{{ url_for('superadmin_panel') }}" style="color: var(--accent-bright);">/admin</a>
+            </div>
           </form>
         </div>
       </div>
@@ -1600,28 +808,29 @@ INDEX_HTML = """
 
   <footer>
     <div class="container" style="display: contents;">
-      <span>© 2026 KOLAY Otomasyon ve Web Sistemleri</span>
-      <span><a href="#anasayfa">Anasayfa</a> • <a href="#canli-demo">Canlı Demo</a> • <a href="#hizmetler">Hizmetler</a> • <a href="#iletisim">İletişim</a> • <a href="{{ url_for('panel') }}">Yönetim Girişi</a></span>
+      <span>© 2026 KOLAY Otomasyon Mikro-SaaS</span>
+      <span>
+        <a href="#anasayfa">Anasayfa</a> •
+        <a href="{{ url_for('tenant_public', slug='kolay-vitrin') }}">Örnek Vitrin</a> •
+        <a href="{{ url_for('tenant_panel', slug='kolay-vitrin') }}">Örnek İşletme Paneli</a> •
+        <a href="{{ url_for('superadmin_panel') }}">Süper Admin</a>
+      </span>
     </div>
   </footer>
 
-  <div id="serviceModal" class="modal-backdrop" onclick="closeModalOnBackdrop(event)">
-    <div class="modal-box" role="dialog" aria-modal="true">
+  <div id="serviceModal" class="modal-backdrop" onclick="if(event.target.id==='serviceModal')closeServiceModal()">
+    <div class="modal-box">
       <div class="modal-top">
-        <span id="modalTag" class="card-tag" style="margin-bottom: 0;">Hizmet</span>
-        <button type="button" class="modal-close" onclick="closeServiceModal()" aria-label="Kapat">✕</button>
+        <span id="modalTag" class="card-tag" style="margin-bottom: 0;">Modül</span>
+        <button type="button" class="modal-close" onclick="closeServiceModal()">✕</button>
       </div>
       <img id="modalImg" src="" alt="" class="modal-img" onerror="this.style.display='none'" />
-      <h3 id="modalTitle">Sistem Başlığı</h3>
-      <p id="modalDesc" class="modal-desc"></p>
+      <h3 id="modalTitle">Başlık</h3>
+      <p id="modalDesc" style="color:#d1d5db;font-size:0.94rem;margin-top:8px;"></p>
       <ul id="modalFeatures" class="modal-list"></ul>
       <div class="modal-actions">
         <button type="button" class="btn-secondary" onclick="closeServiceModal()">Kapat</button>
-        <a id="modalWaBtn" href="https://wa.me/{{ wa_number }}" target="_blank" rel="noopener noreferrer" class="btn-wa" aria-label="WhatsApp">
-          <svg class="wp-icon"><use href="#icon-whatsapp"></use></svg>
-          <span>WhatsApp</span>
-        </a>
-        <button type="button" class="btn-primary" onclick="selectServiceAndScroll()">Formda Seç ve Teklif Al</button>
+        <a href="#saas-basla" class="btn-primary" onclick="closeServiceModal()">İşletme Alanı Aç</a>
       </div>
     </div>
   </div>
@@ -1629,76 +838,41 @@ INDEX_HTML = """
   <script>
     const SERVICES = {{ services | tojson }};
     const WA_NUMBER = "{{ wa_number }}";
-    let activeServiceOption = "";
     let currentDemoId = "mobil-otomasyon";
 
     const sim = {
       mobil: {
-        courier: "Kurye #04 • Ahmet Demir",
-        status: "Teslimat Yolunda",
-        eta: "8 dk",
-        done: 14,
-        total: 20,
-        activeStaff: 18,
-        totalStaff: 24,
-        gpsPct: 98.6,
-        filterActive: false,
+        courier: "Kurye #04 • Ahmet Demir", status: "Teslimat Yolunda", eta: "8 dk", done: 14, total: 20,
+        activeStaff: 18, totalStaff: 24, gpsPct: 98.6, filterActive: false,
         tasks: [
-          { title: "Sipariş #8690123004567 — Kadıköy Dağıtım", sub: "12.5 km • Kurye #04 (Ahmet Demir)", badge: "YOLDA", cls: "pill", active: true },
-          { title: "Sipariş #8690123007896 — Üsküdar Teslimatı", sub: "3.2 km • Kurye #02 (Mehmet K.)", badge: "TESLİM EDİLDİ", cls: "pill", active: false },
-          { title: "Sipariş #8690123001234 — Beşiktaş Acil Servis", sub: "6.8 km • Kurye #07 (Ayşe Y.)", badge: "GECİKME", cls: "pill-amber", active: true },
+          { title: "Sipariş #8690123004567 — Kadıköy Dağıtım", sub: "12.5 km • Kurye #04", badge: "YOLDA", cls: "pill", active: true },
+          { title: "Sipariş #8690123007896 — Üsküdar Teslimatı", sub: "3.2 km • Kurye #02", badge: "TESLİM EDİLDİ", cls: "pill", active: false },
+          { title: "Sipariş #8690123001234 — Beşiktaş Acil Servis", sub: "6.8 km • Kurye #07", badge: "GECİKME", cls: "pill-amber", active: true },
         ],
-        logs: [
-          "[14:14:02] [GPS] Kurye #04 (Ahmet Demir) konumu güncellendi: Kadıköy (1.2 km kaldı)",
-          "[14:14:15] [PUSH] Müşteri cihazına 'Kuryeniz yola çıktı - Tahmini 8 dk' bildirimi iletildi",
-          "[14:14:25] [CHECK-IN] Saha rotası doğrulandı ve sunucu ile senkronize edildi"
-        ]
+        logs: ["[14:14:02] [GPS] Kadıköy rotası güncellendi", "[14:14:15] [PUSH] Tahmini varış 8 dk bildirimi gönderildi"]
       },
       web: {
-        botTitle: "BOT #02 • Form Kaydı -> Telegram & WhatsApp",
-        botSub: "Anlık Tetikleme: Form Kaydı • Webhook • Mesaj Botu",
-        successRate: 99.6,
-        leads: 4128,
-        sent: 18450,
-        queue: 14,
-        onlyCrit: false,
+        botTitle: "BOT #02 • Form Kaydı -> Telegram & WhatsApp", botSub: "Anlık Tetikleme • Webhook • Mesaj Botu",
+        successRate: 99.6, leads: 4128, sent: 18450, queue: 14, onlyCrit: false,
         flows: [
-          { title: "WhatsApp Otomatik Karşılama & Destek Botu", sub: "850 Mesaj / dk • Yanıt Süresi: 0.4s", badge: "BAŞARILI", cls: "pill", crit: false },
-          { title: "Telegram Leads & Form Bildirim Botu", sub: "1,426 Bildirim • Yanıt Süresi: 0.2s", badge: "AKTİF", cls: "pill", crit: false },
-          { title: "Webhook Tetikleyici — Sipariş & Ödeme", sub: "3 İstek Bekliyor • Yeniden Deneme Aktif", badge: "KRİTİK", cls: "pill-amber", crit: true },
+          { title: "WhatsApp Otomatik Karşılama Botu", sub: "850 Mesaj/dk • 0.4s", badge: "BAŞARILI", cls: "pill", crit: false },
+          { title: "Telegram Form Bildirim Botu", sub: "1,426 Bildirim • 0.2s", badge: "AKTİF", cls: "pill", crit: false },
+          { title: "Webhook Kuyruğu — Sipariş", sub: "3 İstek Bekliyor", badge: "KRİTİK", cls: "pill-amber", crit: true },
         ],
-        logs: [
-          "[21:15:01] [WEBHOOK] Landing sayfasından yeni form kaydı alındı (ID: #4129)",
-          "[21:15:03] [TELEGRAM] 'Satış Bildirimleri' grubuna anlık mesaj gönderildi (200 OK)",
-          "[21:15:04] [WHATSAPP] Müşteriye otomatik karşılama ve özet mesajı iletildi"
-        ]
+        logs: ["[21:15:01] [WEBHOOK] Yeni form kaydı alındı", "[21:15:03] [TELEGRAM] 200 OK yanıt döndü"]
       },
       masaustu: {
-        barcode: "8690504012345",
-        product: "Çaykur Rize Turist Çay 500g",
-        sales: 1428,
-        stockCount: 24850,
-        critCount: 2,
-        cartItems: 2,
-        cartTotal: 130.0,
-        onlyCrit: false,
+        barcode: "8690504012345", product: "Çaykur Rize Turist Çay 500g", sales: 1428, stockCount: 24850, critCount: 2,
+        cartItems: 2, cartTotal: 130.0, onlyCrit: false,
         items: [
-          { title: "Çaykur Rize Turist Çay 500g", sub: "Stok: 85 Adet • Birim: 85.00 TL • Barkod: 8690504012345", badge: "STOKTA", cls: "pill", crit: false },
-          { title: "Eker Yoğurt 1kg", sub: "Stok: 3 Adet • Birim: 45.00 TL • Minimum Eşik: 10 Adet", badge: "KRİTİK", cls: "pill-amber", crit: true },
-          { title: "Sırma Doğal Kaynak Suyu 1.5L", sub: "Stok: 0 Adet • Birim: 7.50 TL • Sipariş Önerilir", badge: "STOKTA YOK", cls: "pill-amber", crit: true },
+          { title: "Çaykur Rize Turist Çay 500g", sub: "Stok: 85 Adet • 85.00 TL", badge: "STOKTA", cls: "pill", crit: false },
+          { title: "Eker Yoğurt 1kg", sub: "Stok: 3 Adet • 45.00 TL", badge: "KRİTİK", cls: "pill-amber", crit: true },
+          { title: "Sırma Su 1.5L", sub: "Stok: 0 Adet • 7.50 TL", badge: "STOKTA YOK", cls: "pill-amber", crit: true },
         ],
-        logs: [
-          "[12:42:01] [BARCODE] COM3 barkod okuyucu hazır • 8690504012345 doğrulandı",
-          "[12:42:08] [POS] Sepete ürün eklendi • Yerel kasa senkronizasyonu (12 ms)",
-          "[12:42:15] [STOK] Kritik stok seviyesi izleniyor • Fiş yazıcı çevrimiçi"
-        ]
+        logs: ["[12:42:01] [BARCODE] Okuyucu hazır", "[12:42:08] [POS] Yerel senkronizasyon aktif"]
       },
       kafe: {
-        guests: 4,
-        time: "19:30",
-        guestName: "Murat Yılmaz",
-        pending: 4,
-        onlyFree: false,
+        guests: 4, time: "19:30", guestName: "Murat Yılmaz", pending: 4, onlyFree: false,
         tables: [
           { name: "Masa 01", cap: 4, busy: true, info: "18:30 - 20:30 • Ahmet B." },
           { name: "Masa 02", cap: 2, busy: false, info: "Müsait (2 Kişilik)" },
@@ -1707,48 +881,29 @@ INDEX_HTML = """
           { name: "Masa 05", cap: 2, busy: false, info: "Müsait (2 Kişilik)" },
           { name: "Masa 06", cap: 8, busy: false, info: "Müsait (8 Kişilik)" },
         ],
-        logs: [
-          "[18:45:02] [REZERVASYON] Masa planı güncellendi • 24 masa anlık izleniyor",
-          "[18:45:19] [ONAY] Kişi sayısı ve saat bazlı masa uygunluğu kontrol edildi",
-          "[18:45:40] [LOG] Günlük doluluk ve masa rezervasyon akışı senkronize"
-        ]
+        logs: ["[18:45:02] [REZERVASYON] Masa planı senkronize", "[18:45:19] [ONAY] Saat ve kişi kontrolü aktif"]
       },
       berber: {
-        client: "Murat Demir",
-        service: "Saç Kesim & Sakal + Bakım (45 dk)",
-        chair: "Koltuk 1 • Berber Serkan",
-        elapsed: 35,
-        totalMin: 45,
-        selectedSlot: 1,
+        client: "Murat Demir", service: "Saç Kesim & Sakal (45 dk)", chair: "Koltuk 1 • Berber Serkan",
+        elapsed: 35, totalMin: 45, selectedSlot: 1,
         slots: [
-          { time: "13:00", booked: true, info: "Berber Serkan • Dolu" },
-          { time: "13:45", booked: false, info: "Müsait Slot" },
-          { time: "14:30", booked: false, info: "Müsait Slot" },
-          { time: "15:15", booked: true, info: "Stilist Elif • Dolu" },
-          { time: "16:00", booked: false, info: "Müsait Slot" },
-          { time: "16:45", booked: false, info: "Müsait Slot" },
+          { time: "13:00", booked: true, info: "Dolu" },
+          { time: "13:45", booked: false, info: "Müsait" },
+          { time: "14:30", booked: false, info: "Müsait" },
+          { time: "15:15", booked: true, info: "Dolu" },
+          { time: "16:00", booked: false, info: "Müsait" },
+          { time: "16:45", booked: false, info: "Müsait" },
         ],
-        logs: [
-          "[13:40:12] [ZAMAN] Koltuk 1 işlem sayacı aktif (35 / 45 dk • Kalan: 10 dk)",
-          "[13:41:20] [ÇAKIŞMA] Dolu saatlerde çifte randevu engelleme aktif",
-          "[13:42:05] [TAKVİM] Usta/koltuk bazlı randevu çizelgesi güncel"
-        ]
+        logs: ["[13:40:12] [ZAMAN] Koltuk 1 sayacı 35/45 dk", "[13:41:20] [ÇAKIŞMA] Çifte randevu koruması aktif"]
       },
       qr: {
-        table: "Masa 05",
-        ordersCount: 64,
-        callsCount: 18,
-        billsCount: 11,
+        table: "Masa 05", ordersCount: 64, callsCount: 18, billsCount: 11,
         feed: [
-          { title: "Masa 05 — 2x Türk Kahvesi, 1x Cheesecake", sub: "QR Menü Siparişi • Bar & Servis Ekranı", badge: "SERVİS HAZIR", cls: "pill" },
-          { title: "Masa 08 — Garson Çağrı Talebi", sub: "Bölüm: Teras • Tek Dokunuş Bildirim", badge: "GARSON BEKLİYOR", cls: "pill-amber" },
-          { title: "Masa 12 — Hesap İsteme Talebi", sub: "Masa QR • Kasa Ekranında Görüntülendi", badge: "HESAP HAZIRLANIYOR", cls: "pill-blue" },
+          { title: "Masa 05 — 2x Türk Kahvesi", sub: "QR Menü Siparişi", badge: "SERVİS HAZIR", cls: "pill" },
+          { title: "Masa 08 — Garson Çağrı Talebi", sub: "Bölüm: Teras", badge: "GARSON BEKLİYOR", cls: "pill-amber" },
+          { title: "Masa 12 — Hesap İsteme Talebi", sub: "Masa QR", badge: "HESAP HAZIRLANIYOR", cls: "pill-blue" },
         ],
-        logs: [
-          "[20:10:05] [QR-SCAN] Masa 05 QR menü oturumu tarayıcıdan başlatıldı",
-          "[20:10:18] [GARSON] Tek dokunuşla garson çağrı ve hesap kanalı dinlemede",
-          "[20:10:31] [KASA] Masa siparişleri anlık olarak kasa/bar ekranına aktarılıyor"
-        ]
+        logs: ["[20:10:05] [QR-SCAN] Masa 05 oturumu açıldı", "[20:10:18] [GARSON] Anlık çağrı kanalı aktif"]
       }
     };
 
@@ -1756,44 +911,28 @@ INDEX_HTML = """
       const d = new Date();
       return `[${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}:${String(d.getSeconds()).padStart(2,"0")}]`;
     }
-
     function pushSimLog(key, line) {
       sim[key].logs.unshift(`${nowStr()} ${line}`);
-      sim[key].logs = sim[key].logs.slice(0, 6);
+      sim[key].logs = sim[key].logs.slice(0, 5);
     }
-
     function renderSimLog(key) {
-      return `
-        <div>
-          <div style="font-size: 0.74rem; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px;">Canlı Sistem Logları</div>
-          <div class="sim-log">${sim[key].logs.map((x) => `<div>${x}</div>`).join("")}</div>
-        </div>
-      `;
+      return `<div><div style="font-size:0.73rem;font-weight:800;color:var(--muted);margin-bottom:6px;">CANLI LOG</div><div class="sim-log">${sim[key].logs.map(x => `<div>${x}</div>`).join("")}</div></div>`;
     }
 
     function switchDemo(demoId, btnEl) {
       currentDemoId = demoId;
-      document.querySelectorAll(".demo-tab").forEach((b) => b.classList.remove("active"));
+      document.querySelectorAll(".demo-tab").forEach(b => b.classList.remove("active"));
       if (btnEl) btnEl.classList.add("active");
-
-      const srv = SERVICES.find((s) => s.id === demoId) || SERVICES[0];
+      const srv = SERVICES.find(s => s.id === demoId) || SERVICES[0];
       document.getElementById("simWinLabel").textContent = `${srv.tag} — ${srv.title}`;
       document.getElementById("refShotTitle").textContent = `${srv.tag} — ${srv.title}`;
       const img = document.getElementById("refShotImg");
-      if (img && srv.image) {
-        img.style.display = "block";
-        img.src = `/images/${srv.image}`;
-      }
-
-      const waMsg = encodeURIComponent(`Merhaba KOLAY Otomasyon, "${srv.tag} - ${srv.title}" simülasyonunu inceledim, bilgi almak istiyorum.`);
-      document.getElementById("demoWaLink").href = `https://wa.me/${WA_NUMBER}?text=${waMsg}`;
-
+      if (img && srv.image) { img.style.display = "block"; img.src = `/images/${srv.image}`; }
+      document.getElementById("demoWaLink").href = `https://wa.me/${WA_NUMBER}?text=${encodeURIComponent("Merhaba KOLAY Otomasyon, " + srv.tag + " modulu hakkinda bilgi almak istiyorum.")}`;
       renderSim();
     }
 
-    function toggleRefShot() {
-      document.getElementById("refShotBox").classList.toggle("open");
-    }
+    function toggleRefShot() { document.getElementById("refShotBox").classList.toggle("open"); }
 
     function renderSim() {
       const head = document.getElementById("simHeaderStrip");
@@ -1804,764 +943,68 @@ INDEX_HTML = """
       if (currentDemoId === "mobil-otomasyon") {
         const m = sim.mobil;
         const pct = Math.min(100, Math.round((m.done / m.total) * 100));
-        const rows = m.filterActive ? m.tasks.filter((t) => t.active) : m.tasks;
-
-        head.innerHTML = `
-          <div class="sim-title-group">
-            <strong>Mobil Uygulama &amp; Saha Akışları</strong>
-            <span class="sim-subpill">SAHA &amp; MOBİL KONTROL</span>
-          </div>
-          <div class="sim-kpi-row">
-            <div class="sim-kpi ok"><span>Aktif Saha Ekibi</span><strong>${m.activeStaff} / ${m.totalStaff} Sahada</strong></div>
-            <div class="sim-kpi"><span>Tamamlanan Görev</span><strong>${m.done} / ${m.total}</strong></div>
-            <div class="sim-kpi warn"><span>Tahmini Varış</span><strong>${m.eta}</strong></div>
-            <div class="sim-kpi ok"><span>GPS Sinyali</span><strong>%${m.gpsPct} Bağlı</strong></div>
-          </div>
-        `;
-
-        grid.innerHTML = `
-          <div class="sim-card">
-            <div class="sim-card-head">
-              <h3>01 • Aktif Saha Personeli &amp; Rota</h3>
-              <span class="pill">${m.status}</span>
-            </div>
-            <div class="sim-highlight">
-              <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;">
-                <div>
-                  <strong style="font-size: 1rem;">${m.courier}</strong>
-                  <div style="font-size: 0.8rem; color: var(--muted);">Durum: ${m.status} • Tahmini Varış: ${m.eta}</div>
-                </div>
-                <span class="pill">GPS AKTİF</span>
-              </div>
-              <div class="sim-bar"><div class="sim-bar-fill" style="width: ${pct}%;"></div></div>
-              <div style="display: flex; justify-content: space-between; font-size: 0.77rem; color: var(--muted);">
-                <span>Günlük Rota İlerlemesi</span>
-                <span>${pct}% (${m.done}/${m.total})</span>
-              </div>
-            </div>
-            <div class="sim-3col">
-              <div class="sim-mini-box"><small>Araç / Plaka</small><strong>34 ABC 123</strong></div>
-              <div class="sim-mini-box"><small>Cihaz Pil</small><strong>%88 Şarjda</strong></div>
-              <div class="sim-mini-box"><small>Bölge</small><strong>Kadıköy / İst</strong></div>
-            </div>
-            <div class="sim-filters">
-              <button type="button" class="btn-sm" onclick="mobilSetStatus('Yola Çıktı', '12 dk')">Yola Çıktı</button>
-              <button type="button" class="btn-sm" onclick="mobilSetStatus('Teslimat Yolunda', '8 dk')">Sonraki Durak</button>
-              <button type="button" class="btn-amber-sm" onclick="mobilFinishTask()">Teslimat Tamamla</button>
-              <button type="button" class="btn-amber-sm" onclick="mobilScenarioDelay()">Trafik Gecikme Senaryosu</button>
-              <button type="button" class="btn-sm" onclick="mobilReset()">Senaryoyu Sıfırla</button>
-            </div>
-          </div>
-
-          <div class="sim-card">
-            <div class="sim-card-head">
-              <h3>02 • Saha Görevleri, Teslimatlar &amp; Canlı Loglar</h3>
-              <div class="sim-filters">
-                <button type="button" class="sim-chip ${!m.filterActive ? "active" : ""}" onclick="mobilFilter(false)">Tümü (${m.tasks.length})</button>
-                <button type="button" class="sim-chip ${m.filterActive ? "active" : ""}" onclick="mobilFilter(true)">Aktif (${m.tasks.filter(t => t.active).length})</button>
-              </div>
-            </div>
-            <div class="sim-rows">
-              ${rows.map((r) => `
-                <div class="sim-row">
-                  <div>
-                    <strong>${r.title}</strong>
-                    <small>${r.sub}</small>
-                  </div>
-                  <span class="${r.cls}">${r.badge}</span>
-                </div>
-              `).join("")}
-            </div>
-            ${renderSimLog("mobil")}
-          </div>
-        `;
-        footer.textContent = `Saha Durumu: ${m.status} • Tamamlanan: ${m.done}/${m.total}`;
+        const rows = m.filterActive ? m.tasks.filter(t => t.active) : m.tasks;
+        head.innerHTML = `<div class="sim-title-group"><strong>Mobil &amp; Saha</strong><span class="sim-subpill">SAHA KONTROL</span></div><div class="sim-kpi-row"><div class="sim-kpi ok"><span>Saha Ekibi</span><strong>${m.activeStaff}/${m.totalStaff}</strong></div><div class="sim-kpi"><span>Görev</span><strong>${m.done}/${m.total}</strong></div><div class="sim-kpi warn"><span>ETA</span><strong>${m.eta}</strong></div><div class="sim-kpi ok"><span>GPS</span><strong>%${m.gpsPct}</strong></div></div>`;
+        grid.innerHTML = `<div class="sim-card"><div class="sim-card-head"><h3>01 • Rota</h3><span class="pill">${m.status}</span></div><div class="sim-highlight"><strong>${m.courier}</strong><div style="font-size:0.8rem;color:var(--muted);">${m.status} • ${m.eta}</div><div class="sim-bar"><div class="sim-bar-fill" style="width:${pct}%;"></div></div></div><div class="sim-filters"><button type="button" class="btn-sm" onclick="sim.mobil.eta='12 dk';pushSimLog('mobil','Yola cikildi');renderSim()">Yola Çıktı</button><button type="button" class="btn-amber-sm" onclick="if(sim.mobil.done<sim.mobil.total)sim.mobil.done++;pushSimLog('mobil','Teslimat tamamlandi');renderSim()">Teslimat Tamamla</button><button type="button" class="btn-amber-sm" onclick="sim.mobil.eta='16 dk';pushSimLog('mobil','Gecikme senaryosu tetiklendi');renderSim()">Gecikme Senaryosu</button></div></div><div class="sim-card"><div class="sim-card-head"><h3>02 • Görevler</h3><div class="sim-filters"><button type="button" class="sim-chip ${!m.filterActive?'active':''}" onclick="sim.mobil.filterActive=false;renderSim()">Tümü</button><button type="button" class="sim-chip ${m.filterActive?'active':''}" onclick="sim.mobil.filterActive=true;renderSim()">Aktif</button></div></div><div class="sim-rows">${rows.map(r=>`<div class="sim-row"><div><strong>${r.title}</strong><small>${r.sub}</small></div><span class="${r.cls}">${r.badge}</span></div>`).join("")}</div>${renderSimLog("mobil")}</div>`;
+        footer.textContent = `Rota: ${m.done}/${m.total} • ETA: ${m.eta}`;
       } else if (currentDemoId === "web-otomasyon") {
         const w = sim.web;
-        const rows = w.onlyCrit ? w.flows.filter((f) => f.crit) : w.flows;
-
-        head.innerHTML = `
-          <div class="sim-title-group">
-            <strong>Web Otomasyon</strong>
-            <span class="sim-subpill">Web Panelleri, Formlar &amp; Botlar</span>
-          </div>
-          <div class="sim-kpi-row">
-            <div class="sim-kpi ok"><span>Başarı Oranı</span><strong>%${w.successRate.toFixed(1)} Kararlı</strong></div>
-            <div class="sim-kpi"><span>Bugünkü Form Kaydı</span><strong>${w.leads.toLocaleString("tr-TR")}</strong></div>
-            <div class="sim-kpi ok"><span>Gönderilen Bildirim</span><strong>${w.sent.toLocaleString("tr-TR")}</strong></div>
-            <div class="sim-kpi warn"><span>Aktif Kuyruk</span><strong>${w.queue} İşlem</strong></div>
-          </div>
-        `;
-
-        grid.innerHTML = `
-          <div class="sim-card">
-            <div class="sim-card-head">
-              <h3>01 • Form ve Bot Otomasyon İstasyonu</h3>
-              <span class="pill">BOTLAR AKTİF</span>
-            </div>
-            <div class="sim-highlight">
-              <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;">
-                <div>
-                  <strong style="font-size: 0.98rem;">${w.botTitle}</strong>
-                  <div style="font-size: 0.8rem; color: var(--muted);">${w.botSub}</div>
-                </div>
-                <span class="pill">%${w.successRate.toFixed(1)}</span>
-              </div>
-              <div class="sim-bar"><div class="sim-bar-fill" style="width: ${w.successRate}%;"></div></div>
-            </div>
-            <div class="sim-3col">
-              <div class="sim-mini-box"><small>Telegram Bot</small><strong>Çevrimiçi</strong></div>
-              <div class="sim-mini-box"><small>WhatsApp API</small><strong>Aktif (0.4s)</strong></div>
-              <div class="sim-mini-box"><small>Web Form</small><strong>Dinlemede</strong></div>
-            </div>
-            <div class="sim-filters">
-              <button type="button" class="btn-sm" onclick="webRun('Web Formu -> Telegram Bildirim Botu')">Form Tetikle</button>
-              <button type="button" class="btn-sm" onclick="webRun('WhatsApp Otomatik Mesaj Gönderimi')">WhatsApp Bot Çalıştır</button>
-              <button type="button" class="btn-amber-sm" onclick="webQueueStep()">Kuyruğu İşle</button>
-              <button type="button" class="btn-amber-sm" onclick="webScenarioSpike()">Kritik Webhook Senaryosu</button>
-              <button type="button" class="btn-sm" onclick="webFlushCritical()">Kritikleri Temizle</button>
-            </div>
-          </div>
-
-          <div class="sim-card">
-            <div class="sim-card-head">
-              <h3>02 • Web Panelleri, Formlar &amp; Bot Görevleri</h3>
-              <div class="sim-filters">
-                <button type="button" class="sim-chip ${!w.onlyCrit ? "active" : ""}" onclick="webFilter(false)">Tüm Akışlar (${w.flows.length})</button>
-                <button type="button" class="sim-chip ${w.onlyCrit ? "active" : ""}" onclick="webFilter(true)">Kritik (${w.flows.filter(f => f.crit).length})</button>
-              </div>
-            </div>
-            <div class="sim-rows">
-              ${rows.map((r) => `
-                <div class="sim-row">
-                  <div>
-                    <strong>${r.title}</strong>
-                    <small>${r.sub}</small>
-                  </div>
-                  <span class="${r.cls}">${r.badge}</span>
-                </div>
-              `).join("")}
-            </div>
-            ${renderSimLog("web")}
-          </div>
-        `;
-        footer.textContent = `Başarı: %${w.successRate.toFixed(1)} • Bildirim: ${w.sent.toLocaleString("tr-TR")} • Kuyruk: ${w.queue}`;
+        const rows = w.onlyCrit ? w.flows.filter(f => f.crit) : w.flows;
+        head.innerHTML = `<div class="sim-title-group"><strong>Web &amp; Botlar</strong><span class="sim-subpill">WEBHOOK &amp; BOT</span></div><div class="sim-kpi-row"><div class="sim-kpi ok"><span>Başarı</span><strong>%${w.successRate.toFixed(1)}</strong></div><div class="sim-kpi"><span>Form</span><strong>${w.leads}</strong></div><div class="sim-kpi ok"><span>Bildirim</span><strong>${w.sent}</strong></div><div class="sim-kpi warn"><span>Kuyruk</span><strong>${w.queue}</strong></div></div>`;
+        grid.innerHTML = `<div class="sim-card"><div class="sim-card-head"><h3>01 • Bot İstasyonu</h3><span class="pill">AKTİF</span></div><div class="sim-highlight"><strong>${w.botTitle}</strong><div style="font-size:0.8rem;color:var(--muted);">${w.botSub}</div><div class="sim-bar"><div class="sim-bar-fill" style="width:${w.successRate}%;"></div></div></div><div class="sim-filters"><button type="button" class="btn-sm" onclick="sim.web.leads++;sim.web.sent++;pushSimLog('web','Form tetiklendi');renderSim()">Form Tetikle</button><button type="button" class="btn-amber-sm" onclick="sim.web.queue+=5;pushSimLog('web','Kritik webhook kuyrugu +5');renderSim()">Kritik Webhook</button><button type="button" class="btn-sm" onclick="sim.web.queue=0;pushSimLog('web','Kuyruk temizlendi');renderSim()">Kuyruğu Temizle</button></div></div><div class="sim-card"><div class="sim-card-head"><h3>02 • Akışlar</h3><div class="sim-filters"><button type="button" class="sim-chip ${!w.onlyCrit?'active':''}" onclick="sim.web.onlyCrit=false;renderSim()">Tümü</button><button type="button" class="sim-chip ${w.onlyCrit?'active':''}" onclick="sim.web.onlyCrit=true;renderSim()">Kritik</button></div></div><div class="sim-rows">${rows.map(r=>`<div class="sim-row"><div><strong>${r.title}</strong><small>${r.sub}</small></div><span class="${r.cls}">${r.badge}</span></div>`).join("")}</div>${renderSimLog("web")}</div>`;
+        footer.textContent = `Başarı: %${w.successRate.toFixed(1)} • Kuyruk: ${w.queue}`;
       } else if (currentDemoId === "masaustu-otomasyon") {
         const d = sim.masaustu;
-        const rows = d.onlyCrit ? d.items.filter((i) => i.crit) : d.items;
-
-        head.innerHTML = `
-          <div class="sim-title-group">
-            <strong>Masaüstü Otomasyon</strong>
-            <span class="sim-subpill">Kasa, Barkod &amp; Yerel Programlar</span>
-          </div>
-          <div class="sim-kpi-row">
-            <div class="sim-kpi ok"><span>Toplam Satış / İşlem</span><strong>${d.sales.toLocaleString("tr-TR")}</strong></div>
-            <div class="sim-kpi"><span>Toplam Stok</span><strong>${d.stockCount.toLocaleString("tr-TR")} Adet</strong></div>
-            <div class="sim-kpi warn"><span>Kritik Stok</span><strong>${d.critCount} Ürün</strong></div>
-            <div class="sim-kpi ok"><span>Yazıcı &amp; POS</span><strong>Çevrimiçi</strong></div>
-          </div>
-        `;
-
-        grid.innerHTML = `
-          <div class="sim-card">
-            <div class="sim-card-head">
-              <h3>01 • Barkod Okutma İstasyonu &amp; Kasa</h3>
-              <span class="pill">OKUYUCU HAZIR</span>
-            </div>
-            <div class="sim-highlight">
-              <div style="font-size: 0.75rem; color: var(--accent-bright); font-weight: 700;">SON OKUTULAN BARKOD</div>
-              <div style="font-size: 1.32rem; font-weight: 800; letter-spacing: 0.08em;">${d.barcode}</div>
-              <div style="font-size: 0.84rem; color: var(--muted);">Ürün: ${d.product}</div>
-            </div>
-            <div class="sim-row">
-              <div>
-                <strong>Aktif Kasa Sepeti (${d.cartItems} Kalem)</strong>
-                <small>Fiş / Fatura yazdırmaya hazır</small>
-              </div>
-              <strong style="color: var(--accent-bright); font-size: 1rem;">${d.cartTotal.toFixed(2)} TL</strong>
-            </div>
-            <div class="sim-filters">
-              <button type="button" class="btn-sm" onclick="posAdd('8690504012345', 'Çaykur Rize Turist Çay 500g', 85)">Barkod +85 TL</button>
-              <button type="button" class="btn-sm" onclick="posAdd('8690504099112', 'Eker Yoğurt 1kg', 45)">Barkod +45 TL</button>
-              <button type="button" class="btn-amber-sm" onclick="posFinish()">Satışı Tamamla</button>
-              <button type="button" class="btn-sm" onclick="posRestock()">İrsaliye +50 Stok</button>
-              <button type="button" class="btn-amber-sm" onclick="posClearCart()">Sepeti Temizle</button>
-            </div>
-          </div>
-
-          <div class="sim-card">
-            <div class="sim-card-head">
-              <h3>02 • Ürün Envanteri, Kritik Stok &amp; Loglar</h3>
-              <div class="sim-filters">
-                <button type="button" class="sim-chip ${!d.onlyCrit ? "active" : ""}" onclick="posFilter(false)">Tüm Ürünler</button>
-                <button type="button" class="sim-chip ${d.onlyCrit ? "active" : ""}" onclick="posFilter(true)">Kritik / Stokta Yok</button>
-              </div>
-            </div>
-            <div class="sim-rows">
-              ${rows.map((r) => `
-                <div class="sim-row">
-                  <div>
-                    <strong>${r.title}</strong>
-                    <small>${r.sub}</small>
-                  </div>
-                  <span class="${r.cls}">${r.badge}</span>
-                </div>
-              `).join("")}
-            </div>
-            ${renderSimLog("masaustu")}
-          </div>
-        `;
-        footer.textContent = `Sepet: ${d.cartTotal.toFixed(2)} TL • Toplam Satış: ${d.sales.toLocaleString("tr-TR")}`;
+        const rows = d.onlyCrit ? d.items.filter(i => i.crit) : d.items;
+        head.innerHTML = `<div class="sim-title-group"><strong>Masaüstü &amp; Barkod</strong><span class="sim-subpill">POS &amp; STOK</span></div><div class="sim-kpi-row"><div class="sim-kpi ok"><span>Satış</span><strong>${d.sales}</strong></div><div class="sim-kpi"><span>Stok</span><strong>${d.stockCount}</strong></div><div class="sim-kpi warn"><span>Kritik</span><strong>${d.critCount}</strong></div></div>`;
+        grid.innerHTML = `<div class="sim-card"><div class="sim-card-head"><h3>01 • Kasa</h3><span class="pill">HAZIR</span></div><div class="sim-highlight"><div style="font-size:1.25rem;font-weight:800;">${d.barcode}</div><div style="font-size:0.84rem;color:var(--muted);">${d.product}</div></div><div class="sim-row"><strong>Sepet (${d.cartItems})</strong><strong>${d.cartTotal.toFixed(2)} TL</strong></div><div class="sim-filters"><button type="button" class="btn-sm" onclick="sim.masaustu.cartItems++;sim.masaustu.cartTotal+=85;pushSimLog('masaustu','+85 TL barkod eklendi');renderSim()">Barkod +85 TL</button><button type="button" class="btn-amber-sm" onclick="if(sim.masaustu.cartTotal>0){sim.masaustu.sales++;sim.masaustu.cartTotal=0;sim.masaustu.cartItems=0;pushSimLog('masaustu','Satis tamamlandi');renderSim()}">Satışı Tamamla</button><button type="button" class="btn-sm" onclick="sim.masaustu.stockCount+=50;pushSimLog('masaustu','+50 stok girisi');renderSim()">+50 Stok</button></div></div><div class="sim-card"><div class="sim-card-head"><h3>02 • Envanter</h3><div class="sim-filters"><button type="button" class="sim-chip ${!d.onlyCrit?'active':''}" onclick="sim.masaustu.onlyCrit=false;renderSim()">Tümü</button><button type="button" class="sim-chip ${d.onlyCrit?'active':''}" onclick="sim.masaustu.onlyCrit=true;renderSim()">Kritik</button></div></div><div class="sim-rows">${rows.map(r=>`<div class="sim-row"><div><strong>${r.title}</strong><small>${r.sub}</small></div><span class="${r.cls}">${r.badge}</span></div>`).join("")}</div>${renderSimLog("masaustu")}</div>`;
+        footer.textContent = `Sepet: ${d.cartTotal.toFixed(2)} TL • Satış: ${d.sales}`;
       } else if (currentDemoId === "kafe-restoran-randevu") {
         const k = sim.kafe;
-        const freeCount = k.tables.filter((t) => !t.busy).length;
-        const shown = k.onlyFree ? k.tables.filter((t) => !t.busy) : k.tables;
-
-        head.innerHTML = `
-          <div class="sim-title-group">
-            <strong>Kafe &amp; Restoran</strong>
-            <span class="sim-subpill">Masa &amp; Kişi Bazlı Randevu Sistemi</span>
-          </div>
-          <div class="sim-kpi-row">
-            <div class="sim-kpi"><span>Toplam Masa</span><strong>24 Masa (${24 - freeCount * 4} Dolu)</strong></div>
-            <div class="sim-kpi ok"><span>Müsait Demo Masa</span><strong>${freeCount} / ${k.tables.length} Boş</strong></div>
-            <div class="sim-kpi warn"><span>Onay Bekleyen</span><strong>${k.pending} Rezervasyon</strong></div>
-            <div class="sim-kpi ok"><span>Anlık Doluluk</span><strong>%62 Aktif</strong></div>
-          </div>
-        `;
-
-        grid.innerHTML = `
-          <div class="sim-card">
-            <div class="sim-card-head">
-              <h3>01 • Yeni Masa &amp; Kişi Bazlı Randevu</h3>
-              <span class="pill">SİSTEM ÇEVRİMİÇİ</span>
-            </div>
-            <div class="row-2">
-              <div>
-                <label>Kişi Sayısı</label>
-                <div style="display: flex; gap: 8px; align-items: center;">
-                  <button type="button" class="btn-secondary" style="padding: 7px 11px;" onclick="kafeStepGuests(-1)">-</button>
-                  <strong style="font-size: 0.96rem;">${k.guests} Kişi</strong>
-                  <button type="button" class="btn-secondary" style="padding: 7px 11px;" onclick="kafeStepGuests(1)">+</button>
-                </div>
-              </div>
-              <div>
-                <label>Saat Dilimi</label>
-                <select onchange="kafeSetTime(this.value)">
-                  <option value="19:30" ${k.time === "19:30" ? "selected" : ""}>19:30</option>
-                  <option value="20:30" ${k.time === "20:30" ? "selected" : ""}>20:30</option>
-                  <option value="21:30" ${k.time === "21:30" ? "selected" : ""}>21:30</option>
-                </select>
-              </div>
-            </div>
-            <div>
-              <label>Misafir Adı</label>
-              <input type="text" value="${k.guestName}" onchange="kafeSetGuest(this.value)" />
-            </div>
-            <div class="sim-filters">
-              <button type="button" class="btn-primary" onclick="kafeReserve()">Uygun Boş Masaya Rezervasyon Ekle</button>
-              <button type="button" class="btn-amber-sm" onclick="kafeVipScenario()">VIP Grup (6 Kişi) Senaryosu</button>
-              <button type="button" class="btn-sm" onclick="kafeFreeAll()">Masaları Boşalt</button>
-            </div>
-          </div>
-
-          <div class="sim-card">
-            <div class="sim-card-head">
-              <h3>02 • Canlı Masa Yerleşimi &amp; Saatlik Akış</h3>
-              <div class="sim-filters">
-                <button type="button" class="sim-chip ${!k.onlyFree ? "active" : ""}" onclick="kafeFilter(false)">Tüm Masalar</button>
-                <button type="button" class="sim-chip ${k.onlyFree ? "active" : ""}" onclick="kafeFilter(true)">Boş Masalar (${freeCount})</button>
-              </div>
-            </div>
-            <div class="table-grid">
-              ${shown.map((t) => {
-                const idx = k.tables.indexOf(t);
-                return `
-                  <button type="button" class="table-chip ${t.busy ? "busy" : "free"}" onclick="kafeToggleTable(${idx})">
-                    <strong>${t.name} • ${t.cap} Kişi</strong>
-                    <span>${t.busy ? "DOLU • " + t.info : "BOŞ • Tıkla Ayırt"}</span>
-                  </button>
-                `;
-              }).join("")}
-            </div>
-            ${renderSimLog("kafe")}
-          </div>
-        `;
-        footer.textContent = `Misafir: ${k.guestName} (${k.guests} Kişi • ${k.time}) • Boş Masa: ${freeCount}`;
+        const freeCount = k.tables.filter(t => !t.busy).length;
+        const shown = k.onlyFree ? k.tables.filter(t => !t.busy) : k.tables;
+        head.innerHTML = `<div class="sim-title-group"><strong>Kafe &amp; Restoran</strong><span class="sim-subpill">MASA PLANI</span></div><div class="sim-kpi-row"><div class="sim-kpi ok"><span>Boş Masa</span><strong>${freeCount}/${k.tables.length}</strong></div><div class="sim-kpi warn"><span>Bekleyen</span><strong>${k.pending}</strong></div></div>`;
+        grid.innerHTML = `<div class="sim-card"><div class="sim-card-head"><h3>01 • Rezervasyon</h3><span class="pill">AKTİF</span></div><div class="row-2"><div><label>Kişi</label><div style="display:flex;gap:8px;align-items:center;"><button type="button" class="btn-secondary" style="padding:6px 10px;" onclick="if(sim.kafe.guests>1){sim.kafe.guests--;renderSim()}">-</button><strong>${k.guests}</strong><button type="button" class="btn-secondary" style="padding:6px 10px;" onclick="if(sim.kafe.guests<10){sim.kafe.guests++;renderSim()}">+</button></div></div><div><label>Misafir</label><input type="text" value="${k.guestName}" onchange="sim.kafe.guestName=this.value|| 'Misafir'" /></div></div><div class="sim-filters"><button type="button" class="btn-primary" onclick="const idx=sim.kafe.tables.findIndex(t=>!t.busy);if(idx!==-1){sim.kafe.tables[idx].busy=true;sim.kafe.tables[idx].info=sim.kafe.guestName;pushSimLog('kafe',sim.kafe.tables[idx].name+' ayrildi');renderSim()}">Boş Masaya Ekle</button><button type="button" class="btn-sm" onclick="sim.kafe.tables.forEach(t=>t.busy=false);pushSimLog('kafe','Masalar bosaltildi');renderSim()">Masaları Boşalt</button></div></div><div class="sim-card"><div class="sim-card-head"><h3>02 • Masalar</h3><div class="sim-filters"><button type="button" class="sim-chip ${!k.onlyFree?'active':''}" onclick="sim.kafe.onlyFree=false;renderSim()">Tümü</button><button type="button" class="sim-chip ${k.onlyFree?'active':''}" onclick="sim.kafe.onlyFree=true;renderSim()">Boş</button></div></div><div class="table-grid">${shown.map(t=>{const idx=k.tables.indexOf(t);return `<button type="button" class="table-chip ${t.busy?'busy':'free'}" onclick="sim.kafe.tables[${idx}].busy=!sim.kafe.tables[${idx}].busy;pushSimLog('kafe',sim.kafe.tables[${idx}].name+' degisti');renderSim()"><strong>${t.name} • ${t.cap}K</strong><span>${t.busy?'DOLU':'BOŞ'}</span></button>`;}).join("")}</div>${renderSimLog("kafe")}</div>`;
+        footer.textContent = `Boş Masa: ${freeCount}/${k.tables.length}`;
       } else if (currentDemoId === "berber-kuafor-randevu") {
         const b = sim.berber;
         const pct = Math.min(100, Math.round((b.elapsed / b.totalMin) * 100));
         const activeSlot = b.slots[b.selectedSlot];
-
-        head.innerHTML = `
-          <div class="sim-title-group">
-            <strong>Berber &amp; Kuaför</strong>
-            <span class="sim-subpill">Salon Randevu &amp; Saat Yönetimi</span>
-          </div>
-          <div class="sim-kpi-row">
-            <div class="sim-kpi"><span>Toplam Randevu</span><strong>48 Randevu</strong></div>
-            <div class="sim-kpi ok"><span>Aktif Koltuk</span><strong>4 / 5 Dolu</strong></div>
-            <div class="sim-kpi warn"><span>Çakışma Koruması</span><strong>AKTİF</strong></div>
-            <div class="sim-kpi ok"><span>Salon Modu</span><strong>Gün Işığı POS</strong></div>
-          </div>
-        `;
-
-        grid.innerHTML = `
-          <div class="sim-card">
-            <div class="sim-card-head">
-              <h3>01 • Koltuk Süre Durumu &amp; Hızlı Randevu</h3>
-              <span class="pill">SALON ÇEVRİMİÇİ</span>
-            </div>
-            <div class="sim-highlight">
-              <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;">
-                <div>
-                  <strong>${b.client}</strong>
-                  <div style="font-size: 0.8rem; color: var(--muted);">${b.service} • ${b.chair}</div>
-                </div>
-                <span class="pill">${b.elapsed} / ${b.totalMin} dk</span>
-              </div>
-              <div class="sim-bar"><div class="sim-bar-fill" style="width: ${pct}%;"></div></div>
-            </div>
-            <div class="sim-filters">
-              <button type="button" class="btn-sm" onclick="berberStepMin(10)">+10 dk İşlem İlerlet</button>
-              <button type="button" class="btn-amber-sm" onclick="berberConfirmSlot()">Seçili Saati (${activeSlot ? activeSlot.time : "-"}) Ayırt</button>
-              <button type="button" class="btn-sm" onclick="berberReleaseSlot()">Seçili Saati Boşa Çıkar</button>
-              <button type="button" class="btn-amber-sm" onclick="berberAddPackage()">+15 dk Bakım Paketi</button>
-            </div>
-          </div>
-
-          <div class="sim-card">
-            <div class="sim-card-head">
-              <h3>02 • Saat Slotları, Çakışma Kontrolü &amp; Loglar</h3>
-              <span class="pill-amber">Seçili: ${activeSlot ? activeSlot.time : "-"}</span>
-            </div>
-            <div class="slot-grid">
-              ${b.slots.map((s, idx) => {
-                const cls = s.booked ? "slot-btn booked" : (b.selectedSlot === idx ? "slot-btn selected" : "slot-btn");
-                return `<button type="button" class="${cls}" onclick="berberPickSlot(${idx})">${s.time} ${s.booked ? "• Dolu" : ""}</button>`;
-              }).join("")}
-            </div>
-            ${renderSimLog("berber")}
-          </div>
-        `;
-        footer.textContent = `Koltuk Süresi: ${b.elapsed}/${b.totalMin} dk • Seçili Saat: ${activeSlot ? activeSlot.time : "-"}`;
-      } else if (currentDemoId === "masa-qr-garson") {
+        head.innerHTML = `<div class="sim-title-group"><strong>Berber &amp; Kuaför</strong><span class="sim-subpill">SAAT YÖNETİMİ</span></div><div class="sim-kpi-row"><div class="sim-kpi ok"><span>Süre</span><strong>${b.elapsed}/${b.totalMin} dk</strong></div><div class="sim-kpi warn"><span>Çakışma</span><strong>AKTİF</strong></div></div>`;
+        grid.innerHTML = `<div class="sim-card"><div class="sim-card-head"><h3>01 • Koltuk</h3><span class="pill">CANLI</span></div><div class="sim-highlight"><strong>${b.client}</strong><div style="font-size:0.8rem;color:var(--muted);">${b.service}</div><div class="sim-bar"><div class="sim-bar-fill" style="width:${pct}%;"></div></div></div><div class="sim-filters"><button type="button" class="btn-sm" onclick="sim.berber.elapsed=(sim.berber.elapsed+10)%(sim.berber.totalMin+1);renderSim()">+10 dk</button><button type="button" class="btn-amber-sm" onclick="if(activeSlot){activeSlot.booked=!activeSlot.booked;pushSimLog('berber',activeSlot.time+' guncellendi');renderSim()}">Slot Durumu Değiştir</button></div></div><div class="sim-card"><div class="sim-card-head"><h3>02 • Saatler</h3><span class="pill-amber">${activeSlot?activeSlot.time:'-'}</span></div><div class="slot-grid">${b.slots.map((s,idx)=>`<button type="button" class="slot-btn ${s.booked?'booked':(b.selectedSlot===idx?'selected':'')}" onclick="sim.berber.selectedSlot=${idx};renderSim()">${s.time}</button>`).join("")}</div>${renderSimLog("berber")}</div>`;
+        footer.textContent = `Seçili Saat: ${activeSlot?activeSlot.time:'-'}`;
+      } else {
         const q = sim.qr;
-
-        head.innerHTML = `
-          <div class="sim-title-group">
-            <strong>Masa QR &amp; Garson</strong>
-            <span class="sim-subpill">QR Sipariş &amp; Garson Çağır Sistemi</span>
-          </div>
-          <div class="sim-kpi-row">
-            <div class="sim-kpi ok"><span>QR Sipariş</span><strong>${q.ordersCount} Adet</strong></div>
-            <div class="sim-kpi warn"><span>Garson Çağrısı</span><strong>${q.callsCount} Çağrı</strong></div>
-            <div class="sim-kpi"><span>Hesap Talebi</span><strong>${q.billsCount} Masa</strong></div>
-            <div class="sim-kpi ok"><span>Aktif QR Masa</span><strong>${q.table}</strong></div>
-          </div>
-        `;
-
-        grid.innerHTML = `
-          <div class="sim-card">
-            <div class="sim-card-head">
-              <h3>01 • Müşteri QR Masa Konsolu</h3>
-              <span class="pill">QR AKTİF</span>
-            </div>
-            <div>
-              <label>Masa Seçimi</label>
-              <select onchange="qrSetTable(this.value)">
-                <option value="Masa 05" ${q.table === "Masa 05" ? "selected" : ""}>Masa 05 (Salon)</option>
-                <option value="Masa 08" ${q.table === "Masa 08" ? "selected" : ""}>Masa 08 (Teras)</option>
-                <option value="Masa 12" ${q.table === "Masa 12" ? "selected" : ""}>Masa 12 (Bahçe)</option>
-              </select>
-            </div>
-            <div class="sim-filters">
-              <button type="button" class="btn-amber-sm" onclick="qrAction('call', 'Garson Çağrı Talebi', 'Bölüm: Salon • Tek Dokunuş Bildirim')">Garson Çağır</button>
-              <button type="button" class="btn-sm" onclick="qrAction('bill', 'Hesap İsteme Talebi', 'Masa QR • Kasa Ekranında Görüntülendi')">Hesap İste</button>
-              <button type="button" class="btn-sm" onclick="qrAction('order', 'QR Menüden Yeni Sipariş Gönderildi', 'Mutfak & Bar Ekranına Düşürüldü')">Sipariş Gönder</button>
-              <button type="button" class="btn-amber-sm" onclick="qrResolveTop()">Üst Çağrıyı Kapat</button>
-            </div>
-            <div class="sim-3col">
-              <div class="sim-mini-box"><small>Uygulama</small><strong>Gerekmez</strong></div>
-              <div class="sim-mini-box"><small>Bildirim</small><strong>Anlık Sesli</strong></div>
-              <div class="sim-mini-box"><small>Masa Kodu</small><strong>QR-OK</strong></div>
-            </div>
-          </div>
-
-          <div class="sim-card">
-            <div class="sim-card-head">
-              <h3>02 • Canlı Masa Sipariş &amp; Çağrı Akışı</h3>
-              <span class="pill">ANLIK AKIŞ</span>
-            </div>
-            <div class="sim-rows">
-              ${q.feed.map((f) => `
-                <div class="sim-row">
-                  <div>
-                    <strong>${f.title}</strong>
-                    <small>${f.sub}</small>
-                  </div>
-                  <span class="${f.cls}">${f.badge}</span>
-                </div>
-              `).join("")}
-            </div>
-            ${renderSimLog("qr")}
-          </div>
-        `;
-        footer.textContent = `Aktif Masa: ${q.table} • QR Sipariş: ${q.ordersCount} • Garson Çağrısı: ${q.callsCount}`;
+        head.innerHTML = `<div class="sim-title-group"><strong>Masa QR &amp; Garson</strong><span class="sim-subpill">ANLIK ÇAĞRI</span></div><div class="sim-kpi-row"><div class="sim-kpi ok"><span>Sipariş</span><strong>${q.ordersCount}</strong></div><div class="sim-kpi warn"><span>Garson</span><strong>${q.callsCount}</strong></div><div class="sim-kpi"><span>Hesap</span><strong>${q.billsCount}</strong></div></div>`;
+        grid.innerHTML = `<div class="sim-card"><div class="sim-card-head"><h3>01 • QR Konsol</h3><span class="pill">QR AKTİF</span></div><div><label>Masa</label><select onchange="sim.qr.table=this.value"><option value="Masa 05">Masa 05</option><option value="Masa 08">Masa 08</option><option value="Masa 12">Masa 12</option></select></div><div class="sim-filters"><button type="button" class="btn-amber-sm" onclick="sim.qr.callsCount++;sim.qr.feed.unshift({title:sim.qr.table+' — Garson Çağrısı',sub:'Anlık Bildirim',badge:'GARSON BEKLİYOR',cls:'pill-amber'});sim.qr.feed=sim.qr.feed.slice(0,3);pushSimLog('qr',sim.qr.table+' garson cagirdi');renderSim()">Garson Çağır</button><button type="button" class="btn-sm" onclick="sim.qr.ordersCount++;sim.qr.feed.unshift({title:sim.qr.table+' — Yeni QR Sipariş',sub:'Bar/Mutfak',badge:'SERVİS HAZIR',cls:'pill'});sim.qr.feed=sim.qr.feed.slice(0,3);pushSimLog('qr',sim.qr.table+' siparis gonderdi');renderSim()">Sipariş Gönder</button><button type="button" class="btn-sm" onclick="if(sim.qr.feed[0]){sim.qr.feed[0].badge='TAMAMLANDI';sim.qr.feed[0].cls='pill';renderSim()}">Üst Çağrıyı Kapat</button></div></div><div class="sim-card"><div class="sim-card-head"><h3>02 • Canlı Akış</h3><span class="pill">CANLI</span></div><div class="sim-rows">${q.feed.map(f=>`<div class="sim-row"><div><strong>${f.title}</strong><small>${f.sub}</small></div><span class="${f.cls}">${f.badge}</span></div>`).join("")}</div>${renderSimLog("qr")}</div>`;
+        footer.textContent = `Masa: ${q.table} • Çağrı: ${q.callsCount}`;
       }
     }
 
-    function mobilSetStatus(st, eta) {
-      sim.mobil.status = st;
-      sim.mobil.eta = eta;
-      pushSimLog("mobil", `[DURUM] ${sim.mobil.courier} -> '${st}' (Tahmini varış: ${eta})`);
-      renderSim();
-    }
-
-    function mobilFinishTask() {
-      if (sim.mobil.done < sim.mobil.total) sim.mobil.done += 1;
-      sim.mobil.status = "Teslimat Tamamlandı";
-      pushSimLog("mobil", `[DELIVERY] Teslimat onaylandı (${sim.mobil.done}/${sim.mobil.total})`);
-      renderSim();
-    }
-
-    function mobilScenarioDelay() {
-      sim.mobil.status = "Trafik Gecikmesi (Rota Güncellendi)";
-      sim.mobil.eta = "16 dk";
-      sim.mobil.gpsPct = 97.4;
-      sim.mobil.tasks.unshift({
-        title: `Sipariş #8690123009911 — Alternatif Sahil Rotası`,
-        sub: "4.1 km • Kurye #04 (Ahmet Demir)",
-        badge: "ROTA GÜNCELLENDİ",
-        cls: "pill-amber",
-        active: true
-      });
-      sim.mobil.tasks = sim.mobil.tasks.slice(0, 4);
-      pushSimLog("mobil", `[SENARYO] Köprü trafiği algılandı; alternatif rota ve 16 dk ETA bildirimi gönderildi`);
-      renderSim();
-    }
-
-    function mobilReset() {
-      sim.mobil.status = "Teslimat Yolunda";
-      sim.mobil.eta = "8 dk";
-      sim.mobil.done = 14;
-      sim.mobil.gpsPct = 98.6;
-      pushSimLog("mobil", `[SİSTEM] Saha simülasyonu varsayılan duruma sıfırlandı`);
-      renderSim();
-    }
-
-    function mobilFilter(actOnly) {
-      sim.mobil.filterActive = actOnly;
-      renderSim();
-    }
-
-    function webRun(label) {
-      sim.web.leads += 1;
-      sim.web.sent += 1;
-      pushSimLog("web", `[BOT] ${label} çalıştırıldı • Toplam bildirim: ${sim.web.sent.toLocaleString("tr-TR")}`);
-      renderSim();
-    }
-
-    function webQueueStep() {
-      if (sim.web.queue > 0) sim.web.queue -= 1;
-      pushSimLog("web", `[QUEUE] Bekleyen istek tamamlandı • Kalan kuyruk: ${sim.web.queue}`);
-      renderSim();
-    }
-
-    function webScenarioSpike() {
-      sim.web.queue += 6;
-      sim.web.successRate = Math.max(95.0, Number((sim.web.successRate - 0.4).toFixed(1)));
-      sim.web.flows.unshift({
-        title: "Harici CRM Webhook — Yoğun Form Kuyruğu",
-        sub: "6 Yeni İstek • Otomatik Tekrar Deneme Aktif",
-        badge: "KRİTİK",
-        cls: "pill-amber",
-        crit: true
-      });
-      sim.web.flows = sim.web.flows.slice(0, 4);
-      pushSimLog("web", `[SENARYO] Ani form yükü oluştu; kuyruk +6 arttı (${sim.web.queue} işlem)`);
-      renderSim();
-    }
-
-    function webFlushCritical() {
-      sim.web.flows = sim.web.flows.map((f) => f.crit ? { ...f, badge: "ÇÖZÜLDÜ", cls: "pill", crit: false } : f);
-      sim.web.queue = 0;
-      sim.web.successRate = 99.6;
-      pushSimLog("web", `[AKSIYON] Kritik webhook kuyruğu temizlendi ve sistem %99.6 kararlılığa döndü`);
-      renderSim();
-    }
-
-    function webFilter(critOnly) {
-      sim.web.onlyCrit = critOnly;
-      renderSim();
-    }
-
-    function posAdd(code, prod, price) {
-      sim.masaustu.barcode = code;
-      sim.masaustu.product = prod;
-      sim.masaustu.cartItems += 1;
-      sim.masaustu.cartTotal += price;
-      pushSimLog("masaustu", `[READ] Barkod ${code} (${prod}) okutuldu • +${price.toFixed(2)} TL`);
-      renderSim();
-    }
-
-    function posFinish() {
-      if (sim.masaustu.cartTotal > 0) {
-        sim.masaustu.sales += 1;
-        pushSimLog("masaustu", `[FİŞ] ${sim.masaustu.cartTotal.toFixed(2)} TL satış tamamlandı ve stok güncellendi`);
-        sim.masaustu.cartTotal = 0;
-        sim.masaustu.cartItems = 0;
-      } else {
-        pushSimLog("masaustu", `[POS] Sepet boş • Yeni barkod okutulabilir`);
-      }
-      renderSim();
-    }
-
-    function posRestock() {
-      sim.masaustu.stockCount += 50;
-      sim.masaustu.critCount = Math.max(0, sim.masaustu.critCount - 1);
-      pushSimLog("masaustu", `[İRSALİYE] Depoya +50 adet ürün girişi yapıldı • Toplam stok: ${sim.masaustu.stockCount.toLocaleString("tr-TR")}`);
-      renderSim();
-    }
-
-    function posClearCart() {
-      sim.masaustu.cartTotal = 0;
-      sim.masaustu.cartItems = 0;
-      pushSimLog("masaustu", `[POS] Aktif kasa sepeti temizlendi`);
-      renderSim();
-    }
-
-    function posFilter(critOnly) {
-      sim.masaustu.onlyCrit = critOnly;
-      renderSim();
-    }
-
-    function kafeStepGuests(d) {
-      const n = sim.kafe.guests + d;
-      if (n >= 1 && n <= 10) {
-        sim.kafe.guests = n;
-        renderSim();
-      }
-    }
-
-    function kafeSetTime(val) {
-      sim.kafe.time = val;
-      renderSim();
-    }
-
-    function kafeSetGuest(val) {
-      sim.kafe.guestName = val.trim() || "Misafir";
-      renderSim();
-    }
-
-    function kafeToggleTable(idx) {
-      const t = sim.kafe.tables[idx];
-      t.busy = !t.busy;
-      t.info = t.busy ? `${sim.kafe.time} • ${sim.kafe.guestName}` : `Müsait (${t.cap} Kişilik)`;
-      pushSimLog("kafe", `[MASA] ${t.name} -> '${t.busy ? "DOLU / REZERVE" : "BOŞ / MÜSAİT"}' olarak güncellendi`);
-      renderSim();
-    }
-
-    function kafeReserve() {
-      const idx = sim.kafe.tables.findIndex((t) => !t.busy && t.cap >= sim.kafe.guests);
-      const target = idx !== -1 ? idx : sim.kafe.tables.findIndex((t) => !t.busy);
-      if (target === -1) {
-        pushSimLog("kafe", `[UYARI] Demo listesindeki tüm masalar dolu`);
-        renderSim();
-        return;
-      }
-      sim.kafe.tables[target].busy = true;
-      sim.kafe.tables[target].info = `${sim.kafe.time} • ${sim.kafe.guestName} (${sim.kafe.guests} Kişi)`;
-      pushSimLog("kafe", `[ONAY] ${sim.kafe.tables[target].name} (${sim.kafe.guestName}, ${sim.kafe.guests} kişi, ${sim.kafe.time}) ayrıldı`);
-      renderSim();
-    }
-
-    function kafeVipScenario() {
-      sim.kafe.guests = 6;
-      sim.kafe.time = "20:30";
-      sim.kafe.guestName = "VIP Grup (Zeynep K.)";
-      kafeReserve();
-    }
-
-    function kafeFreeAll() {
-      sim.kafe.tables.forEach((t) => {
-        t.busy = false;
-        t.info = `Müsait (${t.cap} Kişilik)`;
-      });
-      pushSimLog("kafe", `[SALON] Tüm demo masalar yeni seans için boşaltıldı`);
-      renderSim();
-    }
-
-    function kafeFilter(freeOnly) {
-      sim.kafe.onlyFree = freeOnly;
-      renderSim();
-    }
-
-    function berberPickSlot(idx) {
-      sim.berber.selectedSlot = idx;
-      const s = sim.berber.slots[idx];
-      if (s.booked) {
-        pushSimLog("berber", `[ÇAKIŞMA] ${s.time} slotu dolu (${s.info}) • Başka saat seçin`);
-      } else {
-        pushSimLog("berber", `[SLOT] ${s.time} müsait saati seçildi`);
-      }
-      renderSim();
-    }
-
-    function berberStepMin(mins) {
-      sim.berber.elapsed = (sim.berber.elapsed + mins) % (sim.berber.totalMin + 1);
-      pushSimLog("berber", `[ZAMAN] Koltuk süresi: ${sim.berber.elapsed} / ${sim.berber.totalMin} dk`);
-      renderSim();
-    }
-
-    function berberConfirmSlot() {
-      const s = sim.berber.slots[sim.berber.selectedSlot];
-      if (!s) return;
-      if (s.booked) {
-        pushSimLog("berber", `[ENGELLENDİ] ${s.time} saati dolu, çakışma önlendi`);
-      } else {
-        s.booked = true;
-        s.info = "Randevu Onaylandı";
-        pushSimLog("berber", `[RANDEVU] ${s.time} slotu için randevu kaydedildi`);
-      }
-      renderSim();
-    }
-
-    function berberReleaseSlot() {
-      const s = sim.berber.slots[sim.berber.selectedSlot];
-      if (!s) return;
-      s.booked = false;
-      s.info = "Müsait Slot";
-      pushSimLog("berber", `[İPTAL] ${s.time} saati iptal edilip tekrar müsait duruma açıldı`);
-      renderSim();
-    }
-
-    function berberAddPackage() {
-      sim.berber.totalMin += 15;
-      sim.berber.service = `Saç Kesim & Sakal + Keratin Bakım (${sim.berber.totalMin} dk)`;
-      pushSimLog("berber", `[PAKET] +15 dk bakım eklendi • Yeni toplam süre: ${sim.berber.totalMin} dk`);
-      renderSim();
-    }
-
-    function qrSetTable(val) {
-      sim.qr.table = val;
-      pushSimLog("qr", `[QR] Aktif masa ${val} olarak değiştirildi`);
-      renderSim();
-    }
-
-    function qrAction(kind, label, sub) {
-      if (kind === "call") sim.qr.callsCount += 1;
-      if (kind === "bill") sim.qr.billsCount += 1;
-      if (kind === "order") sim.qr.ordersCount += 1;
-      sim.qr.feed.unshift({
-        title: `${sim.qr.table} — ${label}`,
-        sub: sub,
-        badge: kind === "order" ? "SERVİS HAZIR" : (kind === "bill" ? "HESAP HAZIRLANIYOR" : "GARSON BEKLİYOR"),
-        cls: kind === "order" ? "pill" : (kind === "bill" ? "pill-blue" : "pill-amber")
-      });
-      sim.qr.feed = sim.qr.feed.slice(0, 3);
-      pushSimLog("qr", `[${sim.qr.table}] ${label}`);
-      renderSim();
-    }
-
-    function qrResolveTop() {
-      if (sim.qr.feed.length > 0) {
-        const topTitle = sim.qr.feed[0].title;
-        sim.qr.feed[0] = {
-          ...sim.qr.feed[0],
-          badge: "TAMAMLANDI",
-          cls: "pill"
-        };
-        pushSimLog("qr", `[TAMAM] '${topTitle}' talebi personel tarafından kapatıldı`);
-      }
-      renderSim();
-    }
-
-    function applyDemoServiceToForm() {
-      const srv = SERVICES.find((s) => s.id === currentDemoId);
-      const selectEl = document.getElementById("service");
-      if (srv && selectEl) {
-        selectEl.value = `${srv.tag} - ${srv.title}`;
-      }
-      document.getElementById("iletisim").scrollIntoView({ behavior: "smooth" });
-    }
-
-    function openServiceModal(serviceId) {
-      const item = SERVICES.find((s) => s.id === serviceId);
+    function openServiceModal(id) {
+      const item = SERVICES.find(s => s.id === id);
       if (!item) return;
-
       document.getElementById("modalTag").textContent = item.tag;
       document.getElementById("modalTitle").textContent = item.title;
       document.getElementById("modalDesc").textContent = item.details;
-
-      const imgEl = document.getElementById("modalImg");
-      if (item.image) {
-        imgEl.style.display = "block";
-        imgEl.src = `/images/${item.image}`;
-        imgEl.alt = item.title;
-      } else {
-        imgEl.style.display = "none";
-      }
-
-      const listEl = document.getElementById("modalFeatures");
-      listEl.innerHTML = "";
-      item.features.forEach((feat) => {
-        const li = document.createElement("li");
-        li.textContent = feat;
-        listEl.appendChild(li);
-      });
-
-      const waText = encodeURIComponent(`Merhaba KOLAY Otomasyon, "${item.tag} - ${item.title}" hakkında bilgi ve teklif almak istiyorum.`);
-      document.getElementById("modalWaBtn").href = `https://wa.me/${WA_NUMBER}?text=${waText}`;
-
-      activeServiceOption = `${item.tag} - ${item.title}`;
+      const img = document.getElementById("modalImg");
+      if (item.image) { img.style.display = "block"; img.src = `/images/${item.image}`; }
+      const ul = document.getElementById("modalFeatures");
+      ul.innerHTML = "";
+      item.features.forEach(f => { const li = document.createElement("li"); li.textContent = f; ul.appendChild(li); });
       document.getElementById("serviceModal").classList.add("open");
     }
+    function closeServiceModal() { document.getElementById("serviceModal").classList.remove("open"); }
 
-    function closeServiceModal() {
-      document.getElementById("serviceModal").classList.remove("open");
-    }
-
-    function closeModalOnBackdrop(e) {
-      if (e.target.id === "serviceModal") {
-        closeServiceModal();
-      }
-    }
-
-    function selectServiceAndScroll() {
-      const selectEl = document.getElementById("service");
-      if (selectEl && activeServiceOption) {
-        selectEl.value = activeServiceOption;
-      }
-      closeServiceModal();
-      document.getElementById("iletisim").scrollIntoView({ behavior: "smooth" });
-    }
-
-    document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") closeServiceModal();
-    });
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            entry.target.classList.add("visible");
-          }
-        });
-      },
-      { threshold: 0.12 }
-    );
-
-    document.querySelectorAll(".reveal").forEach((el) => observer.observe(el));
+    const obs = new IntersectionObserver(entries => {
+      entries.forEach(e => { if (e.isIntersecting) e.target.classList.add("visible"); });
+    }, { threshold: 0.1 });
+    document.querySelectorAll(".reveal").forEach(el => obs.observe(el));
 
     window.addEventListener("load", () => {
       switchDemo("mobil-otomasyon", document.querySelector('.demo-tab[data-demo="mobil-otomasyon"]'));
-      document.querySelectorAll(".reveal").forEach((el) => {
-        const rect = el.getBoundingClientRect();
-        if (rect.top < window.innerHeight * 0.95) {
-          el.classList.add("visible");
-        }
+      document.querySelectorAll(".reveal").forEach(el => {
+        if (el.getBoundingClientRect().top < window.innerHeight * 0.95) el.classList.add("visible");
       });
     });
   </script>
@@ -2569,450 +1012,248 @@ INDEX_HTML = """
 </html>
 """
 
-LOGIN_HTML = """
+TENANT_PUBLIC_HTML = """
 <!DOCTYPE html>
 <html lang="tr">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Panel Girişi — KOLAY Otomasyon ve Web Sistemleri</title>
+  <title>{{ tenant.business_name }} — KOLAY Otomasyon</title>
   <style>
-    :root {
-      --bg: #080d0b;
-      --bg-soft: #0f1714;
-      --card: #121d18;
-      --text: #f8fafc;
-      --muted: #9ca3af;
-      --accent: #10b981;
-      --accent-bright: #34d399;
-      --accent-2: #f59e0b;
-      --danger: #ef4444;
-      --border: rgba(16, 185, 129, 0.22);
-    }
-
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-      font-family: "Inter", system-ui, -apple-system, sans-serif;
-    }
-
-    body {
-      min-height: 100vh;
-      display: grid;
-      place-items: center;
-      background:
-        radial-gradient(circle at 20% 20%, rgba(16, 185, 129, 0.14), transparent 40%),
-        var(--bg);
-      color: var(--text);
-      padding: 20px;
-    }
-
-    .login-card {
-      width: 100%;
-      max-width: 410px;
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 20px;
-      padding: 28px;
-      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
-      display: grid;
-      gap: 16px;
-    }
-
-    .login-card h1 {
-      font-size: 1.35rem;
-    }
-
-    .login-card p {
-      color: var(--muted);
-      font-size: 0.9rem;
-    }
-
-    .err-box {
-      padding: 11px 13px;
-      border-radius: 10px;
-      background: rgba(239, 68, 68, 0.14);
-      border: 1px solid rgba(239, 68, 68, 0.38);
-      color: #fca5a5;
-      font-size: 0.88rem;
-      font-weight: 600;
-    }
-
-    label {
-      display: block;
-      font-size: 0.85rem;
-      color: #d1d5db;
-      margin-bottom: 6px;
-      font-weight: 600;
-    }
-
-    input {
-      width: 100%;
-      padding: 12px 14px;
-      border-radius: 10px;
-      border: 1px solid var(--border);
-      background: var(--bg-soft);
-      color: var(--text);
-      font-size: 0.95rem;
-    }
-
-    input:focus {
-      outline: none;
-      border-color: var(--accent);
-    }
-
-    .btn-login {
-      width: 100%;
-      padding: 12px 16px;
-      border-radius: 11px;
-      border: none;
-      cursor: pointer;
-      font-weight: 800;
-      font-size: 0.95rem;
-      color: #04130d;
-      background: linear-gradient(135deg, var(--accent-bright), var(--accent-2));
-    }
-
-    .back-link {
-      text-align: center;
-      font-size: 0.88rem;
-    }
-
-    .back-link a {
-      color: var(--accent-bright);
-      text-decoration: none;
-    }
+    :root { --bg:#080d0b; --card:#121d18; --soft:#0f1714; --text:#f8fafc; --muted:#9ca3af; --accent:#10b981; --bright:#34d399; --amber:#f59e0b; --border:rgba(16,185,129,0.22); }
+    * { box-sizing:border-box; margin:0; padding:0; font-family:Inter,system-ui,sans-serif; }
+    body { background:var(--bg); color:var(--text); padding:28px 18px 50px; }
+    .wrap { max-width:960px; margin:0 auto; display:grid; gap:20px; }
+    .top { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; border-bottom:1px solid var(--border); padding-bottom:16px; }
+    .btn { text-decoration:none; padding:9px 14px; border-radius:10px; font-weight:700; font-size:0.88rem; border:1px solid var(--border); background:var(--card); color:var(--bright); }
+    .btn-main { background:linear-gradient(135deg,var(--bright),var(--accent)); color:#04130d; border:none; }
+    .card { background:var(--card); border:1px solid var(--border); border-radius:16px; padding:22px; display:grid; gap:14px; }
+    label { display:block; font-size:0.84rem; color:#d1d5db; margin-bottom:6px; font-weight:600; }
+    input, select, textarea { width:100%; padding:10px 12px; border-radius:10px; border:1px solid var(--border); background:var(--soft); color:var(--text); }
+    .ok { padding:12px 14px; border-radius:10px; background:rgba(16,185,129,0.16); border:1px solid rgba(16,185,129,0.4); color:#a7f3d0; font-weight:600; }
   </style>
 </head>
 <body>
-  <form class="login-card" method="POST" action="{{ url_for('login', next=next_url) }}">
-    <div>
-      <h1>KOLAY Otomasyon — Panel Girişi</h1>
-      <p>Gelen talepleri yönetmek için yönetici bilgilerini gir.</p>
+  <div class="wrap">
+    <div class="top">
+      <div>
+        <div style="font-size:0.78rem;color:var(--amber);font-weight:800;">İŞLETME SAYFASI • /i/{{ tenant.slug }}</div>
+        <h1 style="font-size:1.5rem;">{{ tenant.business_name }}</h1>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <a class="btn" href="{{ url_for('index') }}">← Ana SaaS</a>
+        <a class="btn btn-main" href="{{ url_for('tenant_panel', slug=tenant.slug) }}">İşletme Paneli</a>
+      </div>
     </div>
 
-    {% if error %}
-    <div class="err-box">{{ error }}</div>
+    {% if sent %}
+    <div class="ok">Talebiniz <strong>{{ tenant.business_name }}</strong> paneline başarıyla iletildi!</div>
     {% endif %}
 
+    <form class="card" method="POST">
+      <h2 style="font-size:1.12rem;">Talep / Randevu / Sipariş Bırak</h2>
+      <div><label>Ad Soyad</label><input type="text" name="name" required /></div>
+      <div><label>Telefon</label><input type="text" name="phone" required /></div>
+      <div>
+        <label>Konu / Hizmet</label>
+        <select name="service">
+          {% for srv in services %}
+          <option value="{{ srv.tag }} - {{ srv.title }}">{{ srv.tag }} — {{ srv.title }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div><label>Mesaj / Not</label><textarea name="message" rows="4" required></textarea></div>
+      <button type="submit" class="btn btn-main" style="cursor:pointer;">Gönder</button>
+    </form>
+  </div>
+</body>
+</html>
+"""
+
+TENANT_LOGIN_HTML = """
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ tenant.business_name }} — Panel Girişi</title>
+  <style>
+    body { min-height:100vh; display:grid; place-items:center; background:#080d0b; color:#f8fafc; font-family:Inter,system-ui,sans-serif; padding:20px; }
+    .box { width:100%; max-width:400px; background:#121d18; border:1px solid rgba(16,185,129,0.25); border-radius:18px; padding:24px; display:grid; gap:14px; }
+    label { display:block; font-size:0.84rem; margin-bottom:6px; color:#d1d5db; }
+    input { width:100%; padding:10px 12px; border-radius:10px; border:1px solid rgba(16,185,129,0.25); background:#0f1714; color:#f8fafc; }
+    button { padding:11px; border-radius:10px; border:none; background:linear-gradient(135deg,#34d399,#10b981); color:#04130d; font-weight:800; cursor:pointer; }
+    .err { padding:10px; border-radius:10px; background:rgba(239,68,68,0.16); color:#fca5a5; font-size:0.86rem; }
+    a { color:#34d399; text-decoration:none; font-size:0.86rem; }
+  </style>
+</head>
+<body>
+  <form class="box" method="POST">
     <div>
-      <label for="username">Kullanıcı Adı</label>
-      <input id="username" type="text" name="username" autocomplete="username" required />
+      <h1 style="font-size:1.25rem;">{{ tenant.business_name }}</h1>
+      <p style="color:#9ca3af;font-size:0.85rem;">İşletme paneli girişi (/i/{{ tenant.slug }}/panel)</p>
     </div>
-
-    <div>
-      <label for="password">Şifre</label>
-      <input id="password" type="password" name="password" autocomplete="current-password" required />
-    </div>
-
-    <button type="submit" class="btn-login">Panele Giriş Yap</button>
-
-    <div class="back-link">
-      <a href="{{ url_for('index') }}">← Vitrin Sitesine Dön</a>
-    </div>
+    {% if error %}<div class="err">{{ error }}</div>{% endif %}
+    <div><label>Şifre</label><input type="password" name="password" required /></div>
+    <button type="submit">Giriş Yap</button>
+    <a href="{{ url_for('tenant_public', slug=tenant.slug) }}">← İşletme Vitrinine Dön</a>
   </form>
 </body>
 </html>
 """
 
-PANEL_HTML = """
+TENANT_PANEL_HTML = """
 <!DOCTYPE html>
 <html lang="tr">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Talep Yönetim Paneli — KOLAY Otomasyon ve Web Sistemleri</title>
+  <title>{{ tenant.business_name }} — Yönetim Paneli</title>
   <style>
-    :root {
-      --bg: #080d0b;
-      --bg-soft: #0f1714;
-      --card: #121d18;
-      --text: #f8fafc;
-      --muted: #9ca3af;
-      --accent: #10b981;
-      --accent-bright: #34d399;
-      --amber: #f59e0b;
-      --danger: #ef4444;
-      --border: rgba(16, 185, 129, 0.2);
-    }
-
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-      font-family: "Inter", system-ui, -apple-system, sans-serif;
-    }
-
-    body {
-      background: var(--bg);
-      color: var(--text);
-      padding: 24px 18px 48px;
-      line-height: 1.55;
-    }
-
-    .container {
-      max-width: 1120px;
-      margin: 0 auto;
-    }
-
-    .topbar {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: 14px;
-      padding-bottom: 20px;
-      border-bottom: 1px solid var(--border);
-      margin-bottom: 24px;
-    }
-
-    .topbar h1 {
-      font-size: 1.45rem;
-    }
-
-    .topbar p {
-      color: var(--muted);
-      font-size: 0.9rem;
-    }
-
-    .top-actions {
-      display: flex;
-      gap: 10px;
-      flex-wrap: wrap;
-    }
-
-    .back-btn,
-    .logout-btn {
-      text-decoration: none;
-      padding: 10px 16px;
-      border-radius: 10px;
-      font-weight: 700;
-      font-size: 0.9rem;
-      cursor: pointer;
-    }
-
-    .back-btn {
-      background: rgba(16, 185, 129, 0.14);
-      border: 1px solid rgba(16, 185, 129, 0.35);
-      color: var(--accent-bright);
-    }
-
-    .logout-btn {
-      background: rgba(239, 68, 68, 0.14);
-      border: 1px solid rgba(239, 68, 68, 0.35);
-      color: #fca5a5;
-    }
-
-    .stats {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 14px;
-      margin-bottom: 24px;
-    }
-
-    .stat-card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 16px 18px;
-    }
-
-    .stat-card span {
-      color: var(--muted);
-      font-size: 0.82rem;
-      display: block;
-    }
-
-    .stat-card strong {
-      font-size: 1.65rem;
-      color: var(--accent-bright);
-    }
-
-    .ticket-list {
-      display: grid;
-      gap: 14px;
-    }
-
-    .ticket-card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 20px;
-      display: grid;
-      gap: 12px;
-    }
-
-    .ticket-head {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      flex-wrap: wrap;
-      gap: 10px;
-    }
-
-    .ticket-title {
-      font-size: 1.08rem;
-      font-weight: 700;
-    }
-
-    .ticket-meta {
-      color: var(--muted);
-      font-size: 0.86rem;
-      margin-top: 2px;
-    }
-
-    .status-badge {
-      padding: 4px 11px;
-      border-radius: 999px;
-      font-size: 0.78rem;
-      font-weight: 700;
-    }
-
-    .st-yeni {
-      background: rgba(245, 158, 11, 0.16);
-      color: #fcd34d;
-      border: 1px solid rgba(245, 158, 11, 0.35);
-    }
-
-    .st-inceleniyor {
-      background: rgba(56, 189, 248, 0.16);
-      color: #7dd3fc;
-      border: 1px solid rgba(56, 189, 248, 0.35);
-    }
-
-    .st-tamamlandi {
-      background: rgba(16, 185, 129, 0.16);
-      color: #6ee7b7;
-      border: 1px solid rgba(16, 185, 129, 0.35);
-    }
-
-    .ticket-msg {
-      background: var(--bg-soft);
-      border: 1px solid rgba(255, 255, 255, 0.06);
-      padding: 12px 14px;
-      border-radius: 10px;
-      color: #e5e7eb;
-      font-size: 0.94rem;
-      white-space: pre-wrap;
-    }
-
-    .ticket-actions {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: 10px;
-    }
-
-    .status-form {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      flex-wrap: wrap;
-    }
-
-    select, button {
-      padding: 8px 12px;
-      border-radius: 9px;
-      border: 1px solid var(--border);
-      background: var(--bg-soft);
-      color: var(--text);
-      font-size: 0.86rem;
-      cursor: pointer;
-    }
-
-    .btn-save {
-      background: var(--accent);
-      color: #04130d;
-      font-weight: 700;
-      border: none;
-    }
-
-    .btn-del {
-      background: rgba(239, 68, 68, 0.14);
-      border-color: rgba(239, 68, 68, 0.35);
-      color: #fca5a5;
-      font-weight: 600;
-    }
-
-    .empty {
-      text-align: center;
-      padding: 46px 20px;
-      background: var(--card);
-      border: 1px dashed var(--border);
-      border-radius: 16px;
-      color: var(--muted);
-    }
+    :root { --bg:#080d0b; --card:#121d18; --soft:#0f1714; --text:#f8fafc; --muted:#9ca3af; --accent:#10b981; --bright:#34d399; --amber:#f59e0b; --border:rgba(16,185,129,0.22); }
+    * { box-sizing:border-box; margin:0; padding:0; font-family:Inter,system-ui,sans-serif; }
+    body { background:var(--bg); color:var(--text); padding:24px 18px 48px; }
+    .wrap { max-width:1080px; margin:0 auto; display:grid; gap:20px; }
+    .top { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; border-bottom:1px solid var(--border); padding-bottom:16px; }
+    .btn { text-decoration:none; padding:9px 14px; border-radius:10px; font-weight:700; font-size:0.86rem; border:1px solid var(--border); background:var(--card); color:var(--bright); cursor:pointer; }
+    .btn-del { background:rgba(239,68,68,0.14); border-color:rgba(239,68,68,0.35); color:#fca5a5; }
+    .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; }
+    .stat { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:14px 16px; }
+    .stat span { font-size:0.78rem; color:var(--muted); display:block; }
+    .stat strong { font-size:1.5rem; color:var(--bright); }
+    .card { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:18px; display:grid; gap:10px; }
+    .msg { background:var(--soft); padding:12px; border-radius:10px; font-size:0.92rem; }
+    select { padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--soft); color:var(--text); }
   </style>
 </head>
 <body>
-  <div class="container">
-    <div class="topbar">
+  <div class="wrap">
+    <div class="top">
       <div>
-        <h1>KOLAY Otomasyon — Gelen Talepler Paneli</h1>
-        <p>Veritabanı: <code>tickets.db</code> • Aktif oturum: <code>{{ admin_user }}</code></p>
+        <h1>{{ tenant.business_name }} — Talep Paneli</h1>
+        <p style="color:var(--muted);font-size:0.86rem;">Slug: <code>{{ tenant.slug }}</code> • Plan: <code>{{ tenant.plan|upper }}</code> • Supabase PostgreSQL</p>
       </div>
-      <div class="top-actions">
-        <a href="{{ url_for('index') }}" class="back-btn">← Vitrin Sitesine Dön</a>
-        <form method="POST" action="{{ url_for('logout') }}" style="display: inline;">
-          <button type="submit" class="logout-btn">Çıkış Yap</button>
-        </form>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <a class="btn" href="{{ url_for('tenant_public', slug=tenant.slug) }}">Vitrin Linki</a>
+        <form method="POST" action="{{ url_for('tenant_logout', slug=tenant.slug) }}"><button type="submit" class="btn btn-del">Çıkış</button></form>
       </div>
     </div>
 
     <div class="stats">
-      <div class="stat-card">
-        <span>Toplam Talep</span>
-        <strong>{{ tickets|length }}</strong>
-      </div>
-      <div class="stat-card">
-        <span>Yeni Bekleyen</span>
-        <strong style="color: #fbbf24;">{{ yeni_count }}</strong>
-      </div>
-      <div class="stat-card">
-        <span>Tamamlanan</span>
-        <strong>{{ tamam_count }}</strong>
-      </div>
+      <div class="stat"><span>Toplam Talep</span><strong>{{ tickets|length }}</strong></div>
+      <div class="stat"><span>Yeni</span><strong style="color:var(--amber);">{{ yeni_count }}</strong></div>
+      <div class="stat"><span>Tamamlanan</span><strong>{{ tamam_count }}</strong></div>
     </div>
 
-    {% if tickets %}
-    <div class="ticket-list">
-      {% for t in tickets %}
-      <div class="ticket-card">
-        <div class="ticket-head">
-          <div>
-            <div class="ticket-title">{{ t.name }} — <span style="color: var(--accent-bright);">{{ t.service or 'Genel Talep' }}</span></div>
-            <div class="ticket-meta">İletişim: {{ t.phone or '-' }} • Tarih: {{ t.created_at or 'Belirtilmedi' }}</div>
-          </div>
-          {% set st = t.status or 'Yeni' %}
-          <span class="status-badge {% if st == 'Tamamlandı' %}st-tamamlandi{% elif st == 'İnceleniyor' %}st-inceleniyor{% else %}st-yeni{% endif %}">
-            {{ st }}
-          </span>
-        </div>
-
-        <div class="ticket-msg">{{ t.message }}</div>
-
-        <div class="ticket-actions">
-          <form class="status-form" method="POST" action="{{ url_for('update_ticket', ticket_id=t.id) }}">
-            <select name="status">
-              <option value="Yeni" {% if st == 'Yeni' %}selected{% endif %}>Yeni</option>
-              <option value="İnceleniyor" {% if st == 'İnceleniyor' %}selected{% endif %}>İnceleniyor</option>
-              <option value="Tamamlandı" {% if st == 'Tamamlandı' %}selected{% endif %}>Tamamlandı</option>
-            </select>
-            <button type="submit" class="btn-save">Durumu Güncelle</button>
-          </form>
-
-          <form method="POST" action="{{ url_for('delete_ticket', ticket_id=t.id) }}" onsubmit="return confirm('Bu talebi silmek istediğine emin misin?');">
-            <button type="submit" class="btn-del">Talebi Sil</button>
-          </form>
-        </div>
+    {% for t in tickets %}
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+        <div><strong>{{ t.name }}</strong> — <span style="color:var(--bright);">{{ t.service or 'Genel' }}</span><div style="font-size:0.82rem;color:var(--muted);">{{ t.phone or '-' }} • {{ t.created_at }}</div></div>
+        <span style="font-size:0.8rem;font-weight:700;color:var(--amber);">{{ t.status }}</span>
       </div>
-      {% endfor %}
+      <div class="msg">{{ t.message }}</div>
+      <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+        <form method="POST" action="{{ url_for('tenant_update_ticket', slug=tenant.slug, ticket_id=t.id) }}" style="display:flex;gap:8px;">
+          <select name="status">
+            <option value="Yeni" {% if t.status=='Yeni' %}selected{% endif %}>Yeni</option>
+            <option value="İnceleniyor" {% if t.status=='İnceleniyor' %}selected{% endif %}>İnceleniyor</option>
+            <option value="Tamamlandı" {% if t.status=='Tamamlandı' %}selected{% endif %}>Tamamlandı</option>
+          </select>
+          <button type="submit" class="btn">Güncelle</button>
+        </form>
+        <form method="POST" action="{{ url_for('tenant_delete_ticket', slug=tenant.slug, ticket_id=t.id) }}" onsubmit="return confirm('Silinsin mi?');">
+          <button type="submit" class="btn btn-del">Sil</button>
+        </form>
+      </div>
     </div>
     {% else %}
-    <div class="empty">Henüz kayıtlı bir talep bulunmuyor. Vitrin sayfasındaki iletişim formundan test kaydı oluşturabilirsin.</div>
-    {% endif %}
+    <div class="card" style="text-align:center;color:var(--muted);">Bu işletmeye ait henüz kayıt yok.</div>
+    {% endfor %}
+  </div>
+</body>
+</html>
+"""
+
+SUPERADMIN_LOGIN_HTML = """
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Süper Admin Girişi</title>
+  <style>
+    body { min-height:100vh; display:grid; place-items:center; background:#080d0b; color:#f8fafc; font-family:Inter,system-ui,sans-serif; padding:20px; }
+    .box { width:100%; max-width:400px; background:#121d18; border:1px solid rgba(16,185,129,0.25); border-radius:18px; padding:24px; display:grid; gap:14px; }
+    label { display:block; font-size:0.84rem; margin-bottom:6px; color:#d1d5db; }
+    input { width:100%; padding:10px 12px; border-radius:10px; border:1px solid rgba(16,185,129,0.25); background:#0f1714; color:#f8fafc; }
+    button { padding:11px; border-radius:10px; border:none; background:linear-gradient(135deg,#34d399,#10b981); color:#04130d; font-weight:800; cursor:pointer; }
+  </style>
+</head>
+<body>
+  <form class="box" method="POST">
+    <h1 style="font-size:1.25rem;">Süper Admin Girişi</h1>
+    {% if error %}<div style="color:#fca5a5;font-size:0.86rem;">{{ error }}</div>{% endif %}
+    <div><label>Kullanıcı Adı</label><input type="text" name="username" required /></div>
+    <div><label>Şifre</label><input type="password" name="password" required /></div>
+    <button type="submit">Giriş Yap</button>
+    <a href="{{ url_for('index') }}" style="color:#34d399;text-decoration:none;font-size:0.86rem;">← Ana Sayfa</a>
+  </form>
+</body>
+</html>
+"""
+
+SUPERADMIN_HTML = """
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Süper Admin — İşletme Yönetimi</title>
+  <style>
+    :root { --bg:#080d0b; --card:#121d18; --soft:#0f1714; --text:#f8fafc; --muted:#9ca3af; --accent:#10b981; --bright:#34d399; --amber:#f59e0b; --border:rgba(16,185,129,0.22); }
+    * { box-sizing:border-box; margin:0; padding:0; font-family:Inter,system-ui,sans-serif; }
+    body { background:var(--bg); color:var(--text); padding:24px 18px 48px; }
+    .wrap { max-width:1120px; margin:0 auto; display:grid; gap:20px; }
+    .top { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; border-bottom:1px solid var(--border); padding-bottom:16px; }
+    .btn { text-decoration:none; padding:8px 13px; border-radius:9px; font-weight:700; font-size:0.84rem; border:1px solid var(--border); background:var(--card); color:var(--bright); cursor:pointer; }
+    .card { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:18px; display:grid; gap:12px; }
+    select { padding:7px 10px; border-radius:8px; border:1px solid var(--border); background:var(--soft); color:var(--text); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div>
+        <h1>Süper Admin — Tüm İşletmeler</h1>
+        <p style="color:var(--muted);font-size:0.86rem;">Toplam {{ tenants|length }} kayıtlı işletme</p>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <a class="btn" href="{{ url_for('index') }}">← Vitrin</a>
+        <form method="POST" action="{{ url_for('superadmin_logout') }}"><button type="submit" class="btn">Çıkış</button></form>
+      </div>
+    </div>
+
+    {% for tn in tenants %}
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+        <div>
+          <strong>{{ tn.business_name }}</strong> • <code>/i/{{ tn.slug }}</code>
+          <div style="font-size:0.82rem;color:var(--muted);">{{ tn.owner_email }} • Talep Sayısı: {{ tn.ticket_count }}</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <a class="btn" href="{{ url_for('tenant_public', slug=tn.slug) }}">Vitrin</a>
+          <a class="btn" href="{{ url_for('tenant_panel', slug=tn.slug) }}">Panel</a>
+          <form method="POST" action="{{ url_for('superadmin_tenant_plan', tenant_id=tn.id) }}" style="display:flex;gap:6px;">
+            <select name="plan">
+              <option value="free" {% if tn.plan=='free' %}selected{% endif %}>FREE</option>
+              <option value="pro" {% if tn.plan=='pro' %}selected{% endif %}>PRO</option>
+            </select>
+            <button type="submit" class="btn">Kaydet</button>
+          </form>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
   </div>
 </body>
 </html>
@@ -3034,94 +1275,185 @@ def serve_image(filename):
     direct = IMAGES_DIR / filename
     if direct.exists() and direct.is_file():
         return send_from_directory(IMAGES_DIR, filename)
-
     stem = Path(filename).stem
     for ext in ("", ".jpg", ".jpeg", ".png", ".webp"):
         candidate = IMAGES_DIR / f"{stem}{ext}"
         if candidate.exists() and candidate.is_file():
             return send_from_directory(IMAGES_DIR, candidate.name)
-
     abort(404)
 
 
-@app.route("/", methods=["GET", "POST"])
+@app.route("/", methods=["GET"])
 def index():
+    created_slug = request.args.get("created", "").strip()
+    created_tenant = get_tenant_by_slug(created_slug) if created_slug else None
+    saas_error = request.args.get("err", "").strip() or None
+    return render_template_string(
+        INDEX_HTML,
+        services=SERVICES_DATA,
+        wa_number=WHATSAPP_NUMBER,
+        created_tenant=created_tenant,
+        saas_error=saas_error,
+    )
+
+
+@app.route("/saas/register", methods=["POST"])
+def register_tenant():
+    business_name = request.form.get("business_name", "").strip()
+    raw_slug = request.form.get("slug", "").strip()
+    owner_email = request.form.get("owner_email", "").strip()
+    password = request.form.get("password", "").strip()
+    plan = request.form.get("plan", "free").strip()
+
+    if not business_name or not owner_email or len(password) < 4:
+        return redirect(url_for("index", err="İşletme adı, e-posta ve en az 4 karakter şifre zorunlu.") + "#saas-basla")
+
+    try:
+        tenant = create_tenant(business_name, owner_email, password, raw_slug=raw_slug, plan=plan)
+        authed = set(session.get("tenant_auth_slugs", []))
+        authed.add(tenant["slug"])
+        session["tenant_auth_slugs"] = list(authed)
+        return redirect(url_for("index", created=tenant["slug"]) + "#saas-basla")
+    except Exception as exc:
+        return redirect(url_for("index", err=f"Kayıt sırasında hata oluştu: {exc}") + "#saas-basla")
+
+
+@app.route("/saas/login", methods=["POST"])
+def tenant_quick_login():
+    slug = slugify(request.form.get("slug", "").strip())
+    password = request.form.get("password", "").strip()
+    tenant = get_tenant_by_slug(slug)
+    if tenant and check_password_hash(tenant["password_hash"], password):
+        authed = set(session.get("tenant_auth_slugs", []))
+        authed.add(tenant["slug"])
+        session["tenant_auth_slugs"] = list(authed)
+        return redirect(url_for("tenant_panel", slug=tenant["slug"]))
+    return redirect(url_for("index", err="İşletme slug veya şifre hatalı.") + "#saas-basla")
+
+
+@app.route("/i/<slug>", methods=["GET", "POST"])
+def tenant_public(slug):
+    tenant = get_tenant_by_slug(slug)
+    if not tenant or not tenant["is_active"]:
+        abort(404)
+
     if request.method == "POST":
         name = request.form.get("name", "").strip()
         phone = request.form.get("phone", "").strip()
         service = request.form.get("service", "").strip()
         message = request.form.get("message", "").strip()
         if name and message:
-            add_ticket(name, phone, service, message)
-        return redirect(url_for("index", sent="1") + "#iletisim")
+            add_ticket(tenant["id"], name, phone, service, message)
+        return redirect(url_for("tenant_public", slug=slug, sent="1"))
 
     sent = request.args.get("sent") == "1"
-    return render_template_string(
-        INDEX_HTML,
-        services=SERVICES_DATA,
-        sent=sent,
-        wa_number=WHATSAPP_NUMBER,
-    )
+    return render_template_string(TENANT_PUBLIC_HTML, tenant=tenant, services=SERVICES_DATA, sent=sent)
 
 
-@app.route("/panel/login", methods=["GET", "POST"])
-def login():
-    next_url = request.args.get("next") or url_for("panel")
+@app.route("/i/<slug>/login", methods=["GET", "POST"])
+def tenant_login(slug):
+    tenant = get_tenant_by_slug(slug)
+    if not tenant:
+        abort(404)
+    next_url = request.args.get("next") or url_for("tenant_panel", slug=slug)
     error = None
 
-    if session.get("panel_auth"):
-        return redirect(url_for("panel"))
-
     if request.method == "POST":
-        username = request.form.get("username", "").strip()
         password = request.form.get("password", "").strip()
-        target_next = request.form.get("next") or url_for("panel")
+        if check_password_hash(tenant["password_hash"], password):
+            authed = set(session.get("tenant_auth_slugs", []))
+            authed.add(slug)
+            session["tenant_auth_slugs"] = list(authed)
+            return redirect(request.form.get("next") or next_url)
+        error = "Şifre hatalı."
 
-        if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
-            session["panel_auth"] = True
-            session["panel_user"] = username
-            return redirect(target_next)
-        error = "Kullanıcı adı veya şifre hatalı."
-
-    return render_template_string(LOGIN_HTML, error=error, next_url=next_url)
-
-
-@app.route("/panel/logout", methods=["POST"])
-def logout():
-    session.clear()
-    return redirect(url_for("login"))
+    return render_template_string(TENANT_LOGIN_HTML, tenant=tenant, error=error)
 
 
-@app.route("/panel")
-@login_required
-def panel():
-    tickets = load_tickets()
+@app.route("/i/<slug>/logout", methods=["POST"])
+def tenant_logout(slug):
+    authed = set(session.get("tenant_auth_slugs", []))
+    authed.discard(slug)
+    session["tenant_auth_slugs"] = list(authed)
+    return redirect(url_for("tenant_login", slug=slug))
+
+
+@app.route("/i/<slug>/panel")
+@tenant_login_required
+def tenant_panel(slug):
+    tenant = get_tenant_by_slug(slug)
+    tickets = load_tickets(tenant["id"])
     yeni_count = sum(1 for t in tickets if (t.get("status") or "Yeni") == "Yeni")
     tamam_count = sum(1 for t in tickets if t.get("status") == "Tamamlandı")
     return render_template_string(
-        PANEL_HTML,
+        TENANT_PANEL_HTML,
+        tenant=tenant,
         tickets=tickets,
         yeni_count=yeni_count,
         tamam_count=tamam_count,
-        admin_user=session.get("panel_user", ADMIN_USERNAME),
     )
 
 
-@app.route("/panel/update/<ticket_id>", methods=["POST"])
-@login_required
-def update_ticket(ticket_id):
+@app.route("/i/<slug>/panel/update/<ticket_id>", methods=["POST"])
+@tenant_login_required
+def tenant_update_ticket(slug, ticket_id):
+    tenant = get_tenant_by_slug(slug)
     new_status = request.form.get("status", "Yeni").strip()
     if new_status not in {"Yeni", "İnceleniyor", "Tamamlandı"}:
         new_status = "Yeni"
-    update_ticket_status(ticket_id, new_status)
-    return redirect(url_for("panel"))
+    update_ticket_status(tenant["id"], ticket_id, new_status)
+    return redirect(url_for("tenant_panel", slug=slug))
 
 
-@app.route("/panel/delete/<ticket_id>", methods=["POST"])
-@login_required
-def delete_ticket(ticket_id):
-    delete_ticket_by_id(ticket_id)
-    return redirect(url_for("panel"))
+@app.route("/i/<slug>/panel/delete/<ticket_id>", methods=["POST"])
+@tenant_login_required
+def tenant_delete_ticket(slug, ticket_id):
+    tenant = get_tenant_by_slug(slug)
+    delete_ticket_by_id(tenant["id"], ticket_id)
+    return redirect(url_for("tenant_panel", slug=slug))
+
+
+@app.route("/admin/login", methods=["GET", "POST"])
+def superadmin_login():
+    next_url = request.args.get("next") or url_for("superadmin_panel")
+    error = None
+    if session.get("superadmin_auth"):
+        return redirect(url_for("superadmin_panel"))
+
+    if request.method == "POST":
+        u = request.form.get("username", "").strip()
+        p = request.form.get("password", "").strip()
+        if u == SUPERADMIN_USERNAME and p == SUPERADMIN_PASSWORD:
+            session["superadmin_auth"] = True
+            return redirect(next_url)
+        error = "Kullanıcı adı veya şifre hatalı."
+
+    return render_template_string(SUPERADMIN_LOGIN_HTML, error=error)
+
+
+@app.route("/admin/logout", methods=["POST"])
+def superadmin_logout():
+    session.pop("superadmin_auth", None)
+    return redirect(url_for("superadmin_login"))
+
+
+@app.route("/admin")
+@superadmin_required
+def superadmin_panel():
+    tenants = get_all_tenants()
+    return render_template_string(SUPERADMIN_HTML, tenants=tenants)
+
+
+@app.route("/admin/tenant/<int:tenant_id>/plan", methods=["POST"])
+@superadmin_required
+def superadmin_tenant_plan(tenant_id):
+    plan = request.form.get("plan", "free").strip()
+    if plan not in {"free", "pro"}:
+        plan = "free"
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE tenants SET plan = %s WHERE id = %s", (plan, tenant_id))
+    return redirect(url_for("superadmin_panel"))
 
 
 if __name__ == "__main__":
