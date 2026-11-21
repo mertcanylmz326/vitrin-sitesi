@@ -387,7 +387,8 @@ def get_menu_items(tenant_id):
             return cur.fetchall()
 
 
-def get_booked_slots(tenant_id, target_date=None):
+def get_booked_tables_by_slot(tenant_id, target_date=None):
+    """Seçili tarihte her saat diliminde dolu olan masa numaralarını döndürür."""
     date_str = (target_date or datetime.now().strftime("%Y-%m-%d")).strip()
     with get_db() as conn:
         with conn.cursor() as cur:
@@ -401,15 +402,21 @@ def get_booked_slots(tenant_id, target_date=None):
             )
             rows = cur.fetchall()
 
-    booked_by_slot = {}
+    booked_tables = {sl: set() for sl in TIME_SLOTS}
     for r in rows:
         txt = f"{r.get('service') or ''} {r.get('message') or ''}"
         if date_str and date_str not in txt:
             continue
-        for slot in TIME_SLOTS:
-            if slot in txt:
-                booked_by_slot[slot] = booked_by_slot.get(slot, 0) + 1
-    return booked_by_slot
+        matched_slot = next((sl for sl in TIME_SLOTS if sl in txt), None)
+        if not matched_slot:
+            continue
+        m = re.search(r"Masa\s+(\d+)", txt, flags=re.IGNORECASE)
+        if m:
+            booked_tables[matched_slot].add(int(m.group(1)))
+        else:
+            # Eski kayıtlarda masa numarası yoksa en küçük boş numarayı dolu say
+            booked_tables[matched_slot].add(len(booked_tables[matched_slot]) + 1)
+    return booked_tables
 
 
 def load_tickets(tenant_id):
@@ -923,6 +930,7 @@ TENANT_PUBLIC_HTML = """
     .btn-main { background:linear-gradient(135deg,#34d399,#10b981); color:#04130d; border:none; }
     .card { background:#121d18; border:1px solid rgba(16,185,129,0.22); border-radius:16px; padding:22px; display:grid; gap:14px; }
     .row-2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .row-3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
     label { display:block; font-size:0.84rem; color:#d1d5db; margin-bottom:6px; font-weight:600; }
     input, select, textarea { width:100%; padding:10px 12px; border-radius:10px; border:1px solid rgba(16,185,129,0.22); background:#0f1714; color:#f8fafc; }
     .ok { padding:12px 14px; border-radius:10px; background:rgba(16,185,129,0.16); border:1px solid rgba(16,185,129,0.4); color:#a7f3d0; font-weight:600; }
@@ -932,7 +940,7 @@ TENANT_PUBLIC_HTML = """
     .menu-img { width:100%; aspect-ratio:16/10; object-fit:cover; border-radius:8px; display:block; }
     .menu-check { display:flex; align-items:flex-start; gap:8px; font-size:0.85rem; color:#e5e7eb; cursor:pointer; }
     .menu-check input[type="checkbox"] { width:auto; margin-top:3px; }
-    @media (max-width:720px) { .row-2 { grid-template-columns:1fr; } }
+    @media (max-width:780px) { .row-2, .row-3 { grid-template-columns:1fr; } }
   </style>
 </head>
 <body>
@@ -955,8 +963,8 @@ TENANT_PUBLIC_HTML = """
     {% if tenant.module_type == 'kafe-randevu' %}
     <form class="card" method="POST">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
-        <h2 style="font-size:1.16rem;">Masa Randevusu &amp; İsteğe Bağlı Menü Seçimi</h2>
-        <span style="font-size:0.8rem;color:#9ca3af;">Toplam Masa: <strong>{{ tenant.table_count or 8 }}</strong></span>
+        <h2 style="font-size:1.16rem;">Randevu Saati, Masa Seçimi &amp; İsteğe Bağlı Menü</h2>
+        <span style="font-size:0.8rem;color:#9ca3af;">Tanımlı Masa: <strong>{{ tenant.table_count or 8 }} Masa</strong></span>
       </div>
 
       <div class="row-2">
@@ -964,22 +972,26 @@ TENANT_PUBLIC_HTML = """
         <div><label>Telefon</label><input type="text" name="phone" placeholder="05xx xxx xx xx" required /></div>
       </div>
 
-      <div class="row-2">
+      <div class="row-3">
         <div>
-          <label>Randevu Tarihi</label>
-          <input type="date" name="res_date" id="resDateInput" value="{{ selected_date }}" onchange="reloadDateSlots()" required />
+          <label>1. Randevu Tarihi</label>
+          <input type="date" name="res_date" id="resDateInput" value="{{ selected_date }}" onchange="updateTableOptions()" required />
         </div>
         <div>
-          <label>Müsait Saat (Seçili Tarih &amp; Masa Kapasitesine Göre)</label>
-          <select name="slot_time" required>
+          <label>2. Randevu Saati (Müsaitlik)</label>
+          <select name="slot_time" id="slotSelect" onchange="updateTableOptions()" required>
             {% for sl in slot_options %}
-              {% if sl.available > 0 %}
-                <option value="{{ sl.time }}">{{ sl.time }} — Müsait ({{ sl.available }}/{{ tenant.table_count or 8 }} masa boş)</option>
+              {% if sl.available_count > 0 %}
+                <option value="{{ sl.time }}">{{ sl.time }} — Müsait ({{ sl.available_count }} masa boş)</option>
               {% else %}
                 <option value="{{ sl.time }}" disabled>{{ sl.time }} — Dolu</option>
               {% endif %}
             {% endfor %}
           </select>
+        </div>
+        <div>
+          <label>3. Masa Seçimi (Boş Masalar)</label>
+          <select name="table_no" id="tableSelect" required></select>
         </div>
       </div>
 
@@ -1026,16 +1038,48 @@ TENANT_PUBLIC_HTML = """
       {% endif %}
 
       <div><label>Ek Not / Özel İstek</label><textarea name="message" rows="2" placeholder="Cam kenarı, doğum günü notu veya ek istek..."></textarea></div>
-      <button type="submit" class="btn btn-main" style="cursor:pointer;">Randevu Talebini Gönder</button>
+      <button type="submit" class="btn btn-main" style="cursor:pointer;">Randevu ve Masa Talebini Gönder</button>
     </form>
 
     <script>
-      function reloadDateSlots() {
-        const d = document.getElementById("resDateInput").value;
-        const url = new URL(window.location.href);
-        if (d) url.searchParams.set("date", d);
-        window.location.href = url.toString();
+      const SLOT_DATA = {{ slot_options | tojson }};
+      let lastDate = document.getElementById("resDateInput").value;
+
+      function updateTableOptions() {
+        const dateInput = document.getElementById("resDateInput");
+        if (dateInput.value && dateInput.value !== lastDate) {
+          const url = new URL(window.location.href);
+          url.searchParams.set("date", dateInput.value);
+          window.location.href = url.toString();
+          return;
+        }
+        const slotSel = document.getElementById("slotSelect");
+        const tableSel = document.getElementById("tableSelect");
+        let chosenSlot = slotSel.value;
+        let currentObj = SLOT_DATA.find(s => s.time === chosenSlot && s.free_tables.length > 0);
+        if (!currentObj) {
+          currentObj = SLOT_DATA.find(s => s.free_tables.length > 0);
+          if (currentObj) {
+            slotSel.value = currentObj.time;
+          }
+        }
+        tableSel.innerHTML = "";
+        if (!currentObj || !currentObj.free_tables.length) {
+          const opt = document.createElement("option");
+          opt.value = "";
+          opt.textContent = "Bu saatte boş masa yok";
+          tableSel.appendChild(opt);
+          return;
+        }
+        currentObj.free_tables.forEach(tNo => {
+          const opt = document.createElement("option");
+          opt.value = `Masa ${tNo}`;
+          opt.textContent = `Masa ${tNo} (Müsait)`;
+          tableSel.appendChild(opt);
+        });
       }
+
+      updateTableOptions();
     </script>
 
     {% elif tenant.module_type == 'berber-randevu' %}
@@ -1544,17 +1588,23 @@ def tenant_public(slug):
     selected_date = request.args.get("date") or datetime.now().strftime("%Y-%m-%d")
     menu_items = get_menu_items(tenant["id"]) if mod_type == "kafe-randevu" else []
     table_cap = max(1, int(tenant.get("table_count") or 8))
-    booked_map = get_booked_slots(tenant["id"], selected_date) if mod_type == "kafe-randevu" else {}
-    slot_options = [
-        {"time": sl, "available": max(0, table_cap - booked_map.get(sl, 0))}
-        for sl in TIME_SLOTS
-    ]
+    booked_map = get_booked_tables_by_slot(tenant["id"], selected_date) if mod_type == "kafe-randevu" else {}
+    slot_options = []
+    for sl in TIME_SLOTS:
+        taken = booked_map.get(sl, set())
+        free_tables = [t_num for t_num in range(1, table_cap + 1) if t_num not in taken]
+        slot_options.append({
+            "time": sl,
+            "free_tables": free_tables,
+            "available_count": len(free_tables),
+        })
 
     if request.method == "POST":
         name = request.form.get("name", "").strip()
         phone = request.form.get("phone", "").strip()
         raw_service = request.form.get("service", "").strip()
         slot_time = request.form.get("slot_time", "").strip()
+        table_no = request.form.get("table_no", "").strip()
         guest_count = request.form.get("guest_count", "").strip()
         res_date = request.form.get("res_date", selected_date).strip()
         menu_mode = request.form.get("menu_mode", "decide_on_arrival").strip()
@@ -1562,12 +1612,15 @@ def tenant_public(slug):
         raw_message = request.form.get("message", "").strip()
 
         if mod_type == "kafe-randevu":
-            service = f"Masa Randevu ({res_date} {slot_time})"
+            masa_etiket = f" — {table_no}" if table_no else ""
+            service = f"Randevu {res_date} {slot_time}{masa_etiket}"
             parts = []
-            if guest_count:
-                parts.append(f"Kişi: {guest_count}")
             if res_date or slot_time:
                 parts.append(f"Tarih/Saat: {res_date} {slot_time}".strip())
+            if table_no:
+                parts.append(f"Masa: {table_no}")
+            if guest_count:
+                parts.append(f"Kişi: {guest_count}")
             if menu_mode == "preselect" and selected_menu:
                 parts.append("Menü Seçimi: " + ", ".join(selected_menu))
             else:
