@@ -28,6 +28,7 @@ app.secret_key = os.environ.get("FLASK_SECRET_KEY", "kolay-otomasyon-gizli-anaht
 BASE_DIR = Path(__file__).resolve().parent
 IMAGES_DIR = BASE_DIR / "images"
 MENU_IMAGES_DIR = IMAGES_DIR / "menu"
+LOGO_IMAGES_DIR = IMAGES_DIR / "logos"
 LEGACY_JSON_FILE = BASE_DIR / "tickets.json"
 
 ALLOWED_IMG_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
@@ -164,13 +165,13 @@ def normalize_phone(raw_phone):
     return digits
 
 
-def save_menu_image(tenant_id, file_storage):
+def save_uploaded_image(subdir, tenant_id, file_storage):
     if not file_storage or not file_storage.filename:
         return ""
     ext = Path(secure_filename(file_storage.filename)).suffix.lower()
     if ext not in ALLOWED_IMG_EXTS:
         return ""
-    target_dir = MENU_IMAGES_DIR / str(tenant_id)
+    target_dir = subdir / str(tenant_id)
     target_dir.mkdir(parents=True, exist_ok=True)
     fname = f"{uuid.uuid4().hex[:12]}{ext}"
     file_storage.save(str(target_dir / fname))
@@ -190,6 +191,7 @@ def get_db():
 def init_db():
     try:
         MENU_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+        LOGO_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
         with get_db() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -203,6 +205,7 @@ def init_db():
                         plan TEXT NOT NULL DEFAULT 'starter',
                         module_type TEXT NOT NULL DEFAULT 'genel',
                         table_count INTEGER NOT NULL DEFAULT 8,
+                        logo_filename TEXT DEFAULT '',
                         whatsapp_number TEXT DEFAULT '',
                         payment_note TEXT DEFAULT '',
                         payment_requested BOOLEAN NOT NULL DEFAULT FALSE,
@@ -214,6 +217,7 @@ def init_db():
                 )
                 cur.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS module_type TEXT NOT NULL DEFAULT 'genel';")
                 cur.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS table_count INTEGER NOT NULL DEFAULT 8;")
+                cur.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS logo_filename TEXT DEFAULT '';")
                 cur.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS payment_note TEXT DEFAULT '';")
                 cur.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS payment_requested BOOLEAN NOT NULL DEFAULT FALSE;")
                 cur.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS activated_at TIMESTAMP;")
@@ -388,7 +392,6 @@ def get_menu_items(tenant_id):
 
 
 def get_booked_tables_by_slot(tenant_id, target_date=None):
-    """Seçili tarihte her saat diliminde dolu olan masa numaralarını döndürür."""
     date_str = (target_date or datetime.now().strftime("%Y-%m-%d")).strip()
     with get_db() as conn:
         with conn.cursor() as cur:
@@ -414,7 +417,6 @@ def get_booked_tables_by_slot(tenant_id, target_date=None):
         if m:
             booked_tables[matched_slot].add(int(m.group(1)))
         else:
-            # Eski kayıtlarda masa numarası yoksa en küçük boş numarayı dolu say
             booked_tables[matched_slot].add(len(booked_tables[matched_slot]) + 1)
     return booked_tables
 
@@ -522,90 +524,97 @@ INDEX_HTML = """
       --accent-2: #f59e0b; --border: rgba(16, 185, 129, 0.22);
     }
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: "Inter", system-ui, -apple-system, sans-serif; }
-    html { scroll-behavior: smooth; }
+    html { scroll-behavior: smooth; max-width: 100%; overflow-x: hidden; }
     body {
       background:
         radial-gradient(circle at 12% 8%, rgba(16, 185, 129, 0.15), transparent 36%),
         radial-gradient(circle at 88% 16%, rgba(245, 158, 11, 0.11), transparent 38%),
         var(--bg);
-      color: var(--text); line-height: 1.6; overflow-x: hidden;
+      color: var(--text); line-height: 1.6; overflow-x: hidden; width: 100%;
     }
-    .container { max-width: 1180px; margin: 0 auto; padding: 0 22px; }
+    .container { max-width: 1180px; margin: 0 auto; padding: 0 18px; width: 100%; }
     .wp-icon { width: 18px; height: 18px; flex-shrink: 0; display: inline-block; }
 
-    .navbar { position: sticky; top: 0; z-index: 40; backdrop-filter: blur(14px); background: rgba(8, 13, 11, 0.85); border-bottom: 1px solid var(--border); }
-    .nav-inner { display: flex; align-items: center; justify-content: space-between; min-height: 72px; padding: 10px 0; gap: 14px; flex-wrap: wrap; }
-    .brand { display: inline-flex; align-items: center; gap: 11px; font-weight: 800; font-size: 1.04rem; color: var(--text); text-decoration: none; }
-    .brand-logo-img { height: 40px; width: auto; max-width: 58px; object-fit: contain; border-radius: 10px; display: block; }
+    .navbar { position: sticky; top: 0; z-index: 40; backdrop-filter: blur(14px); background: rgba(8, 13, 11, 0.88); border-bottom: 1px solid var(--border); }
+    .nav-inner { display: flex; align-items: center; justify-content: space-between; min-height: 68px; padding: 10px 0; gap: 10px; flex-wrap: wrap; }
+    .brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 800; font-size: 1rem; color: var(--text); text-decoration: none; }
+    .brand-logo-img { height: 38px; width: auto; max-width: 54px; object-fit: contain; border-radius: 10px; display: block; }
     .brand-badge { width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; font-weight: 900; color: #04130d; background: linear-gradient(135deg, var(--accent-bright), var(--accent-2)); }
-    .brand-text small { display: block; font-size: 0.72rem; font-weight: 600; color: var(--accent-bright); }
-    .nav-links { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-    .nav-btn { color: var(--muted); text-decoration: none; font-size: 0.9rem; font-weight: 600; padding: 8px 13px; border-radius: 10px; border: 1px solid transparent; display: inline-flex; align-items: center; gap: 6px; }
+    .brand-text small { display: block; font-size: 0.7rem; font-weight: 600; color: var(--accent-bright); }
+    .nav-links { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .nav-btn { color: var(--muted); text-decoration: none; font-size: 0.86rem; font-weight: 600; padding: 8px 11px; border-radius: 10px; border: 1px solid transparent; display: inline-flex; align-items: center; gap: 6px; }
     .nav-btn:hover, .nav-btn.active { color: var(--text); background: rgba(16, 185, 129, 0.12); border-color: rgba(16, 185, 129, 0.32); }
     .nav-cta { color: #04130d; background: linear-gradient(135deg, var(--accent-bright), var(--accent)); font-weight: 800; }
     .nav-wa { color: #dcfce7; background: rgba(34, 197, 94, 0.16); border: 1px solid rgba(34, 197, 94, 0.42); font-weight: 700; }
 
-    .hero { padding: 60px 0 40px; display: grid; grid-template-columns: 1.25fr 0.75fr; gap: 28px; align-items: center; }
-    .badge { display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px; border-radius: 999px; font-size: 0.82rem; font-weight: 700; color: var(--accent-bright); background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.28); margin-bottom: 14px; }
-    .hero h1 { font-size: clamp(2rem, 4.2vw, 3.1rem); line-height: 1.14; margin-bottom: 14px; }
+    .hero { padding: 44px 0 32px; }
+    .hero-grid { display: grid; grid-template-columns: 1.25fr 0.75fr; gap: 24px; align-items: center; }
+    .badge { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; font-size: 0.78rem; font-weight: 700; color: var(--accent-bright); background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.28); margin-bottom: 12px; }
+    .hero h1 { font-size: clamp(1.75rem, 6vw, 3rem); line-height: 1.15; margin-bottom: 12px; word-break: break-word; }
     .hero h1 span { background: linear-gradient(135deg, var(--accent-bright), var(--accent-2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-    .hero p { color: var(--muted); font-size: 1rem; max-width: 630px; margin-bottom: 22px; }
-    .hero-actions { display: flex; gap: 12px; flex-wrap: wrap; }
+    .hero p { color: var(--muted); font-size: 0.96rem; max-width: 630px; margin-bottom: 20px; }
+    .hero-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 
     .btn-primary, .btn-secondary, .btn-wa {
-      text-decoration: none; padding: 11px 17px; border-radius: 11px; font-weight: 700; font-size: 0.9rem;
-      display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+      text-decoration: none; padding: 11px 16px; border-radius: 11px; font-weight: 700; font-size: 0.88rem;
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer;
     }
     .btn-primary { background: linear-gradient(135deg, var(--accent-bright), var(--accent)); color: #04130d; border: none; }
     .btn-secondary { background: var(--card); color: var(--text); border: 1px solid var(--border); }
     .btn-wa { background: linear-gradient(135deg, #22c55e, #16a34a); color: #052e16; border: none; }
 
-    .hero-panel { background: linear-gradient(160deg, rgba(19, 32, 27, 0.94), rgba(10, 17, 14, 0.94)); border: 1px solid var(--border); border-radius: 20px; padding: 22px; }
-    .panel-title { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent-2); margin-bottom: 12px; font-weight: 800; }
-    .mini-list { list-style: none; display: grid; gap: 10px; }
-    .mini-list li { display: flex; justify-content: space-between; align-items: center; padding: 10px 13px; border-radius: 12px; background: rgba(8, 13, 11, 0.65); border: 1px solid rgba(16, 185, 129, 0.14); font-size: 0.9rem; gap: 8px; }
-    .pill { font-size: 0.73rem; padding: 3px 9px; border-radius: 999px; background: rgba(16, 185, 129, 0.16); color: var(--accent-bright); font-weight: 700; border: 1px solid rgba(16, 185, 129, 0.3); }
-    .pill-amber { font-size: 0.73rem; padding: 3px 9px; border-radius: 999px; background: rgba(245, 158, 11, 0.16); color: #fcd34d; font-weight: 700; border: 1px solid rgba(245, 158, 11, 0.36); }
+    .hero-panel { background: linear-gradient(160deg, rgba(19, 32, 27, 0.94), rgba(10, 17, 14, 0.94)); border: 1px solid var(--border); border-radius: 18px; padding: 20px; }
+    .panel-title { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent-2); margin-bottom: 10px; font-weight: 800; }
+    .mini-list { list-style: none; display: grid; gap: 8px; }
+    .mini-list li { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border-radius: 11px; background: rgba(8, 13, 11, 0.65); border: 1px solid rgba(16, 185, 129, 0.14); font-size: 0.86rem; gap: 8px; flex-wrap: wrap; }
+    .pill { font-size: 0.72rem; padding: 3px 8px; border-radius: 999px; background: rgba(16, 185, 129, 0.16); color: var(--accent-bright); font-weight: 700; border: 1px solid rgba(16, 185, 129, 0.3); }
+    .pill-amber { font-size: 0.72rem; padding: 3px 8px; border-radius: 999px; background: rgba(245, 158, 11, 0.16); color: #fcd34d; font-weight: 700; border: 1px solid rgba(245, 158, 11, 0.36); }
 
-    section.block { padding: 52px 0; }
-    .section-head { margin-bottom: 20px; }
-    .section-head span { color: var(--accent-2); font-size: 0.82rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
-    .section-head h2 { font-size: clamp(1.5rem, 3vw, 2.15rem); margin-top: 6px; margin-bottom: 8px; }
-    .section-head p { color: var(--muted); max-width: 760px; }
+    section.block { padding: 40px 0; }
+    .section-head { margin-bottom: 18px; }
+    .section-head span { color: var(--accent-2); font-size: 0.78rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
+    .section-head h2 { font-size: clamp(1.4rem, 5vw, 2.05rem); margin-top: 4px; margin-bottom: 6px; }
+    .section-head p { color: var(--muted); max-width: 760px; font-size: 0.92rem; }
 
-    .services-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; }
-    .card { background: var(--card); border: 1px solid var(--border); border-radius: 18px; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between; cursor: pointer; }
+    .services-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 16px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between; cursor: pointer; }
     .card:hover { border-color: rgba(16, 185, 129, 0.48); }
     .card-thumb { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; display: block; border-bottom: 1px solid rgba(16, 185, 129, 0.16); }
-    .card-body { padding: 18px 20px 12px; }
-    .card-tag { display: inline-block; font-size: 0.76rem; font-weight: 700; color: var(--accent-bright); background: rgba(16, 185, 129, 0.12); padding: 4px 10px; border-radius: 8px; margin-bottom: 8px; }
-    .card h3 { font-size: 1.1rem; margin-bottom: 6px; }
-    .card p { color: var(--muted); font-size: 0.9rem; }
-    .card-footer { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px 16px; border-top: 1px solid rgba(156, 163, 175, 0.12); }
-    .detail-link { background: transparent; border: none; color: var(--accent-2); font-weight: 700; font-size: 0.9rem; cursor: pointer; }
+    .card-body { padding: 16px 18px 10px; }
+    .card-tag { display: inline-block; font-size: 0.74rem; font-weight: 700; color: var(--accent-bright); background: rgba(16, 185, 129, 0.12); padding: 4px 9px; border-radius: 8px; margin-bottom: 8px; }
+    .card h3 { font-size: 1.05rem; margin-bottom: 6px; }
+    .card p { color: var(--muted); font-size: 0.88rem; }
+    .card-footer { display: flex; align-items: center; justify-content: space-between; padding: 11px 18px 14px; border-top: 1px solid rgba(156, 163, 175, 0.12); }
+    .detail-link { background: transparent; border: none; color: var(--accent-2); font-weight: 700; font-size: 0.88rem; cursor: pointer; }
 
-    .saas-grid { display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 22px; align-items: start; }
-    .saas-card { background: var(--card); border: 1px solid var(--border); border-radius: 18px; padding: 24px; display: grid; gap: 14px; }
-    .iban-box { background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.35); border-radius: 14px; padding: 16px; display: grid; gap: 6px; }
-    .iban-code { font-family: monospace; font-size: 0.98rem; font-weight: 800; color: #fcd34d; background: rgba(0, 0, 0, 0.35); padding: 8px 10px; border-radius: 8px; }
+    .saas-grid { display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 18px; align-items: start; }
+    .saas-card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 20px; display: grid; gap: 13px; }
+    .iban-box { background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.35); border-radius: 12px; padding: 14px; display: grid; gap: 6px; }
+    .iban-code { font-family: monospace; font-size: 0.88rem; font-weight: 800; color: #fcd34d; background: rgba(0, 0, 0, 0.35); padding: 8px 10px; border-radius: 8px; word-break: break-all; }
     .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-    label { display: block; font-size: 0.84rem; color: #d1d5db; margin-bottom: 6px; font-weight: 600; }
+    label { display: block; font-size: 0.84rem; color: #d1d5db; margin-bottom: 5px; font-weight: 600; }
     input, select, textarea { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-soft); color: var(--text); font-size: 0.92rem; }
-    .submit-btn { padding: 12px 18px; border-radius: 11px; border: none; cursor: pointer; font-weight: 800; font-size: 0.94rem; color: #04130d; background: linear-gradient(135deg, var(--accent-bright), var(--accent-2)); }
-    .alert-ok { padding: 14px 16px; border-radius: 12px; background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); color: #a7f3d0; font-size: 0.9rem; }
-    .alert-err { padding: 14px 16px; border-radius: 12px; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); color: #fca5a5; font-size: 0.9rem; }
+    .submit-btn { padding: 12px 16px; border-radius: 11px; border: none; cursor: pointer; font-weight: 800; font-size: 0.92rem; color: #04130d; background: linear-gradient(135deg, var(--accent-bright), var(--accent-2)); width: 100%; }
+    .alert-ok { padding: 13px 15px; border-radius: 12px; background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); color: #a7f3d0; font-size: 0.88rem; word-break: break-word; }
+    .alert-err { padding: 13px 15px; border-radius: 12px; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); color: #fca5a5; font-size: 0.88rem; }
 
-    .modal-backdrop { position: fixed; inset: 0; z-index: 90; background: rgba(4, 8, 6, 0.78); backdrop-filter: blur(8px); display: none; align-items: center; justify-content: center; padding: 20px; }
+    .modal-backdrop { position: fixed; inset: 0; z-index: 90; background: rgba(4, 8, 6, 0.78); backdrop-filter: blur(8px); display: none; align-items: center; justify-content: center; padding: 14px; }
     .modal-backdrop.open { display: flex; }
-    .modal-box { width: 100%; max-width: 600px; max-height: 90vh; overflow-y: auto; background: #101915; border: 1px solid rgba(16, 185, 129, 0.35); border-radius: 22px; padding: 24px; }
-    .modal-img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 14px; margin: 12px 0; }
-    .modal-list { list-style: none; display: grid; gap: 8px; margin: 12px 0 18px; }
-    .modal-list li { padding: 9px 12px; border-radius: 10px; background: rgba(8, 13, 11, 0.72); border: 1px solid rgba(16, 185, 129, 0.16); font-size: 0.9rem; }
+    .modal-box { width: 100%; max-width: 580px; max-height: 90vh; overflow-y: auto; background: #101915; border: 1px solid rgba(16, 185, 129, 0.35); border-radius: 18px; padding: 20px; }
+    .modal-img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 12px; margin: 12px 0; }
+    .modal-list { list-style: none; display: grid; gap: 8px; margin: 12px 0 16px; }
+    .modal-list li { padding: 9px 12px; border-radius: 10px; background: rgba(8, 13, 11, 0.72); border: 1px solid rgba(16, 185, 129, 0.16); font-size: 0.88rem; }
 
-    footer { border-top: 1px solid var(--border); padding: 24px 0; margin-top: 28px; color: var(--muted); font-size: 0.88rem; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+    footer { border-top: 1px solid var(--border); padding: 22px 0; margin-top: 24px; color: var(--muted); font-size: 0.86rem; }
+    .footer-inner { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
     footer a { color: var(--muted); text-decoration: none; }
 
-    @media (max-width: 920px) { .hero, .saas-grid, .row-2 { grid-template-columns: 1fr; } }
+    @media (max-width: 860px) {
+      .hero-grid, .saas-grid, .row-2 { grid-template-columns: 1fr; }
+      .nav-links { width: 100%; justify-content: flex-start; }
+      .hero-actions { flex-direction: column; }
+      .hero-actions a, .hero-actions button { width: 100%; }
+    }
   </style>
 </head>
 <body>
@@ -621,7 +630,6 @@ INDEX_HTML = """
         <a href="#anasayfa" class="nav-btn active">Anasayfa</a>
         <a href="#hizmetler" class="nav-btn">Modüller</a>
         <a href="#saas-basla" class="nav-btn nav-cta">Hesap Aç &amp; IBAN</a>
-        <a href="{{ url_for('superadmin_panel') }}" class="nav-btn">Admin Onay</a>
         <a href="https://wa.me/{{ wa_number }}?text={{ 'Merhaba KOLAY Otomasyon, IBAN odeme ve paketler hakkinda bilgi almak istiyorum.' | urlencode }}" target="_blank" rel="noopener noreferrer" class="nav-btn nav-wa" aria-label="WhatsApp">
           <svg class="wp-icon"><use href="#icon-whatsapp"></use></svg>
           <span>WhatsApp</span>
@@ -632,17 +640,16 @@ INDEX_HTML = """
 
   <main>
     <section id="anasayfa" class="hero">
-      <div class="container" style="display: contents;">
+      <div class="container hero-grid">
         <div>
-          <div class="badge">IBAN Ödemeli &amp; Admin Onaylı Mikro-SaaS</div>
+          <div class="badge">IBAN Ödemeli Mikro-SaaS</div>
           <h1>İşletmen İçin <span>Kendi Panelini Aç</span>, Ödeme Onayıyla Aktif Et</h1>
           <p>
-            İşletme hesabını oluştur, seçtiğin modül kilitli olarak tanımlansın, IBAN üzerinden ödemeni yap ve admin onayının ardından
-            <code>/i/slug</code> müşteri sayfan ile <code>/i/slug/panel</code> yönetim ekranını kullanmaya başla.
+            İşletme hesabını oluştur, seçtiğin modül kilitli olarak tanımlansın, IBAN üzerinden ödemeni yap ve onaylandığında
+            müşteri randevu linkin ile işletme yönetim panelin hemen aktif olsun.
           </p>
           <div class="hero-actions">
             <a href="#saas-basla" class="btn-primary">İşletme Hesabı Oluştur</a>
-            <a href="{{ url_for('superadmin_panel') }}" class="btn-secondary">Admin Onay Paneli</a>
             <a href="https://wa.me/{{ wa_number }}?text={{ 'Merhaba KOLAY Otomasyon, yeni hesap acmak istiyorum.' | urlencode }}" target="_blank" rel="noopener noreferrer" class="btn-wa" aria-label="WhatsApp">
               <svg class="wp-icon"><use href="#icon-whatsapp"></use></svg>
               <span>WhatsApp</span>
@@ -656,7 +663,7 @@ INDEX_HTML = """
             <li><span>Starter Paket</span><span class="pill">{{ price_starter }}</span></li>
             <li><span>Pro Paket</span><span class="pill-amber">{{ price_pro }}</span></li>
             <li><span>Modül Seçimi</span><span class="pill">İlk Üyelikte Kilitlenir</span></li>
-            <li><span>Aktivasyon</span><span class="pill">Admin Onayı Sonrası</span></li>
+            <li><span>Aktivasyon</span><span class="pill">IBAN Onayı Sonrası</span></li>
           </ul>
         </aside>
       </div>
@@ -698,11 +705,11 @@ INDEX_HTML = """
         <div class="section-head">
           <span>Hesap Açma &amp; IBAN Ödeme</span>
           <h2>Yeni İşletme Hesabı Oluştur veya Paneline Gir</h2>
-          <p>İlk üyelikte seçtiğin modül panele kilitlenir; IBAN ödemesi admin panelinde onaylandığında sistem aktif olur.</p>
+          <p>İlk üyelikte seçtiğin modül panele kilitlenir; IBAN ödemesi onaylandığında sistem aktif olur.</p>
         </div>
 
         {% if created_tenant %}
-        <div class="alert-ok" style="margin-bottom: 18px;">
+        <div class="alert-ok" style="margin-bottom: 16px;">
           <strong>{{ created_tenant.business_name }}</strong> (<code>/i/{{ created_tenant.slug }}</code>) hesabı oluşturuldu!
           Durumu: <strong>{% if created_tenant.is_active %}AKTİF{% else %}ÖDEME ONAYI BEKLİYOR{% endif %}</strong>.
           Panel: <a href="{{ url_for('tenant_panel', slug=created_tenant.slug) }}" style="color:#fff;text-decoration:underline;">/i/{{ created_tenant.slug }}/panel</a>
@@ -710,14 +717,14 @@ INDEX_HTML = """
         {% endif %}
 
         {% if saas_error %}
-        <div class="alert-err" style="margin-bottom: 18px;">{{ saas_error }}</div>
+        <div class="alert-err" style="margin-bottom: 16px;">{{ saas_error }}</div>
         {% endif %}
 
         <div class="saas-grid">
           <form class="saas-card" method="POST" action="{{ url_for('register_tenant') }}">
             <div>
-              <h3 style="font-size: 1.15rem; margin-bottom: 4px;">Yeni İşletme Hesabı Aç</h3>
-              <p style="color: var(--muted); font-size: 0.88rem;">Seçtiğin modül üyelik sonrası panelden değiştirilemez şekilde kilitlenir.</p>
+              <h3 style="font-size: 1.12rem; margin-bottom: 4px;">Yeni İşletme Hesabı Aç</h3>
+              <p style="color: var(--muted); font-size: 0.86rem;">Seçtiğin modül üyelik sonrası panelden değiştirilemez şekilde kilitlenir.</p>
             </div>
 
             <div class="row-2">
@@ -767,8 +774,8 @@ INDEX_HTML = """
             </div>
 
             <div class="iban-box">
-              <strong style="color: #fcd34d; font-size: 0.9rem;">IBAN Ödeme Bilgileri</strong>
-              <span style="font-size: 0.84rem; color: #e5e7eb;">Alıcı: <strong>{{ iban_holder }}</strong> • Banka: {{ iban_bank }}</span>
+              <strong style="color: #fcd34d; font-size: 0.88rem;">IBAN Ödeme Bilgileri</strong>
+              <span style="font-size: 0.82rem; color: #e5e7eb;">Alıcı: <strong>{{ iban_holder }}</strong> • Banka: {{ iban_bank }}</span>
               <div class="iban-code">{{ iban_number }}</div>
               <span style="font-size: 0.78rem; color: var(--muted);">Açıklamaya işletme adını yazarak ödeme yapabilirsin.</span>
             </div>
@@ -778,8 +785,8 @@ INDEX_HTML = """
 
           <form class="saas-card" method="POST" action="{{ url_for('tenant_quick_login') }}">
             <div>
-              <h3 style="font-size: 1.15rem; margin-bottom: 4px;">İşletme Paneline Giriş</h3>
-              <p style="color: var(--muted); font-size: 0.88rem;">Ödeme durumunu görmek veya aktif panelini yönetmek için giriş yap.</p>
+              <h3 style="font-size: 1.12rem; margin-bottom: 4px;">İşletme Paneline Giriş</h3>
+              <p style="color: var(--muted); font-size: 0.86rem;">Ödeme durumunu görmek veya aktif panelini yönetmek için giriş yap.</p>
             </div>
 
             <div>
@@ -792,13 +799,12 @@ INDEX_HTML = """
               <input id="login_password" type="password" name="password" required />
             </div>
 
-            <button type="submit" class="btn-secondary" style="justify-content: center; padding: 12px 16px;">İşletme Paneline Gir</button>
+            <button type="submit" class="btn-secondary" style="width:100%;padding:12px 16px;">İşletme Paneline Gir</button>
 
             <div class="iban-box">
-              <strong style="color: var(--accent-bright); font-size: 0.88rem;">Örnek &amp; Yönetim Erişimleri</strong>
-              <span style="font-size: 0.82rem; color: var(--muted);">Örnek aktif vitrin: <a href="{{ url_for('tenant_public', slug='kolay-vitrin') }}" style="color: var(--accent-bright);">/i/kolay-vitrin</a></span>
-              <span style="font-size: 0.82rem; color: var(--muted);">Örnek aktif panel: <a href="{{ url_for('tenant_panel', slug='kolay-vitrin') }}" style="color: var(--accent-bright);">/i/kolay-vitrin/panel</a> (Şifre: <code>kolay1234</code>)</span>
-              <span style="font-size: 0.82rem; color: var(--muted);">Süper Admin IBAN Onay: <a href="{{ url_for('superadmin_panel') }}" style="color: #fcd34d;">/admin</a></span>
+              <strong style="color: var(--accent-bright); font-size: 0.86rem;">Hızlı Erişim Bilgisi</strong>
+              <span style="font-size: 0.82rem; color: var(--muted);">Örnek müşteri linki: <a href="{{ url_for('tenant_public', slug='kolay-vitrin') }}" style="color: var(--accent-bright);">/i/kolay-vitrin</a></span>
+              <span style="font-size: 0.82rem; color: var(--muted);">Örnek panel: <a href="{{ url_for('tenant_panel', slug='kolay-vitrin') }}" style="color: var(--accent-bright);">/i/kolay-vitrin/panel</a> (Şifre: <code>kolay1234</code>)</span>
             </div>
           </form>
         </div>
@@ -807,13 +813,12 @@ INDEX_HTML = """
   </main>
 
   <footer>
-    <div class="container" style="display: contents;">
+    <div class="container footer-inner">
       <span>© 2026 KOLAY Otomasyon Mikro-SaaS</span>
       <span>
         <a href="#anasayfa">Anasayfa</a> •
-        <a href="{{ url_for('tenant_public', slug='kolay-vitrin') }}">Örnek Vitrin</a> •
-        <a href="{{ url_for('tenant_panel', slug='kolay-vitrin') }}">Örnek Panel</a> •
-        <a href="{{ url_for('superadmin_panel') }}">Admin Onay</a>
+        <a href="#hizmetler">Modüller</a> •
+        <a href="#saas-basla">Hesap Aç</a>
       </span>
     </div>
   </footer>
@@ -822,13 +827,13 @@ INDEX_HTML = """
     <div class="modal-box">
       <div style="display:flex;justify-content:space-between;align-items:center;">
         <span id="modalTag" class="card-tag" style="margin-bottom:0;">Modül</span>
-        <button type="button" onclick="closeServiceModal()" style="background:none;border:1px solid rgba(255,255,255,0.2);color:#fff;width:32px;height:32px;border-radius:8px;cursor:pointer;">✕</button>
+        <button type="button" onclick="closeServiceModal()" style="background:none;border:1px solid rgba(255,255,255,0.2);color:#fff;width:34px;height:34px;border-radius:8px;cursor:pointer;">✕</button>
       </div>
       <img id="modalImg" src="" alt="" class="modal-img" onerror="this.style.display='none'" />
       <h3 id="modalTitle">Başlık</h3>
-      <p id="modalDesc" style="color:#d1d5db;font-size:0.92rem;margin-top:8px;"></p>
+      <p id="modalDesc" style="color:#d1d5db;font-size:0.9rem;margin-top:8px;"></p>
       <ul id="modalFeatures" class="modal-list"></ul>
-      <div style="display:flex;gap:10px;justify-content:flex-end;">
+      <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;">
         <button type="button" class="btn-secondary" onclick="closeServiceModal()">Kapat</button>
         <a href="#saas-basla" class="btn-primary" onclick="closeServiceModal()">Bu Modülle Hesap Aç</a>
       </div>
@@ -864,12 +869,13 @@ TENANT_PENDING_HTML = """
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{{ tenant.business_name }} — Ödeme Onayı Bekleniyor</title>
   <style>
-    body { background:#080d0b; color:#f8fafc; font-family:Inter,system-ui,sans-serif; padding:28px 18px; }
-    .wrap { max-width:680px; margin:0 auto; display:grid; gap:18px; }
-    .card { background:#121d18; border:1px solid rgba(245,158,11,0.35); border-radius:18px; padding:24px; display:grid; gap:14px; }
-    .iban { font-family:monospace; font-size:1rem; font-weight:800; color:#fcd34d; background:#09100d; padding:10px 12px; border-radius:10px; border:1px solid rgba(245,158,11,0.3); }
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { background:#080d0b; color:#f8fafc; font-family:Inter,system-ui,sans-serif; padding:22px 14px; overflow-x:hidden; }
+    .wrap { max-width:680px; margin:0 auto; display:grid; gap:16px; }
+    .card { background:#121d18; border:1px solid rgba(245,158,11,0.35); border-radius:16px; padding:20px; display:grid; gap:13px; }
+    .iban { font-family:monospace; font-size:0.9rem; font-weight:800; color:#fcd34d; background:#09100d; padding:10px 12px; border-radius:10px; border:1px solid rgba(245,158,11,0.3); word-break:break-all; }
     input { width:100%; padding:10px 12px; border-radius:10px; border:1px solid rgba(16,185,129,0.25); background:#0f1714; color:#f8fafc; }
-    button, a.btn { text-decoration:none; padding:11px 16px; border-radius:10px; font-weight:800; font-size:0.9rem; border:none; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; }
+    button, a.btn { text-decoration:none; padding:11px 16px; border-radius:10px; font-weight:800; font-size:0.9rem; border:none; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; width:100%; }
     .btn-gold { background:linear-gradient(135deg,#fbbf24,#f59e0b); color:#1f1300; }
     .btn-ghost { background:#0f1714; color:#34d399; border:1px solid rgba(16,185,129,0.3); }
     .ok { padding:12px; border-radius:10px; background:rgba(16,185,129,0.16); color:#a7f3d0; font-size:0.88rem; }
@@ -879,14 +885,14 @@ TENANT_PENDING_HTML = """
   <div class="wrap">
     <div class="card">
       <div style="font-size:0.78rem;color:#fbbf24;font-weight:800;">HESAP DURUMU: ÖDEME ONAYI BEKLENİYOR</div>
-      <h1 style="font-size:1.35rem;">{{ tenant.business_name }}</h1>
-      <p style="color:#9ca3af;font-size:0.9rem;">
-        Hesabın açıldı (<code>/i/{{ tenant.slug }}</code>) ve modülün <strong>{{ mod_label }}</strong> olarak kilitlendi.
-        IBAN ödemesi admin panelinde onaylandığında hesabın aktif olur.
+      <h1 style="font-size:1.28rem;">{{ tenant.business_name }}</h1>
+      <p style="color:#9ca3af;font-size:0.88rem;">
+        Hesabın açıldı ve modülün <strong>{{ mod_label }}</strong> olarak kilitlendi.
+        IBAN ödemesi onaylandığında müşteri randevu linkin aktif olur.
       </p>
 
       {% if notified %}
-      <div class="ok">Ödeme bildirimin kaydedildi! Admin onayından sonra hesabın otomatik aktif olacak.</div>
+      <div class="ok">Ödeme bildirimin kaydedildi! Onaydan sonra hesabın aktif olacak.</div>
       {% elif tenant.payment_requested %}
       <div class="ok">Ödeme bildiriminiz iletilmiş durumda ({{ tenant.payment_note or 'Not girilmedi' }}). Onay bekleniyor.</div>
       {% endif %}
@@ -905,10 +911,7 @@ TENANT_PENDING_HTML = """
         <button type="submit" class="btn-gold">Ödeme Yaptım / Onaya Bildir</button>
       </form>
 
-      <div style="display:flex;gap:10px;flex-wrap:wrap;">
-        <a class="btn btn-ghost" href="{{ url_for('index') }}">← Ana Sayfa</a>
-        <a class="btn btn-ghost" href="https://wa.me/{{ wa_number }}?text={{ ('Merhaba, ' + tenant.business_name + ' (' + tenant.slug + ') icin IBAN odemesi yaptim, onay rica ederim.') | urlencode }}" target="_blank" rel="noopener noreferrer">WhatsApp'tan Yaz</a>
-      </div>
+      <a class="btn btn-ghost" href="https://wa.me/{{ wa_number }}?text={{ ('Merhaba, ' + tenant.business_name + ' (' + tenant.slug + ') icin IBAN odemesi yaptim, onay rica ederim.') | urlencode }}" target="_blank" rel="noopener noreferrer">WhatsApp'tan Yaz</a>
     </div>
   </div>
 </body>
@@ -921,50 +924,61 @@ TENANT_PUBLIC_HTML = """
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>{{ tenant.business_name }} — KOLAY Otomasyon</title>
+  <title>{{ tenant.business_name }} — Randevu &amp; Talep</title>
   <style>
-    body { background:#080d0b; color:#f8fafc; font-family:Inter,system-ui,sans-serif; padding:28px 18px 50px; }
-    .wrap { max-width:980px; margin:0 auto; display:grid; gap:20px; }
-    .top { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; border-bottom:1px solid rgba(16,185,129,0.22); padding-bottom:16px; }
-    .btn { text-decoration:none; padding:9px 14px; border-radius:10px; font-weight:700; font-size:0.88rem; border:1px solid rgba(16,185,129,0.28); background:#121d18; color:#34d399; }
-    .btn-main { background:linear-gradient(135deg,#34d399,#10b981); color:#04130d; border:none; }
-    .card { background:#121d18; border:1px solid rgba(16,185,129,0.22); border-radius:16px; padding:22px; display:grid; gap:14px; }
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { background:#080d0b; color:#f8fafc; font-family:Inter,system-ui,sans-serif; padding:20px 14px 48px; overflow-x:hidden; }
+    .wrap { max-width:940px; margin:0 auto; display:grid; gap:16px; }
+    .top { display:flex; justify-content:space-between; align-items:center; gap:12px; border-bottom:1px solid rgba(16,185,129,0.22); padding-bottom:14px; }
+    .brand-row { display:flex; align-items:center; gap:12px; min-width:0; }
+    .biz-logo { width:48px; height:48px; border-radius:12px; object-fit:cover; border:1px solid rgba(16,185,129,0.35); background:#0f1714; flex-shrink:0; display:block; }
+    .biz-logo-fallback { width:48px; height:48px; border-radius:12px; display:grid; place-items:center; font-weight:900; font-size:1.1rem; color:#04130d; background:linear-gradient(135deg,#34d399,#10b981); flex-shrink:0; }
+    .btn-main { text-decoration:none; padding:11px 16px; border-radius:10px; font-weight:800; font-size:0.9rem; background:linear-gradient(135deg,#34d399,#10b981); color:#04130d; border:none; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; width:100%; }
+    .card { background:#121d18; border:1px solid rgba(16,185,129,0.22); border-radius:16px; padding:18px; display:grid; gap:13px; }
     .row-2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
     .row-3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
-    label { display:block; font-size:0.84rem; color:#d1d5db; margin-bottom:6px; font-weight:600; }
-    input, select, textarea { width:100%; padding:10px 12px; border-radius:10px; border:1px solid rgba(16,185,129,0.22); background:#0f1714; color:#f8fafc; }
-    .ok { padding:12px 14px; border-radius:10px; background:rgba(16,185,129,0.16); border:1px solid rgba(16,185,129,0.4); color:#a7f3d0; font-weight:600; }
-    .badge { font-size:0.75rem; color:#34d399; background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.28); padding:4px 10px; border-radius:999px; font-weight:700; display:inline-block; margin-bottom:6px; }
-    .menu-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px; }
-    .menu-card { background:#0f1714; border:1px solid rgba(16,185,129,0.18); border-radius:12px; padding:12px; display:grid; gap:8px; }
+    label { display:block; font-size:0.84rem; color:#d1d5db; margin-bottom:5px; font-weight:600; }
+    input, select, textarea { width:100%; padding:10px 12px; border-radius:10px; border:1px solid rgba(16,185,129,0.22); background:#0f1714; color:#f8fafc; font-size:0.92rem; }
+    .ok { padding:12px 14px; border-radius:10px; background:rgba(16,185,129,0.16); border:1px solid rgba(16,185,129,0.4); color:#a7f3d0; font-weight:600; font-size:0.9rem; }
+    .badge { font-size:0.74rem; color:#34d399; background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.28); padding:3px 9px; border-radius:999px; font-weight:700; display:inline-block; margin-bottom:4px; }
+    .menu-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:11px; }
+    .menu-card { background:#0f1714; border:1px solid rgba(16,185,129,0.18); border-radius:12px; padding:11px; display:grid; gap:8px; }
     .menu-img { width:100%; aspect-ratio:16/10; object-fit:cover; border-radius:8px; display:block; }
     .menu-check { display:flex; align-items:flex-start; gap:8px; font-size:0.85rem; color:#e5e7eb; cursor:pointer; }
-    .menu-check input[type="checkbox"] { width:auto; margin-top:3px; }
-    @media (max-width:780px) { .row-2, .row-3 { grid-template-columns:1fr; } }
+    .menu-check input[type="checkbox"] { width:auto; margin-top:3px; flex-shrink:0; }
+    @media (max-width:768px) {
+      .row-2, .row-3 { grid-template-columns:1fr; }
+      .card { padding:15px; }
+      h1 { font-size:1.25rem !important; }
+    }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="top">
-      <div>
-        <div class="badge">MODÜL: {{ mod_label }} • /i/{{ tenant.slug }}</div>
-        <h1 style="font-size:1.5rem;">{{ tenant.business_name }}</h1>
-      </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <a class="btn" href="{{ url_for('index') }}">← Ana Sayfa</a>
-        <a class="btn btn-main" href="{{ url_for('tenant_panel', slug=tenant.slug) }}">İşletme Paneli</a>
+      <div class="brand-row">
+        {% if tenant.logo_filename %}
+          <img src="/images/logos/{{ tenant.id }}/{{ tenant.logo_filename }}" alt="{{ tenant.business_name }}" class="biz-logo" onerror="this.style.display='none';document.getElementById('bizFallback').style.display='grid';" />
+          <div id="bizFallback" class="biz-logo-fallback" style="display:none;">{{ tenant.business_name[:1]|upper }}</div>
+        {% else %}
+          <div class="biz-logo-fallback">{{ tenant.business_name[:1]|upper }}</div>
+        {% endif %}
+        <div style="min-width:0;">
+          <div class="badge">{{ mod_label }}</div>
+          <h1 style="font-size:1.42rem;word-break:break-word;">{{ tenant.business_name }}</h1>
+        </div>
       </div>
     </div>
 
     {% if sent %}
-    <div class="ok">Kaydınız <strong>{{ tenant.business_name }}</strong> paneline başarıyla iletildi!</div>
+    <div class="ok">Kaydınız <strong>{{ tenant.business_name }}</strong> tarafına başarıyla iletildi!</div>
     {% endif %}
 
     {% if tenant.module_type == 'kafe-randevu' %}
     <form class="card" method="POST">
-      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
-        <h2 style="font-size:1.16rem;">Randevu Saati, Masa Seçimi &amp; İsteğe Bağlı Menü</h2>
-        <span style="font-size:0.8rem;color:#9ca3af;">Tanımlı Masa: <strong>{{ tenant.table_count or 8 }} Masa</strong></span>
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">
+        <h2 style="font-size:1.1rem;">Masa Randevusu &amp; İsteğe Bağlı Menü</h2>
+        <span style="font-size:0.8rem;color:#9ca3af;">Kapasite: <strong>{{ tenant.table_count or 8 }} Masa</strong></span>
       </div>
 
       <div class="row-2">
@@ -978,7 +992,7 @@ TENANT_PUBLIC_HTML = """
           <input type="date" name="res_date" id="resDateInput" value="{{ selected_date }}" onchange="updateTableOptions()" required />
         </div>
         <div>
-          <label>2. Randevu Saati (Müsaitlik)</label>
+          <label>2. Randevu Saati</label>
           <select name="slot_time" id="slotSelect" onchange="updateTableOptions()" required>
             {% for sl in slot_options %}
               {% if sl.available_count > 0 %}
@@ -990,7 +1004,7 @@ TENANT_PUBLIC_HTML = """
           </select>
         </div>
         <div>
-          <label>3. Masa Seçimi (Boş Masalar)</label>
+          <label>3. Masa Seçimi</label>
           <select name="table_no" id="tableSelect" required></select>
         </div>
       </div>
@@ -1038,7 +1052,7 @@ TENANT_PUBLIC_HTML = """
       {% endif %}
 
       <div><label>Ek Not / Özel İstek</label><textarea name="message" rows="2" placeholder="Cam kenarı, doğum günü notu veya ek istek..."></textarea></div>
-      <button type="submit" class="btn btn-main" style="cursor:pointer;">Randevu ve Masa Talebini Gönder</button>
+      <button type="submit" class="btn-main">Randevu Talebini Gönder</button>
     </form>
 
     <script>
@@ -1084,7 +1098,7 @@ TENANT_PUBLIC_HTML = """
 
     {% elif tenant.module_type == 'berber-randevu' %}
     <form class="card" method="POST">
-      <h2 style="font-size:1.14rem;">Salon Randevu Talebi</h2>
+      <h2 style="font-size:1.1rem;">Salon Randevu Talebi</h2>
       <div class="row-2">
         <div><label>Ad Soyad</label><input type="text" name="name" placeholder="Adınız Soyadınız" required /></div>
         <div><label>Telefon</label><input type="text" name="phone" placeholder="05xx xxx xx xx" required /></div>
@@ -1102,12 +1116,12 @@ TENANT_PUBLIC_HTML = """
         <div><label>İstenen Gün ve Saat</label><input type="text" name="slot_time" placeholder="Örn: Yarın 15:30" required /></div>
       </div>
       <div><label>Usta Tercihi / Ek Not</label><textarea name="message" rows="3" placeholder="Model veya saat ile ilgili notunuz..." required></textarea></div>
-      <button type="submit" class="btn btn-main" style="cursor:pointer;">Gönder</button>
+      <button type="submit" class="btn-main">Gönder</button>
     </form>
 
     {% elif tenant.module_type == 'masa-qr' %}
     <form class="card" method="POST">
-      <h2 style="font-size:1.14rem;">Masa Sipariş &amp; Garson İsteği</h2>
+      <h2 style="font-size:1.1rem;">Masa Sipariş &amp; Garson İsteği</h2>
       <div class="row-2">
         <div><label>Masa Numarası / Adı</label><input type="text" name="name" placeholder="Örn: Masa 4 veya Bahçe 2" required /></div>
         <div><label>İletişim / Not Kodu (Opsiyonel)</label><input type="text" name="phone" placeholder="Opsiyonel" /></div>
@@ -1121,12 +1135,12 @@ TENANT_PUBLIC_HTML = """
         </select>
       </div>
       <div><label>Sipariş veya İstek Detayı</label><textarea name="message" rows="3" placeholder="Örn: 2 Türk kahvesi, su veya hesap rica ediyoruz..." required></textarea></div>
-      <button type="submit" class="btn btn-main" style="cursor:pointer;">Gönder</button>
+      <button type="submit" class="btn-main">Gönder</button>
     </form>
 
     {% else %}
     <form class="card" method="POST">
-      <h2 style="font-size:1.14rem;">Talep / Randevu / Sipariş Bırak</h2>
+      <h2 style="font-size:1.1rem;">Talep / Randevu Bırak</h2>
       <div class="row-2">
         <div><label>Ad Soyad</label><input type="text" name="name" required /></div>
         <div><label>Telefon</label><input type="text" name="phone" placeholder="05xx xxx xx xx" required /></div>
@@ -1140,7 +1154,7 @@ TENANT_PUBLIC_HTML = """
         </select>
       </div>
       <div><label>Mesaj / Not</label><textarea name="message" rows="4" required></textarea></div>
-      <button type="submit" class="btn btn-main" style="cursor:pointer;">Gönder</button>
+      <button type="submit" class="btn-main">Gönder</button>
     </form>
     {% endif %}
   </div>
@@ -1156,25 +1170,24 @@ TENANT_LOGIN_HTML = """
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{{ tenant.business_name }} — Panel Girişi</title>
   <style>
-    body { min-height:100vh; display:grid; place-items:center; background:#080d0b; color:#f8fafc; font-family:Inter,system-ui,sans-serif; padding:20px; }
-    .box { width:100%; max-width:400px; background:#121d18; border:1px solid rgba(16,185,129,0.25); border-radius:18px; padding:24px; display:grid; gap:14px; }
-    label { display:block; font-size:0.84rem; margin-bottom:6px; color:#d1d5db; }
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { min-height:100vh; display:grid; place-items:center; background:#080d0b; color:#f8fafc; font-family:Inter,system-ui,sans-serif; padding:16px; }
+    .box { width:100%; max-width:400px; background:#121d18; border:1px solid rgba(16,185,129,0.25); border-radius:16px; padding:22px; display:grid; gap:13px; }
+    label { display:block; font-size:0.84rem; margin-bottom:5px; color:#d1d5db; }
     input { width:100%; padding:10px 12px; border-radius:10px; border:1px solid rgba(16,185,129,0.25); background:#0f1714; color:#f8fafc; }
-    button { padding:11px; border-radius:10px; border:none; background:linear-gradient(135deg,#34d399,#10b981); color:#04130d; font-weight:800; cursor:pointer; }
+    button { padding:11px; border-radius:10px; border:none; background:linear-gradient(135deg,#34d399,#10b981); color:#04130d; font-weight:800; cursor:pointer; width:100%; }
     .err { padding:10px; border-radius:10px; background:rgba(239,68,68,0.16); color:#fca5a5; font-size:0.86rem; }
-    a { color:#34d399; text-decoration:none; font-size:0.86rem; }
   </style>
 </head>
 <body>
   <form class="box" method="POST">
     <div>
-      <h1 style="font-size:1.25rem;">{{ tenant.business_name }}</h1>
-      <p style="color:#9ca3af;font-size:0.85rem;">İşletme paneli girişi (/i/{{ tenant.slug }}/panel)</p>
+      <h1 style="font-size:1.2rem;">{{ tenant.business_name }}</h1>
+      <p style="color:#9ca3af;font-size:0.84rem;">İşletme yönetim paneli girişi</p>
     </div>
     {% if error %}<div class="err">{{ error }}</div>{% endif %}
     <div><label>Şifre</label><input type="password" name="password" required /></div>
     <button type="submit">Giriş Yap</button>
-    <a href="{{ url_for('tenant_public', slug=tenant.slug) }}">← İşletme Sayfasına Dön</a>
   </form>
 </body>
 </html>
@@ -1190,24 +1203,30 @@ TENANT_PANEL_HTML = """
   <style>
     :root { --bg:#080d0b; --card:#121d18; --soft:#0f1714; --text:#f8fafc; --muted:#9ca3af; --accent:#10b981; --bright:#34d399; --amber:#f59e0b; --border:rgba(16,185,129,0.22); }
     * { box-sizing:border-box; margin:0; padding:0; font-family:Inter,system-ui,sans-serif; }
-    body { background:var(--bg); color:var(--text); padding:24px 18px 48px; }
-    .wrap { max-width:1120px; margin:0 auto; display:grid; gap:20px; }
-    .top { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; border-bottom:1px solid var(--border); padding-bottom:16px; }
-    .btn { text-decoration:none; padding:9px 14px; border-radius:10px; font-weight:700; font-size:0.86rem; border:1px solid var(--border); background:var(--card); color:var(--bright); cursor:pointer; display:inline-flex; align-items:center; gap:6px; }
+    body { background:var(--bg); color:var(--text); padding:20px 14px 48px; overflow-x:hidden; }
+    .wrap { max-width:1120px; margin:0 auto; display:grid; gap:16px; }
+    .top { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; border-bottom:1px solid var(--border); padding-bottom:14px; }
+    .btn { text-decoration:none; padding:9px 13px; border-radius:10px; font-weight:700; font-size:0.86rem; border:1px solid var(--border); background:var(--card); color:var(--bright); cursor:pointer; display:inline-flex; align-items:center; justify-content:center; gap:6px; }
     .btn-wa { background:rgba(34,197,94,0.16); border-color:rgba(34,197,94,0.45); color:#86efac; }
     .btn-del { background:rgba(239,68,68,0.14); border-color:rgba(239,68,68,0.35); color:#fca5a5; }
-    .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; }
-    .stat { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:14px 16px; }
+    .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; }
+    .stat { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:14px; }
     .stat span { font-size:0.78rem; color:var(--muted); display:block; }
-    .stat strong { font-size:1.45rem; color:var(--bright); }
-    .card { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:18px; display:grid; gap:12px; }
-    .msg { background:var(--soft); padding:12px; border-radius:10px; font-size:0.92rem; }
-    input, select { padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--soft); color:var(--text); }
-    .locked-pill { padding:8px 12px; border-radius:8px; background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.35); color:#fcd34d; font-size:0.84rem; font-weight:700; }
-    .menu-admin-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; }
+    .stat strong { font-size:1.35rem; color:var(--bright); }
+    .card { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:16px; display:grid; gap:12px; }
+    .msg { background:var(--soft); padding:12px; border-radius:10px; font-size:0.9rem; word-break:break-word; }
+    input, select { padding:9px 10px; border-radius:8px; border:1px solid var(--border); background:var(--soft); color:var(--text); font-size:0.9rem; }
+    .locked-pill { padding:8px 12px; border-radius:8px; background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.35); color:#fcd34d; font-size:0.82rem; font-weight:700; }
+    .menu-admin-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px; }
     .menu-box { background:var(--soft); border:1px solid var(--border); border-radius:12px; padding:12px; display:grid; gap:8px; }
     .menu-thumb { width:100%; aspect-ratio:16/10; object-fit:cover; border-radius:8px; }
+    .logo-preview { width:52px; height:52px; border-radius:10px; object-fit:cover; border:1px solid var(--border); }
     .row-flex { display:flex; gap:10px; flex-wrap:wrap; align-items:end; }
+    .share-box { background:var(--soft); border:1px dashed rgba(52,211,153,0.45); border-radius:10px; padding:10px 12px; display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; font-size:0.85rem; }
+    @media (max-width:768px) {
+      .row-flex > div, .row-flex > button { width:100% !important; min-width:0 !important; }
+      .top > div { width:100%; }
+    }
   </style>
 </head>
 <body>
@@ -1215,51 +1234,62 @@ TENANT_PANEL_HTML = """
     <div class="top">
       <div>
         <h1>{{ tenant.business_name }} — Yönetim Paneli</h1>
-        <p style="color:var(--muted);font-size:0.86rem;">
+        <p style="color:var(--muted);font-size:0.84rem;">
           Slug: <code>{{ tenant.slug }}</code> • Plan: <code>{{ tenant.plan|upper }}</code> • Kilitli Modül: <strong>{{ mod_label }}</strong>
         </p>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <a class="btn" href="{{ url_for('tenant_public', slug=tenant.slug) }}">Müşteri Linki</a>
         <form method="POST" action="{{ url_for('tenant_logout', slug=tenant.slug) }}"><button type="submit" class="btn btn-del">Çıkış</button></form>
       </div>
     </div>
 
-    <form class="card" method="POST" action="{{ url_for('tenant_update_settings', slug=tenant.slug) }}">
-      <div style="font-size:0.85rem;font-weight:800;color:var(--bright);">İŞLETME AYARLARI (MODÜL KİLİTLİ: {{ mod_label|upper }})</div>
+    <div class="share-box">
+      <span><strong>Müşteri Linki:</strong> <code id="custLinkText">{{ request.url_root }}i/{{ tenant.slug }}</code></span>
+      <button type="button" class="btn" onclick="copyCustLink()">Linki Kopyala</button>
+    </div>
+
+    <form class="card" method="POST" action="{{ url_for('tenant_update_settings', slug=tenant.slug) }}" enctype="multipart/form-data">
+      <div style="font-size:0.84rem;font-weight:800;color:var(--bright);">İŞLETME AYARLARI &amp; LOGO (MODÜL KİLİTLİ: {{ mod_label|upper }})</div>
       <div class="row-flex">
-        <div style="flex:1;min-width:190px;">
-          <label style="display:block;font-size:0.8rem;color:var(--muted);margin-bottom:4px;">WhatsApp Numarası</label>
+        {% if tenant.logo_filename %}
+          <img src="/images/logos/{{ tenant.id }}/{{ tenant.logo_filename }}" alt="Logo" class="logo-preview" onerror="this.style.display='none'" />
+        {% endif %}
+        <div style="min-width:190px;">
+          <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">İşletme Logosu</label>
+          <input type="file" name="logo" accept=".jpg,.jpeg,.png,.webp" style="width:100%;" />
+        </div>
+        <div style="flex:1;min-width:180px;">
+          <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">WhatsApp Numarası</label>
           <input type="text" name="whatsapp_number" value="{{ tenant.whatsapp_number or '' }}" placeholder="05xx xxx xx xx" style="width:100%;" />
         </div>
         {% if tenant.module_type == 'kafe-randevu' %}
-        <div style="width:150px;">
-          <label style="display:block;font-size:0.8rem;color:var(--muted);margin-bottom:4px;">Masa Sayısı</label>
+        <div style="width:130px;">
+          <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Masa Sayısı</label>
           <input type="number" name="table_count" min="1" max="200" value="{{ tenant.table_count or 8 }}" style="width:100%;" required />
         </div>
         {% endif %}
-        <div class="locked-pill">Modül: {{ mod_label }} (Değiştirilemez)</div>
+        <div class="locked-pill">Modül: {{ mod_label }}</div>
         <button type="submit" class="btn">Ayarları Kaydet</button>
       </div>
     </form>
 
     {% if tenant.module_type == 'kafe-randevu' %}
     <div class="card">
-      <div style="font-size:0.85rem;font-weight:800;color:var(--bright);">MENÜ YÖNETİMİ (EKLE / DÜZENLE / FOTOĞRAF YÜKLE)</div>
+      <div style="font-size:0.84rem;font-weight:800;color:var(--bright);">MENÜ YÖNETİMİ (EKLE / DÜZENLE / FOTOĞRAF YÜKLE)</div>
       <form method="POST" action="{{ url_for('tenant_add_menu_item', slug=tenant.slug) }}" enctype="multipart/form-data" class="row-flex">
         <div style="flex:1;min-width:160px;">
           <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Ürün Adı</label>
           <input type="text" name="name" placeholder="Örn: Latte veya Burger" style="width:100%;" required />
         </div>
-        <div style="width:120px;">
+        <div style="width:110px;">
           <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Fiyat</label>
           <input type="text" name="price" placeholder="140 TL" style="width:100%;" />
         </div>
-        <div style="flex:1;min-width:180px;">
+        <div style="flex:1;min-width:160px;">
           <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Kısa Açıklama</label>
           <input type="text" name="description" placeholder="İçerik veya not" style="width:100%;" />
         </div>
-        <div style="min-width:180px;">
+        <div style="min-width:170px;">
           <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Ürün Fotoğrafı</label>
           <input type="file" name="image" accept=".jpg,.jpeg,.png,.webp" style="width:100%;" />
         </div>
@@ -1278,12 +1308,10 @@ TENANT_PANEL_HTML = """
             <input type="text" name="price" value="{{ item.price or '' }}" placeholder="Fiyat" />
             <input type="text" name="description" value="{{ item.description or '' }}" placeholder="Açıklama" />
             <input type="file" name="image" accept=".jpg,.jpeg,.png,.webp" />
-            <div style="display:flex;gap:6px;justify-content:space-between;">
-              <button type="submit" class="btn">Kaydet</button>
-            </div>
+            <button type="submit" class="btn">Kaydet</button>
           </form>
           <form method="POST" action="{{ url_for('tenant_delete_menu_item', slug=tenant.slug, item_id=item.id) }}" onsubmit="return confirm('Menü ürünü silinsin mi?');">
-            <button type="submit" class="btn btn-del" style="width:100%;justify-content:center;">Ürünü Sil</button>
+            <button type="submit" class="btn btn-del" style="width:100%;">Ürünü Sil</button>
           </form>
         </div>
         {% endfor %}
@@ -1308,7 +1336,7 @@ TENANT_PANEL_HTML = """
       </div>
       <div class="msg">{{ t.message }}</div>
       <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;">
-        <form method="POST" action="{{ url_for('tenant_update_ticket', slug=tenant.slug, ticket_id=t.id) }}" style="display:flex;gap:8px;align-items:center;">
+        <form method="POST" action="{{ url_for('tenant_update_ticket', slug=tenant.slug, ticket_id=t.id) }}" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           <select name="status">
             <option value="Yeni" {% if t.status=='Yeni' %}selected{% endif %}>Yeni</option>
             <option value="İnceleniyor" {% if t.status=='İnceleniyor' %}selected{% endif %}>İnceleniyor</option>
@@ -1329,6 +1357,13 @@ TENANT_PANEL_HTML = """
     <div class="card" style="text-align:center;color:var(--muted);">Bu işletmeye ait henüz talep yok.</div>
     {% endfor %}
   </div>
+
+  <script>
+    function copyCustLink() {
+      const txt = document.getElementById("custLinkText").textContent.trim();
+      navigator.clipboard?.writeText(txt);
+    }
+  </script>
 </body>
 </html>
 """
@@ -1341,21 +1376,21 @@ SUPERADMIN_LOGIN_HTML = """
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Süper Admin Girişi</title>
   <style>
-    body { min-height:100vh; display:grid; place-items:center; background:#080d0b; color:#f8fafc; font-family:Inter,system-ui,sans-serif; padding:20px; }
-    .box { width:100%; max-width:400px; background:#121d18; border:1px solid rgba(16,185,129,0.25); border-radius:18px; padding:24px; display:grid; gap:14px; }
-    label { display:block; font-size:0.84rem; margin-bottom:6px; color:#d1d5db; }
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { min-height:100vh; display:grid; place-items:center; background:#080d0b; color:#f8fafc; font-family:Inter,system-ui,sans-serif; padding:16px; }
+    .box { width:100%; max-width:400px; background:#121d18; border:1px solid rgba(16,185,129,0.25); border-radius:16px; padding:22px; display:grid; gap:13px; }
+    label { display:block; font-size:0.84rem; margin-bottom:5px; color:#d1d5db; }
     input { width:100%; padding:10px 12px; border-radius:10px; border:1px solid rgba(16,185,129,0.25); background:#0f1714; color:#f8fafc; }
-    button { padding:11px; border-radius:10px; border:none; background:linear-gradient(135deg,#34d399,#10b981); color:#04130d; font-weight:800; cursor:pointer; }
+    button { padding:11px; border-radius:10px; border:none; background:linear-gradient(135deg,#34d399,#10b981); color:#04130d; font-weight:800; cursor:pointer; width:100%; }
   </style>
 </head>
 <body>
   <form class="box" method="POST">
-    <h1 style="font-size:1.25rem;">Süper Admin Girişi</h1>
+    <h1 style="font-size:1.2rem;">Süper Admin Girişi</h1>
     {% if error %}<div style="color:#fca5a5;font-size:0.86rem;">{{ error }}</div>{% endif %}
     <div><label>Kullanıcı Adı</label><input type="text" name="username" required /></div>
     <div><label>Şifre</label><input type="password" name="password" required /></div>
     <button type="submit">Giriş Yap</button>
-    <a href="{{ url_for('index') }}" style="color:#34d399;text-decoration:none;font-size:0.86rem;">← Ana Sayfa</a>
   </form>
 </body>
 </html>
@@ -1371,17 +1406,21 @@ SUPERADMIN_HTML = """
   <style>
     :root { --bg:#080d0b; --card:#121d18; --soft:#0f1714; --text:#f8fafc; --muted:#9ca3af; --accent:#10b981; --bright:#34d399; --amber:#f59e0b; --danger:#ef4444; --border:rgba(16,185,129,0.22); }
     * { box-sizing:border-box; margin:0; padding:0; font-family:Inter,system-ui,sans-serif; }
-    body { background:var(--bg); color:var(--text); padding:24px 18px 48px; }
-    .wrap { max-width:1140px; margin:0 auto; display:grid; gap:20px; }
-    .top { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; border-bottom:1px solid var(--border); padding-bottom:16px; }
-    .btn { text-decoration:none; padding:8px 13px; border-radius:9px; font-weight:700; font-size:0.84rem; border:1px solid var(--border); background:var(--card); color:var(--bright); cursor:pointer; }
+    body { background:var(--bg); color:var(--text); padding:20px 14px 48px; overflow-x:hidden; }
+    .wrap { max-width:1140px; margin:0 auto; display:grid; gap:16px; }
+    .top { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; border-bottom:1px solid var(--border); padding-bottom:14px; }
+    .btn { text-decoration:none; padding:8px 13px; border-radius:9px; font-weight:700; font-size:0.84rem; border:1px solid var(--border); background:var(--card); color:var(--bright); cursor:pointer; display:inline-flex; align-items:center; justify-content:center; }
     .btn-approve { background:linear-gradient(135deg,#34d399,#10b981); color:#04130d; border:none; font-weight:800; }
     .btn-suspend { background:rgba(239,68,68,0.15); border-color:rgba(239,68,68,0.4); color:#fca5a5; }
-    .card { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:18px; display:grid; gap:10px; }
+    .card { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:16px; display:grid; gap:10px; }
     .card.pending { border-color:rgba(245,158,11,0.48); }
     .badge-on { padding:3px 9px; border-radius:999px; font-size:0.75rem; font-weight:800; background:rgba(16,185,129,0.16); color:#6ee7b7; }
     .badge-off { padding:3px 9px; border-radius:999px; font-size:0.75rem; font-weight:800; background:rgba(245,158,11,0.18); color:#fcd34d; }
     select { padding:7px 10px; border-radius:8px; border:1px solid var(--border); background:var(--soft); color:var(--text); }
+    @media (max-width:768px) {
+      .card > div > div:last-child { width:100%; }
+      .card > div > div:last-child form, .card > div > div:last-child a { width:100%; }
+    }
   </style>
 </head>
 <body>
@@ -1389,10 +1428,9 @@ SUPERADMIN_HTML = """
     <div class="top">
       <div>
         <h1>Süper Admin — IBAN Ödeme Onayı</h1>
-        <p style="color:var(--muted);font-size:0.86rem;">Toplam {{ tenants|length }} işletme • IBAN: <code>{{ iban_number }}</code></p>
+        <p style="color:var(--muted);font-size:0.84rem;">Toplam {{ tenants|length }} işletme • IBAN: <code>{{ iban_number }}</code></p>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <a class="btn" href="{{ url_for('index') }}">← Vitrin</a>
         <form method="POST" action="{{ url_for('superadmin_logout') }}"><button type="submit" class="btn">Çıkış</button></form>
       </div>
     </div>
@@ -1420,16 +1458,16 @@ SUPERADMIN_HTML = """
         </div>
 
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-          <a class="btn" href="{{ url_for('tenant_public', slug=tn.slug) }}">Vitrin</a>
+          <a class="btn" href="{{ url_for('tenant_public', slug=tn.slug) }}">Müşteri Linki</a>
           <a class="btn" href="{{ url_for('tenant_panel', slug=tn.slug) }}">Panel</a>
 
           {% if not tn.is_active %}
           <form method="POST" action="{{ url_for('superadmin_approve_tenant', tenant_id=tn.id) }}">
-            <button type="submit" class="btn btn-approve">Ödeme Alındı &amp; Onayla</button>
+            <button type="submit" class="btn btn-approve" style="width:100%;">Ödeme Alındı &amp; Onayla</button>
           </form>
           {% else %}
           <form method="POST" action="{{ url_for('superadmin_suspend_tenant', tenant_id=tn.id) }}">
-            <button type="submit" class="btn btn-suspend">Askıya Al</button>
+            <button type="submit" class="btn btn-suspend" style="width:100%;">Askıya Al</button>
           </form>
           {% endif %}
 
@@ -1455,6 +1493,16 @@ def serve_root_logo():
     for candidate in (IMAGES_DIR / "logo.png", BASE_DIR / "logo.png"):
         if candidate.exists() and candidate.is_file():
             return send_from_directory(candidate.parent, candidate.name)
+    abort(404)
+
+
+@app.route("/images/logos/<int:tenant_id>/<path:filename>")
+def serve_tenant_logo(tenant_id, filename):
+    safe_name = Path(filename).name
+    target_dir = LOGO_IMAGES_DIR / str(tenant_id)
+    candidate = target_dir / safe_name
+    if candidate.exists() and candidate.is_file():
+        return send_from_directory(target_dir, safe_name)
     abort(404)
 
 
@@ -1730,6 +1778,7 @@ def tenant_panel(slug):
 def tenant_update_settings(slug):
     tenant = get_tenant_by_slug(slug)
     wa_num = request.form.get("whatsapp_number", "").strip()
+    new_logo = save_uploaded_image(LOGO_IMAGES_DIR, tenant["id"], request.files.get("logo"))
     try:
         t_count = int(request.form.get("table_count", tenant.get("table_count") or 8))
     except ValueError:
@@ -1738,10 +1787,16 @@ def tenant_update_settings(slug):
 
     with get_db() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE tenants SET whatsapp_number = %s, table_count = %s WHERE id = %s",
-                (wa_num, t_count, tenant["id"]),
-            )
+            if new_logo:
+                cur.execute(
+                    "UPDATE tenants SET whatsapp_number = %s, table_count = %s, logo_filename = %s WHERE id = %s",
+                    (wa_num, t_count, new_logo, tenant["id"]),
+                )
+            else:
+                cur.execute(
+                    "UPDATE tenants SET whatsapp_number = %s, table_count = %s WHERE id = %s",
+                    (wa_num, t_count, tenant["id"]),
+                )
     return redirect(url_for("tenant_panel", slug=slug))
 
 
@@ -1755,7 +1810,7 @@ def tenant_add_menu_item(slug):
     name = request.form.get("name", "").strip()
     price = request.form.get("price", "").strip()
     desc = request.form.get("description", "").strip()
-    img_file = save_menu_image(tenant["id"], request.files.get("image"))
+    img_file = save_uploaded_image(MENU_IMAGES_DIR, tenant["id"], request.files.get("image"))
 
     if name:
         with get_db() as conn:
@@ -1777,7 +1832,7 @@ def tenant_edit_menu_item(slug, item_id):
     name = request.form.get("name", "").strip()
     price = request.form.get("price", "").strip()
     desc = request.form.get("description", "").strip()
-    new_img = save_menu_image(tenant["id"], request.files.get("image"))
+    new_img = save_uploaded_image(MENU_IMAGES_DIR, tenant["id"], request.files.get("image"))
 
     if name:
         with get_db() as conn:
