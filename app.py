@@ -10,6 +10,7 @@ from urllib.parse import quote, urlparse
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from werkzeug.security import check_password_hash, generate_password_hash
+from werkzeug.utils import secure_filename
 from flask import (
     Flask,
     abort,
@@ -26,7 +27,15 @@ app.secret_key = os.environ.get("FLASK_SECRET_KEY", "kolay-otomasyon-gizli-anaht
 
 BASE_DIR = Path(__file__).resolve().parent
 IMAGES_DIR = BASE_DIR / "images"
+MENU_IMAGES_DIR = IMAGES_DIR / "menu"
 LEGACY_JSON_FILE = BASE_DIR / "tickets.json"
+
+ALLOWED_IMG_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
+TIME_SLOTS = [
+    "09:00", "10:00", "11:00", "12:00", "13:00", "14:00",
+    "15:00", "16:00", "17:00", "18:00", "19:00", "20:00",
+    "21:00", "22:00", "23:00"
+]
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 if not DATABASE_URL:
@@ -41,6 +50,13 @@ IBAN_BANK = os.environ.get("IBAN_BANK", "Türkiye İş Bankası / Kuveyt Türk")
 IBAN_NUMBER = os.environ.get("IBAN_NUMBER", "TR00 0000 0000 0000 0000 0000 00")
 PLAN_PRICE_STARTER = os.environ.get("PLAN_PRICE_STARTER", os.environ.get("PLAN_PRICE_FREE", "499 TL / Ay"))
 PLAN_PRICE_PRO = os.environ.get("PLAN_PRICE_PRO", "999 TL / Ay")
+
+MODULE_LABELS = {
+    "kafe-randevu": "Kafe & Restoran Masa Randevu",
+    "berber-randevu": "Berber & Kuaför Saat Randevu",
+    "masa-qr": "Masa QR Sipariş & Garson Çağır",
+    "genel": "Genel Talep Formu",
+}
 
 SERVICES_DATA = [
     {
@@ -148,6 +164,19 @@ def normalize_phone(raw_phone):
     return digits
 
 
+def save_menu_image(tenant_id, file_storage):
+    if not file_storage or not file_storage.filename:
+        return ""
+    ext = Path(secure_filename(file_storage.filename)).suffix.lower()
+    if ext not in ALLOWED_IMG_EXTS:
+        return ""
+    target_dir = MENU_IMAGES_DIR / str(tenant_id)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    fname = f"{uuid.uuid4().hex[:12]}{ext}"
+    file_storage.save(str(target_dir / fname))
+    return fname
+
+
 def get_db():
     parsed = urlparse(DATABASE_URL)
     sslmode = (
@@ -160,6 +189,7 @@ def get_db():
 
 def init_db():
     try:
+        MENU_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
         with get_db() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -172,6 +202,7 @@ def init_db():
                         password_hash TEXT NOT NULL,
                         plan TEXT NOT NULL DEFAULT 'starter',
                         module_type TEXT NOT NULL DEFAULT 'genel',
+                        table_count INTEGER NOT NULL DEFAULT 8,
                         whatsapp_number TEXT DEFAULT '',
                         payment_note TEXT DEFAULT '',
                         payment_requested BOOLEAN NOT NULL DEFAULT FALSE,
@@ -182,10 +213,27 @@ def init_db():
                     """
                 )
                 cur.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS module_type TEXT NOT NULL DEFAULT 'genel';")
+                cur.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS table_count INTEGER NOT NULL DEFAULT 8;")
                 cur.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS payment_note TEXT DEFAULT '';")
                 cur.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS payment_requested BOOLEAN NOT NULL DEFAULT FALSE;")
                 cur.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS activated_at TIMESTAMP;")
                 cur.execute("UPDATE tenants SET plan = 'starter' WHERE plan = 'free';")
+
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS tenant_menu_items (
+                        id SERIAL PRIMARY KEY,
+                        tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                        name TEXT NOT NULL,
+                        price TEXT DEFAULT '',
+                        description TEXT DEFAULT '',
+                        image_filename TEXT DEFAULT '',
+                        sort_order INTEGER NOT NULL DEFAULT 0,
+                        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+                    );
+                    """
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_menu_tenant_id ON tenant_menu_items(tenant_id);")
 
                 cur.execute(
                     """
@@ -210,9 +258,9 @@ def init_db():
                         """
                         INSERT INTO tenants (
                             slug, business_name, owner_email, password_hash, plan, module_type,
-                            whatsapp_number, payment_note, payment_requested, is_active, activated_at
+                            table_count, whatsapp_number, payment_note, payment_requested, is_active, activated_at
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, FALSE, TRUE, NOW())
+                        VALUES (%s, %s, %s, %s, %s, %s, 8, %s, %s, FALSE, TRUE, NOW())
                         RETURNING id
                         """,
                         (
@@ -289,6 +337,7 @@ def create_tenant(business_name, owner_email, password, raw_slug="", plan="start
     valid_modules = {"genel", "kafe-randevu", "berber-randevu", "masa-qr"}
     mod = module_type if module_type in valid_modules else "genel"
     chosen_plan = plan if plan in {"starter", "pro"} else "starter"
+    default_tables = 8 if mod == "kafe-randevu" else 4
     with get_db() as conn:
         with conn.cursor() as cur:
             candidate = base_slug
@@ -304,9 +353,9 @@ def create_tenant(business_name, owner_email, password, raw_slug="", plan="start
                 """
                 INSERT INTO tenants (
                     slug, business_name, owner_email, password_hash, plan,
-                    module_type, whatsapp_number, is_active, payment_requested
+                    module_type, table_count, whatsapp_number, is_active, payment_requested
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, FALSE, FALSE)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, FALSE, FALSE)
                 RETURNING *
                 """,
                 (
@@ -316,10 +365,51 @@ def create_tenant(business_name, owner_email, password, raw_slug="", plan="start
                     generate_password_hash(password),
                     chosen_plan,
                     mod,
+                    default_tables,
                     whatsapp_number.strip(),
                 ),
             )
             return cur.fetchone()
+
+
+def get_menu_items(tenant_id):
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, tenant_id, name, price, description, image_filename, sort_order
+                FROM tenant_menu_items
+                WHERE tenant_id = %s
+                ORDER BY sort_order ASC, id ASC
+                """,
+                (tenant_id,),
+            )
+            return cur.fetchall()
+
+
+def get_booked_slots(tenant_id, target_date=None):
+    date_str = (target_date or datetime.now().strftime("%Y-%m-%d")).strip()
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT service, message, status
+                FROM tickets
+                WHERE tenant_id = %s AND status != 'İptal'
+                """,
+                (tenant_id,),
+            )
+            rows = cur.fetchall()
+
+    booked_by_slot = {}
+    for r in rows:
+        txt = f"{r.get('service') or ''} {r.get('message') or ''}"
+        if date_str and date_str not in txt:
+            continue
+        for slot in TIME_SLOTS:
+            if slot in txt:
+                booked_by_slot[slot] = booked_by_slot.get(slot, 0) + 1
+    return booked_by_slot
 
 
 def load_tickets(tenant_id):
@@ -540,8 +630,8 @@ INDEX_HTML = """
           <div class="badge">IBAN Ödemeli &amp; Admin Onaylı Mikro-SaaS</div>
           <h1>İşletmen İçin <span>Kendi Panelini Aç</span>, Ödeme Onayıyla Aktif Et</h1>
           <p>
-            İşletme hesabını oluştur, IBAN üzerinden ödemeni yap ve admin onayının ardından sana özel
-            <code>/i/slug</code> müşteri sayfan ile <code>/i/slug/panel</code> yönetim ekranını anında kullanmaya başla.
+            İşletme hesabını oluştur, seçtiğin modül kilitli olarak tanımlansın, IBAN üzerinden ödemeni yap ve admin onayının ardından
+            <code>/i/slug</code> müşteri sayfan ile <code>/i/slug/panel</code> yönetim ekranını kullanmaya başla.
           </p>
           <div class="hero-actions">
             <a href="#saas-basla" class="btn-primary">İşletme Hesabı Oluştur</a>
@@ -558,7 +648,7 @@ INDEX_HTML = """
           <ul class="mini-list">
             <li><span>Starter Paket</span><span class="pill">{{ price_starter }}</span></li>
             <li><span>Pro Paket</span><span class="pill-amber">{{ price_pro }}</span></li>
-            <li><span>Ödeme Yöntemi</span><span class="pill">IBAN Havale / FAST</span></li>
+            <li><span>Modül Seçimi</span><span class="pill">İlk Üyelikte Kilitlenir</span></li>
             <li><span>Aktivasyon</span><span class="pill">Admin Onayı Sonrası</span></li>
           </ul>
         </aside>
@@ -601,7 +691,7 @@ INDEX_HTML = """
         <div class="section-head">
           <span>Hesap Açma &amp; IBAN Ödeme</span>
           <h2>Yeni İşletme Hesabı Oluştur veya Paneline Gir</h2>
-          <p>Kayıt sonrası IBAN'a ödeme yapıp ödeme bildirimi gönderebilirsin; admin panelinde onaylandığında sistem aktif olur.</p>
+          <p>İlk üyelikte seçtiğin modül panele kilitlenir; IBAN ödemesi admin panelinde onaylandığında sistem aktif olur.</p>
         </div>
 
         {% if created_tenant %}
@@ -620,7 +710,7 @@ INDEX_HTML = """
           <form class="saas-card" method="POST" action="{{ url_for('register_tenant') }}">
             <div>
               <h3 style="font-size: 1.15rem; margin-bottom: 4px;">Yeni İşletme Hesabı Aç</h3>
-              <p style="color: var(--muted); font-size: 0.88rem;">Önce hesap açılır, IBAN ödemen admin tarafından onaylanınca sistem açılır.</p>
+              <p style="color: var(--muted); font-size: 0.88rem;">Seçtiğin modül üyelik sonrası panelden değiştirilemez şekilde kilitlenir.</p>
             </div>
 
             <div class="row-2">
@@ -660,12 +750,12 @@ INDEX_HTML = """
             </div>
 
             <div>
-              <label for="module_type">Ana Kullanım Modülü</label>
+              <label for="module_type">Modül Seçimi (Üyelik Sonrası Kilitlenir)</label>
               <select id="module_type" name="module_type">
-                <option value="genel">Genel Talep / Müşteri Formu</option>
-                <option value="kafe-randevu">Kafe &amp; Restoran Masa Randevu</option>
+                <option value="kafe-randevu">Kafe &amp; Restoran Masa Randevu + Menü</option>
                 <option value="berber-randevu">Berber &amp; Kuaför Saat Randevu</option>
                 <option value="masa-qr">Masa QR Sipariş &amp; Garson Çağır</option>
+                <option value="genel">Genel Talep / Müşteri Formu</option>
               </select>
             </div>
 
@@ -784,8 +874,8 @@ TENANT_PENDING_HTML = """
       <div style="font-size:0.78rem;color:#fbbf24;font-weight:800;">HESAP DURUMU: ÖDEME ONAYI BEKLENİYOR</div>
       <h1 style="font-size:1.35rem;">{{ tenant.business_name }}</h1>
       <p style="color:#9ca3af;font-size:0.9rem;">
-        Hesabın açıldı (<code>/i/{{ tenant.slug }}</code>). Sistemin aktif olarak çalışması için aşağıdaki IBAN'a ödemeyi yapıp
-        bildirim gönderebilirsin; admin panelinden <strong>"Ödeme Alındı &amp; Onayla"</strong> yapıldığında hesabın açılır.
+        Hesabın açıldı (<code>/i/{{ tenant.slug }}</code>) ve modülün <strong>{{ mod_label }}</strong> olarak kilitlendi.
+        IBAN ödemesi admin panelinde onaylandığında hesabın aktif olur.
       </p>
 
       {% if notified %}
@@ -798,6 +888,7 @@ TENANT_PENDING_HTML = """
         <div><strong>Alıcı:</strong> {{ iban_holder }}</div>
         <div><strong>Banka:</strong> {{ iban_bank }}</div>
         <div><strong>Paket:</strong> {{ tenant.plan|upper }} ({{ price_pro if tenant.plan == 'pro' else price_starter }})</div>
+        <div><strong>Kilitli Modül:</strong> {{ mod_label }}</div>
       </div>
       <div class="iban">{{ iban_number }}</div>
 
@@ -826,7 +917,7 @@ TENANT_PUBLIC_HTML = """
   <title>{{ tenant.business_name }} — KOLAY Otomasyon</title>
   <style>
     body { background:#080d0b; color:#f8fafc; font-family:Inter,system-ui,sans-serif; padding:28px 18px 50px; }
-    .wrap { max-width:920px; margin:0 auto; display:grid; gap:20px; }
+    .wrap { max-width:980px; margin:0 auto; display:grid; gap:20px; }
     .top { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; border-bottom:1px solid rgba(16,185,129,0.22); padding-bottom:16px; }
     .btn { text-decoration:none; padding:9px 14px; border-radius:10px; font-weight:700; font-size:0.88rem; border:1px solid rgba(16,185,129,0.28); background:#121d18; color:#34d399; }
     .btn-main { background:linear-gradient(135deg,#34d399,#10b981); color:#04130d; border:none; }
@@ -836,6 +927,11 @@ TENANT_PUBLIC_HTML = """
     input, select, textarea { width:100%; padding:10px 12px; border-radius:10px; border:1px solid rgba(16,185,129,0.22); background:#0f1714; color:#f8fafc; }
     .ok { padding:12px 14px; border-radius:10px; background:rgba(16,185,129,0.16); border:1px solid rgba(16,185,129,0.4); color:#a7f3d0; font-weight:600; }
     .badge { font-size:0.75rem; color:#34d399; background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.28); padding:4px 10px; border-radius:999px; font-weight:700; display:inline-block; margin-bottom:6px; }
+    .menu-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px; }
+    .menu-card { background:#0f1714; border:1px solid rgba(16,185,129,0.18); border-radius:12px; padding:12px; display:grid; gap:8px; }
+    .menu-img { width:100%; aspect-ratio:16/10; object-fit:cover; border-radius:8px; display:block; }
+    .menu-check { display:flex; align-items:flex-start; gap:8px; font-size:0.85rem; color:#e5e7eb; cursor:pointer; }
+    .menu-check input[type="checkbox"] { width:auto; margin-top:3px; }
     @media (max-width:720px) { .row-2 { grid-template-columns:1fr; } }
   </style>
 </head>
@@ -856,80 +952,153 @@ TENANT_PUBLIC_HTML = """
     <div class="ok">Kaydınız <strong>{{ tenant.business_name }}</strong> paneline başarıyla iletildi!</div>
     {% endif %}
 
+    {% if tenant.module_type == 'kafe-randevu' %}
     <form class="card" method="POST">
-      <h2 style="font-size:1.14rem;">{{ form_title }}</h2>
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+        <h2 style="font-size:1.16rem;">Masa Randevusu &amp; İsteğe Bağlı Menü Seçimi</h2>
+        <span style="font-size:0.8rem;color:#9ca3af;">Toplam Masa: <strong>{{ tenant.table_count or 8 }}</strong></span>
+      </div>
 
-      {% if tenant.module_type == 'kafe-randevu' %}
-        <div class="row-2">
-          <div><label>Ad Soyad</label><input type="text" name="name" placeholder="Adınız Soyadınız" required /></div>
-          <div><label>Telefon</label><input type="text" name="phone" placeholder="05xx xxx xx xx" required /></div>
-        </div>
-        <div class="row-2">
-          <div>
-            <label>Kişi Sayısı</label>
-            <select name="guest_count">
-              <option value="2 Kişilik Masa">2 Kişilik Masa</option>
-              <option value="4 Kişilik Masa">4 Kişilik Masa</option>
-              <option value="6 Kişilik Masa">6 Kişilik Masa</option>
-              <option value="8+ Kişilik Grup">8+ Kişilik Grup</option>
-            </select>
-          </div>
-          <div><label>Tercih Edilen Saat / Tarih</label><input type="text" name="slot_time" placeholder="Örn: Bugün 20:30 veya Cuma 19:00" required /></div>
-        </div>
-        <div><label>Masa Tercihi / Özel Not</label><textarea name="message" rows="3" placeholder="Bahçe / cam kenarı veya özel notunuz..." required></textarea></div>
+      <div class="row-2">
+        <div><label>Ad Soyad</label><input type="text" name="name" placeholder="Adınız Soyadınız" required /></div>
+        <div><label>Telefon</label><input type="text" name="phone" placeholder="05xx xxx xx xx" required /></div>
+      </div>
 
-      {% elif tenant.module_type == 'berber-randevu' %}
-        <div class="row-2">
-          <div><label>Ad Soyad</label><input type="text" name="name" placeholder="Adınız Soyadınız" required /></div>
-          <div><label>Telefon</label><input type="text" name="phone" placeholder="05xx xxx xx xx" required /></div>
-        </div>
-        <div class="row-2">
-          <div>
-            <label>Hizmet Seçimi</label>
-            <select name="service">
-              <option value="Saç Kesimi">Saç Kesimi</option>
-              <option value="Saç + Sakal Tıraşı">Saç + Sakal Tıraşı</option>
-              <option value="Sakal Tıraşı & Bakım">Sakal Tıraşı &amp; Bakım</option>
-              <option value="Damat / Özel Bakım">Damat / Özel Bakım</option>
-            </select>
-          </div>
-          <div><label>İstenen Gün ve Saat</label><input type="text" name="slot_time" placeholder="Örn: Yarın 15:30" required /></div>
-        </div>
-        <div><label>Usta Tercihi / Ek Not</label><textarea name="message" rows="3" placeholder="Model veya saat ile ilgili notunuz..." required></textarea></div>
-
-      {% elif tenant.module_type == 'masa-qr' %}
-        <div class="row-2">
-          <div><label>Masa Numarası / Adı</label><input type="text" name="name" placeholder="Örn: Masa 4 veya Bahçe 2" required /></div>
-          <div><label>İletişim / Not Kodu (Opsiyonel)</label><input type="text" name="phone" placeholder="Opsiyonel" /></div>
+      <div class="row-2">
+        <div>
+          <label>Randevu Tarihi</label>
+          <input type="date" name="res_date" id="resDateInput" value="{{ selected_date }}" onchange="reloadDateSlots()" required />
         </div>
         <div>
-          <label>Masa İsteği</label>
-          <select name="service">
-            <option value="Garson Çağır">Garson Çağır</option>
-            <option value="Hesap İste">Hesap İste</option>
-            <option value="Sipariş Notu / İstek">Sipariş Notu / İstek</option>
-          </select>
-        </div>
-        <div><label>Sipariş veya İstek Detayı</label><textarea name="message" rows="3" placeholder="Örn: 2 Türk kahvesi, su veya hesap rica ediyoruz..." required></textarea></div>
-
-      {% else %}
-        <div class="row-2">
-          <div><label>Ad Soyad</label><input type="text" name="name" required /></div>
-          <div><label>Telefon</label><input type="text" name="phone" placeholder="05xx xxx xx xx" required /></div>
-        </div>
-        <div>
-          <label>Konu / Hizmet</label>
-          <select name="service">
-            {% for srv in services %}
-            <option value="{{ srv.tag }} - {{ srv.title }}">{{ srv.tag }} — {{ srv.title }}</option>
+          <label>Müsait Saat (Seçili Tarih &amp; Masa Kapasitesine Göre)</label>
+          <select name="slot_time" required>
+            {% for sl in slot_options %}
+              {% if sl.available > 0 %}
+                <option value="{{ sl.time }}">{{ sl.time }} — Müsait ({{ sl.available }}/{{ tenant.table_count or 8 }} masa boş)</option>
+              {% else %}
+                <option value="{{ sl.time }}" disabled>{{ sl.time }} — Dolu</option>
+              {% endif %}
             {% endfor %}
           </select>
         </div>
-        <div><label>Mesaj / Not</label><textarea name="message" rows="4" required></textarea></div>
+      </div>
+
+      <div class="row-2">
+        <div>
+          <label>Kişi Sayısı</label>
+          <select name="guest_count">
+            <option value="2 Kişilik">2 Kişilik</option>
+            <option value="4 Kişilik">4 Kişilik</option>
+            <option value="6 Kişilik">6 Kişilik</option>
+            <option value="8+ Kişilik Grup">8+ Kişilik Grup</option>
+          </select>
+        </div>
+        <div>
+          <label>Menü Tercihi</label>
+          <select name="menu_mode">
+            <option value="decide_on_arrival">Gelince Karar Vereceğim (Menü Seçmeden Devam Et)</option>
+            <option value="preselect">Şimdi Menüden Seçim Yapıyorum</option>
+          </select>
+        </div>
+      </div>
+
+      {% if menu_items %}
+      <div>
+        <label>Menü Ürünleri (İsteğe Bağlı Seçebilirsin)</label>
+        <div class="menu-grid">
+          {% for item in menu_items %}
+          <div class="menu-card">
+            {% if item.image_filename %}
+              <img src="/images/menu/{{ tenant.id }}/{{ item.image_filename }}" alt="{{ item.name }}" class="menu-img" onerror="this.style.display='none'" />
+            {% endif %}
+            <label class="menu-check">
+              <input type="checkbox" name="menu_item" value="{{ item.name }}{% if item.price %} ({{ item.price }}){% endif %}" />
+              <span>
+                <strong>{{ item.name }}</strong>
+                {% if item.price %}<span style="color:#34d399;font-weight:700;"> • {{ item.price }}</span>{% endif %}
+                {% if item.description %}<div style="font-size:0.78rem;color:#9ca3af;margin-top:2px;">{{ item.description }}</div>{% endif %}
+              </span>
+            </label>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
       {% endif %}
 
+      <div><label>Ek Not / Özel İstek</label><textarea name="message" rows="2" placeholder="Cam kenarı, doğum günü notu veya ek istek..."></textarea></div>
+      <button type="submit" class="btn btn-main" style="cursor:pointer;">Randevu Talebini Gönder</button>
+    </form>
+
+    <script>
+      function reloadDateSlots() {
+        const d = document.getElementById("resDateInput").value;
+        const url = new URL(window.location.href);
+        if (d) url.searchParams.set("date", d);
+        window.location.href = url.toString();
+      }
+    </script>
+
+    {% elif tenant.module_type == 'berber-randevu' %}
+    <form class="card" method="POST">
+      <h2 style="font-size:1.14rem;">Salon Randevu Talebi</h2>
+      <div class="row-2">
+        <div><label>Ad Soyad</label><input type="text" name="name" placeholder="Adınız Soyadınız" required /></div>
+        <div><label>Telefon</label><input type="text" name="phone" placeholder="05xx xxx xx xx" required /></div>
+      </div>
+      <div class="row-2">
+        <div>
+          <label>Hizmet Seçimi</label>
+          <select name="service">
+            <option value="Saç Kesimi">Saç Kesimi</option>
+            <option value="Saç + Sakal Tıraşı">Saç + Sakal Tıraşı</option>
+            <option value="Sakal Tıraşı & Bakım">Sakal Tıraşı &amp; Bakım</option>
+            <option value="Damat / Özel Bakım">Damat / Özel Bakım</option>
+          </select>
+        </div>
+        <div><label>İstenen Gün ve Saat</label><input type="text" name="slot_time" placeholder="Örn: Yarın 15:30" required /></div>
+      </div>
+      <div><label>Usta Tercihi / Ek Not</label><textarea name="message" rows="3" placeholder="Model veya saat ile ilgili notunuz..." required></textarea></div>
       <button type="submit" class="btn btn-main" style="cursor:pointer;">Gönder</button>
     </form>
+
+    {% elif tenant.module_type == 'masa-qr' %}
+    <form class="card" method="POST">
+      <h2 style="font-size:1.14rem;">Masa Sipariş &amp; Garson İsteği</h2>
+      <div class="row-2">
+        <div><label>Masa Numarası / Adı</label><input type="text" name="name" placeholder="Örn: Masa 4 veya Bahçe 2" required /></div>
+        <div><label>İletişim / Not Kodu (Opsiyonel)</label><input type="text" name="phone" placeholder="Opsiyonel" /></div>
+      </div>
+      <div>
+        <label>Masa İsteği</label>
+        <select name="service">
+          <option value="Garson Çağır">Garson Çağır</option>
+          <option value="Hesap İste">Hesap İste</option>
+          <option value="Sipariş Notu / İstek">Sipariş Notu / İstek</option>
+        </select>
+      </div>
+      <div><label>Sipariş veya İstek Detayı</label><textarea name="message" rows="3" placeholder="Örn: 2 Türk kahvesi, su veya hesap rica ediyoruz..." required></textarea></div>
+      <button type="submit" class="btn btn-main" style="cursor:pointer;">Gönder</button>
+    </form>
+
+    {% else %}
+    <form class="card" method="POST">
+      <h2 style="font-size:1.14rem;">Talep / Randevu / Sipariş Bırak</h2>
+      <div class="row-2">
+        <div><label>Ad Soyad</label><input type="text" name="name" required /></div>
+        <div><label>Telefon</label><input type="text" name="phone" placeholder="05xx xxx xx xx" required /></div>
+      </div>
+      <div>
+        <label>Konu / Hizmet</label>
+        <select name="service">
+          {% for srv in services %}
+          <option value="{{ srv.tag }} - {{ srv.title }}">{{ srv.tag }} — {{ srv.title }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div><label>Mesaj / Not</label><textarea name="message" rows="4" required></textarea></div>
+      <button type="submit" class="btn btn-main" style="cursor:pointer;">Gönder</button>
+    </form>
+    {% endif %}
   </div>
 </body>
 </html>
@@ -978,7 +1147,7 @@ TENANT_PANEL_HTML = """
     :root { --bg:#080d0b; --card:#121d18; --soft:#0f1714; --text:#f8fafc; --muted:#9ca3af; --accent:#10b981; --bright:#34d399; --amber:#f59e0b; --border:rgba(16,185,129,0.22); }
     * { box-sizing:border-box; margin:0; padding:0; font-family:Inter,system-ui,sans-serif; }
     body { background:var(--bg); color:var(--text); padding:24px 18px 48px; }
-    .wrap { max-width:1080px; margin:0 auto; display:grid; gap:20px; }
+    .wrap { max-width:1120px; margin:0 auto; display:grid; gap:20px; }
     .top { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; border-bottom:1px solid var(--border); padding-bottom:16px; }
     .btn { text-decoration:none; padding:9px 14px; border-radius:10px; font-weight:700; font-size:0.86rem; border:1px solid var(--border); background:var(--card); color:var(--bright); cursor:pointer; display:inline-flex; align-items:center; gap:6px; }
     .btn-wa { background:rgba(34,197,94,0.16); border-color:rgba(34,197,94,0.45); color:#86efac; }
@@ -990,16 +1159,21 @@ TENANT_PANEL_HTML = """
     .card { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:18px; display:grid; gap:12px; }
     .msg { background:var(--soft); padding:12px; border-radius:10px; font-size:0.92rem; }
     input, select { padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--soft); color:var(--text); }
-    .row-3 { display:grid; grid-template-columns:1fr 1fr auto; gap:10px; align-items:end; }
-    @media (max-width:760px) { .row-3 { grid-template-columns:1fr; } }
+    .locked-pill { padding:8px 12px; border-radius:8px; background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.35); color:#fcd34d; font-size:0.84rem; font-weight:700; }
+    .menu-admin-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; }
+    .menu-box { background:var(--soft); border:1px solid var(--border); border-radius:12px; padding:12px; display:grid; gap:8px; }
+    .menu-thumb { width:100%; aspect-ratio:16/10; object-fit:cover; border-radius:8px; }
+    .row-flex { display:flex; gap:10px; flex-wrap:wrap; align-items:end; }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="top">
       <div>
-        <h1>{{ tenant.business_name }} — Talep Paneli</h1>
-        <p style="color:var(--muted);font-size:0.86rem;">Slug: <code>{{ tenant.slug }}</code> • Plan: <code>{{ tenant.plan|upper }}</code> • Durum: <strong style="color:var(--bright);">AKTİF</strong></p>
+        <h1>{{ tenant.business_name }} — Yönetim Paneli</h1>
+        <p style="color:var(--muted);font-size:0.86rem;">
+          Slug: <code>{{ tenant.slug }}</code> • Plan: <code>{{ tenant.plan|upper }}</code> • Kilitli Modül: <strong>{{ mod_label }}</strong>
+        </p>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <a class="btn" href="{{ url_for('tenant_public', slug=tenant.slug) }}">Müşteri Linki</a>
@@ -1008,24 +1182,73 @@ TENANT_PANEL_HTML = """
     </div>
 
     <form class="card" method="POST" action="{{ url_for('tenant_update_settings', slug=tenant.slug) }}">
-      <div style="font-size:0.85rem;font-weight:800;color:var(--bright);">İŞLETME AYARLARI</div>
-      <div class="row-3">
-        <div>
+      <div style="font-size:0.85rem;font-weight:800;color:var(--bright);">İŞLETME AYARLARI (MODÜL KİLİTLİ: {{ mod_label|upper }})</div>
+      <div class="row-flex">
+        <div style="flex:1;min-width:190px;">
           <label style="display:block;font-size:0.8rem;color:var(--muted);margin-bottom:4px;">WhatsApp Numarası</label>
-          <input type="text" name="whatsapp_number" value="{{ tenant.whatsapp_number or '' }}" placeholder="05xx xxx xx xx" />
+          <input type="text" name="whatsapp_number" value="{{ tenant.whatsapp_number or '' }}" placeholder="05xx xxx xx xx" style="width:100%;" />
         </div>
-        <div>
-          <label style="display:block;font-size:0.8rem;color:var(--muted);margin-bottom:4px;">Aktif Modül</label>
-          <select name="module_type">
-            <option value="genel" {% if tenant.module_type=='genel' %}selected{% endif %}>Genel Talep</option>
-            <option value="kafe-randevu" {% if tenant.module_type=='kafe-randevu' %}selected{% endif %}>Kafe Randevu</option>
-            <option value="berber-randevu" {% if tenant.module_type=='berber-randevu' %}selected{% endif %}>Berber Randevu</option>
-            <option value="masa-qr" {% if tenant.module_type=='masa-qr' %}selected{% endif %}>Masa QR</option>
-          </select>
+        {% if tenant.module_type == 'kafe-randevu' %}
+        <div style="width:150px;">
+          <label style="display:block;font-size:0.8rem;color:var(--muted);margin-bottom:4px;">Masa Sayısı</label>
+          <input type="number" name="table_count" min="1" max="200" value="{{ tenant.table_count or 8 }}" style="width:100%;" required />
         </div>
+        {% endif %}
+        <div class="locked-pill">Modül: {{ mod_label }} (Değiştirilemez)</div>
         <button type="submit" class="btn">Ayarları Kaydet</button>
       </div>
     </form>
+
+    {% if tenant.module_type == 'kafe-randevu' %}
+    <div class="card">
+      <div style="font-size:0.85rem;font-weight:800;color:var(--bright);">MENÜ YÖNETİMİ (EKLE / DÜZENLE / FOTOĞRAF YÜKLE)</div>
+      <form method="POST" action="{{ url_for('tenant_add_menu_item', slug=tenant.slug) }}" enctype="multipart/form-data" class="row-flex">
+        <div style="flex:1;min-width:160px;">
+          <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Ürün Adı</label>
+          <input type="text" name="name" placeholder="Örn: Latte veya Burger" style="width:100%;" required />
+        </div>
+        <div style="width:120px;">
+          <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Fiyat</label>
+          <input type="text" name="price" placeholder="140 TL" style="width:100%;" />
+        </div>
+        <div style="flex:1;min-width:180px;">
+          <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Kısa Açıklama</label>
+          <input type="text" name="description" placeholder="İçerik veya not" style="width:100%;" />
+        </div>
+        <div style="min-width:180px;">
+          <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Ürün Fotoğrafı</label>
+          <input type="file" name="image" accept=".jpg,.jpeg,.png,.webp" style="width:100%;" />
+        </div>
+        <button type="submit" class="btn">+ Menüye Ekle</button>
+      </form>
+
+      {% if menu_items %}
+      <div class="menu-admin-grid">
+        {% for item in menu_items %}
+        <div class="menu-box">
+          {% if item.image_filename %}
+            <img src="/images/menu/{{ tenant.id }}/{{ item.image_filename }}" alt="{{ item.name }}" class="menu-thumb" onerror="this.style.display='none'" />
+          {% endif %}
+          <form method="POST" action="{{ url_for('tenant_edit_menu_item', slug=tenant.slug, item_id=item.id) }}" enctype="multipart/form-data" style="display:grid;gap:6px;">
+            <input type="text" name="name" value="{{ item.name }}" required />
+            <input type="text" name="price" value="{{ item.price or '' }}" placeholder="Fiyat" />
+            <input type="text" name="description" value="{{ item.description or '' }}" placeholder="Açıklama" />
+            <input type="file" name="image" accept=".jpg,.jpeg,.png,.webp" />
+            <div style="display:flex;gap:6px;justify-content:space-between;">
+              <button type="submit" class="btn">Kaydet</button>
+            </div>
+          </form>
+          <form method="POST" action="{{ url_for('tenant_delete_menu_item', slug=tenant.slug, item_id=item.id) }}" onsubmit="return confirm('Menü ürünü silinsin mi?');">
+            <button type="submit" class="btn btn-del" style="width:100%;justify-content:center;">Ürünü Sil</button>
+          </form>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p style="color:var(--muted);font-size:0.86rem;">Henüz menü ürünü eklenmedi. Müşteriler randevu alırken "Gelince Karar Vereceğim" seçeneğini kullanabilir veya yukarıdan menü ekleyebilirsin.</p>
+      {% endif %}
+    </div>
+    {% endif %}
 
     <div class="stats">
       <div class="stat"><span>Toplam Talep</span><strong>{{ tickets|length }}</strong></div>
@@ -1046,6 +1269,7 @@ TENANT_PANEL_HTML = """
             <option value="Yeni" {% if t.status=='Yeni' %}selected{% endif %}>Yeni</option>
             <option value="İnceleniyor" {% if t.status=='İnceleniyor' %}selected{% endif %}>İnceleniyor</option>
             <option value="Tamamlandı" {% if t.status=='Tamamlandı' %}selected{% endif %}>Tamamlandı</option>
+            <option value="İptal" {% if t.status=='İptal' %}selected{% endif %}>İptal</option>
           </select>
           <button type="submit" class="btn">Güncelle</button>
           {% if t.wa_link %}
@@ -1146,7 +1370,7 @@ SUPERADMIN_HTML = """
             {% endif %}
           </div>
           <div style="font-size:0.82rem;color:var(--muted);margin-top:4px;">
-            {{ tn.owner_email }} • Paket: <strong>{{ tn.plan|upper }}</strong> • Modül: <code>{{ tn.module_type }}</code> • Talep: {{ tn.ticket_count }}
+            {{ tn.owner_email }} • Paket: <strong>{{ tn.plan|upper }}</strong> • Modül: <code>{{ tn.module_type }}</code> • Masa: {{ tn.table_count or '-' }} • Talep: {{ tn.ticket_count }}
             {% if tn.payment_note %} • Not: <span style="color:#fcd34d;">{{ tn.payment_note }}</span>{% endif %}
           </div>
         </div>
@@ -1187,6 +1411,16 @@ def serve_root_logo():
     for candidate in (IMAGES_DIR / "logo.png", BASE_DIR / "logo.png"):
         if candidate.exists() and candidate.is_file():
             return send_from_directory(candidate.parent, candidate.name)
+    abort(404)
+
+
+@app.route("/images/menu/<int:tenant_id>/<path:filename>")
+def serve_menu_image(tenant_id, filename):
+    safe_name = Path(filename).name
+    target_dir = MENU_IMAGES_DIR / str(tenant_id)
+    candidate = target_dir / safe_name
+    if candidate.exists() and candidate.is_file():
+        return send_from_directory(target_dir, safe_name)
     abort(404)
 
 
@@ -1232,7 +1466,7 @@ def register_tenant():
     whatsapp_number = request.form.get("whatsapp_number", "").strip()
     password = request.form.get("password", "").strip()
     plan = request.form.get("plan", "starter").strip()
-    module_type = request.form.get("module_type", "genel").strip()
+    module_type = request.form.get("module_type", "kafe-randevu").strip()
 
     if not business_name or not owner_email or len(password) < 4:
         return redirect(url_for("index", err="İşletme adı, e-posta ve en az 4 karakter şifre zorunlu.") + "#saas-basla")
@@ -1289,11 +1523,15 @@ def tenant_public(slug):
     if not tenant:
         abort(404)
 
+    mod_type = tenant.get("module_type") or "genel"
+    mod_label = MODULE_LABELS.get(mod_type, MODULE_LABELS["genel"])
+
     if not tenant["is_active"]:
         notified = request.args.get("notified") == "1"
         return render_template_string(
             TENANT_PENDING_HTML,
             tenant=tenant,
+            mod_label=mod_label,
             notified=notified,
             iban_holder=IBAN_HOLDER,
             iban_bank=IBAN_BANK,
@@ -1303,14 +1541,14 @@ def tenant_public(slug):
             wa_number=WHATSAPP_NUMBER,
         )
 
-    mod_type = tenant.get("module_type") or "genel"
-    mod_meta = {
-        "kafe-randevu": ("Kafe & Restoran Masa Randevu", "Masa Rezervasyon Talebi"),
-        "berber-randevu": ("Berber & Kuaför Saat Randevu", "Randevu Talebi Oluştur"),
-        "masa-qr": ("Masa QR Sipariş & Garson Çağır", "Masa İsteği Gönder"),
-        "genel": ("Genel Talep Formu", "Talep / Randevu / Sipariş Bırak"),
-    }
-    mod_label, form_title = mod_meta.get(mod_type, mod_meta["genel"])
+    selected_date = request.args.get("date") or datetime.now().strftime("%Y-%m-%d")
+    menu_items = get_menu_items(tenant["id"]) if mod_type == "kafe-randevu" else []
+    table_cap = max(1, int(tenant.get("table_count") or 8))
+    booked_map = get_booked_slots(tenant["id"], selected_date) if mod_type == "kafe-randevu" else {}
+    slot_options = [
+        {"time": sl, "available": max(0, table_cap - booked_map.get(sl, 0))}
+        for sl in TIME_SLOTS
+    ]
 
     if request.method == "POST":
         name = request.form.get("name", "").strip()
@@ -1318,15 +1556,22 @@ def tenant_public(slug):
         raw_service = request.form.get("service", "").strip()
         slot_time = request.form.get("slot_time", "").strip()
         guest_count = request.form.get("guest_count", "").strip()
+        res_date = request.form.get("res_date", selected_date).strip()
+        menu_mode = request.form.get("menu_mode", "decide_on_arrival").strip()
+        selected_menu = request.form.getlist("menu_item")
         raw_message = request.form.get("message", "").strip()
 
         if mod_type == "kafe-randevu":
-            service = f"Masa Randevu ({guest_count or 'Masa'})"
+            service = f"Masa Randevu ({res_date} {slot_time})"
             parts = []
             if guest_count:
                 parts.append(f"Kişi: {guest_count}")
-            if slot_time:
-                parts.append(f"Saat: {slot_time}")
+            if res_date or slot_time:
+                parts.append(f"Tarih/Saat: {res_date} {slot_time}".strip())
+            if menu_mode == "preselect" and selected_menu:
+                parts.append("Menü Seçimi: " + ", ".join(selected_menu))
+            else:
+                parts.append("Menü: Gelince Karar Verecek")
             if raw_message:
                 parts.append(f"Not: {raw_message}")
             message = " | ".join(parts)
@@ -1347,7 +1592,7 @@ def tenant_public(slug):
 
         if name and message:
             add_ticket(tenant["id"], name, phone, service, message)
-        return redirect(url_for("tenant_public", slug=slug, sent="1"))
+        return redirect(url_for("tenant_public", slug=slug, date=res_date, sent="1"))
 
     sent = request.args.get("sent") == "1"
     return render_template_string(
@@ -1355,7 +1600,9 @@ def tenant_public(slug):
         tenant=tenant,
         services=SERVICES_DATA,
         mod_label=mod_label,
-        form_title=form_title,
+        selected_date=selected_date,
+        slot_options=slot_options,
+        menu_items=menu_items,
         sent=sent,
     )
 
@@ -1392,11 +1639,15 @@ def tenant_logout(slug):
 @tenant_login_required
 def tenant_panel(slug):
     tenant = get_tenant_by_slug(slug)
+    mod_type = tenant.get("module_type") or "genel"
+    mod_label = MODULE_LABELS.get(mod_type, MODULE_LABELS["genel"])
+
     if not tenant["is_active"]:
         notified = request.args.get("notified") == "1"
         return render_template_string(
             TENANT_PENDING_HTML,
             tenant=tenant,
+            mod_label=mod_label,
             notified=notified,
             iban_holder=IBAN_HOLDER,
             iban_bank=IBAN_BANK,
@@ -1407,11 +1658,14 @@ def tenant_panel(slug):
         )
 
     tickets = load_tickets(tenant["id"])
+    menu_items = get_menu_items(tenant["id"]) if mod_type == "kafe-randevu" else []
     yeni_count = sum(1 for t in tickets if (t.get("status") or "Yeni") == "Yeni")
     tamam_count = sum(1 for t in tickets if t.get("status") == "Tamamlandı")
     return render_template_string(
         TENANT_PANEL_HTML,
         tenant=tenant,
+        mod_label=mod_label,
+        menu_items=menu_items,
         tickets=tickets,
         yeni_count=yeni_count,
         tamam_count=tamam_count,
@@ -1423,14 +1677,88 @@ def tenant_panel(slug):
 def tenant_update_settings(slug):
     tenant = get_tenant_by_slug(slug)
     wa_num = request.form.get("whatsapp_number", "").strip()
-    mod = request.form.get("module_type", "genel").strip()
-    if mod not in {"genel", "kafe-randevu", "berber-randevu", "masa-qr"}:
-        mod = "genel"
+    try:
+        t_count = int(request.form.get("table_count", tenant.get("table_count") or 8))
+    except ValueError:
+        t_count = tenant.get("table_count") or 8
+    t_count = max(1, min(200, t_count))
+
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "UPDATE tenants SET whatsapp_number = %s, module_type = %s WHERE id = %s",
-                (wa_num, mod, tenant["id"]),
+                "UPDATE tenants SET whatsapp_number = %s, table_count = %s WHERE id = %s",
+                (wa_num, t_count, tenant["id"]),
+            )
+    return redirect(url_for("tenant_panel", slug=slug))
+
+
+@app.route("/i/<slug>/panel/menu/add", methods=["POST"])
+@tenant_login_required
+def tenant_add_menu_item(slug):
+    tenant = get_tenant_by_slug(slug)
+    if (tenant.get("module_type") or "genel") != "kafe-randevu":
+        return redirect(url_for("tenant_panel", slug=slug))
+
+    name = request.form.get("name", "").strip()
+    price = request.form.get("price", "").strip()
+    desc = request.form.get("description", "").strip()
+    img_file = save_menu_image(tenant["id"], request.files.get("image"))
+
+    if name:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO tenant_menu_items (tenant_id, name, price, description, image_filename)
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (tenant["id"], name, price, desc, img_file),
+                )
+    return redirect(url_for("tenant_panel", slug=slug))
+
+
+@app.route("/i/<slug>/panel/menu/<int:item_id>/edit", methods=["POST"])
+@tenant_login_required
+def tenant_edit_menu_item(slug, item_id):
+    tenant = get_tenant_by_slug(slug)
+    name = request.form.get("name", "").strip()
+    price = request.form.get("price", "").strip()
+    desc = request.form.get("description", "").strip()
+    new_img = save_menu_image(tenant["id"], request.files.get("image"))
+
+    if name:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                if new_img:
+                    cur.execute(
+                        """
+                        UPDATE tenant_menu_items
+                        SET name = %s, price = %s, description = %s, image_filename = %s
+                        WHERE id = %s AND tenant_id = %s
+                        """,
+                        (name, price, desc, new_img, item_id, tenant["id"]),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        UPDATE tenant_menu_items
+                        SET name = %s, price = %s, description = %s
+                        WHERE id = %s AND tenant_id = %s
+                        """,
+                        (name, price, desc, item_id, tenant["id"]),
+                    )
+    return redirect(url_for("tenant_panel", slug=slug))
+
+
+@app.route("/i/<slug>/panel/menu/<int:item_id>/delete", methods=["POST"])
+@tenant_login_required
+def tenant_delete_menu_item(slug, item_id):
+    tenant = get_tenant_by_slug(slug)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM tenant_menu_items WHERE id = %s AND tenant_id = %s",
+                (item_id, tenant["id"]),
             )
     return redirect(url_for("tenant_panel", slug=slug))
 
@@ -1440,7 +1768,7 @@ def tenant_update_settings(slug):
 def tenant_update_ticket(slug, ticket_id):
     tenant = get_tenant_by_slug(slug)
     new_status = request.form.get("status", "Yeni").strip()
-    if new_status not in {"Yeni", "İnceleniyor", "Tamamlandı"}:
+    if new_status not in {"Yeni", "İnceleniyor", "Tamamlandı", "İptal"}:
         new_status = "Yeni"
     update_ticket_status(tenant["id"], ticket_id, new_status)
     return redirect(url_for("tenant_panel", slug=slug))
