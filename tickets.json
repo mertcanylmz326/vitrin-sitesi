@@ -1,0 +1,18 @@
+[
+  {
+    "id": 1,
+    "question": "sdasdasdsa",
+    "ai_reply": "Mesajını aldım. Gerekirse detay için kaydını operatör kuyruğuna ekledim.",
+    "operator_reply": null,
+    "status": "bekliyor",
+    "time": "13:36:39"
+  },
+  {
+    "id": 2,
+    "question": "sadsads",
+    "ai_reply": "Mesajını aldım. Gerekirse detay için kaydını operatör kuyruğuna ekledim.",
+    "operator_reply": null,
+    "status": "bekliyor",
+    "time": "13:41:53"
+  }
+]
