@@ -1198,103 +1198,134 @@ TENANT_PANEL_HTML = """
 <html lang="tr">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>{{ tenant.business_name }} — Yönetim Paneli</title>
   <style>
     :root { --bg:#080d0b; --card:#121d18; --soft:#0f1714; --text:#f8fafc; --muted:#9ca3af; --accent:#10b981; --bright:#34d399; --amber:#f59e0b; --border:rgba(16,185,129,0.22); }
-    * { box-sizing:border-box; margin:0; padding:0; font-family:Inter,system-ui,sans-serif; }
-    body { background:var(--bg); color:var(--text); padding:20px 14px 48px; overflow-x:hidden; }
-    .wrap { max-width:1120px; margin:0 auto; display:grid; gap:16px; }
-    .top { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; border-bottom:1px solid var(--border); padding-bottom:14px; }
-    .btn { text-decoration:none; padding:9px 13px; border-radius:10px; font-weight:700; font-size:0.86rem; border:1px solid var(--border); background:var(--card); color:var(--bright); cursor:pointer; display:inline-flex; align-items:center; justify-content:center; gap:6px; }
+    * { box-sizing:border-box; margin:0; padding:0; font-family:Inter,system-ui,sans-serif; -webkit-tap-highlight-color:transparent; }
+    body { background:var(--bg); color:var(--text); padding:0 0 84px; overflow-x:hidden; }
+    .topbar { position:sticky; top:0; z-index:40; background:rgba(8,13,11,0.9); backdrop-filter:blur(12px); border-bottom:1px solid var(--border); padding:14px 16px; display:flex; justify-content:space-between; align-items:center; gap:10px; }
+    .wrap { max-width:1120px; margin:0 auto; padding:16px; display:grid; gap:14px; }
+    .btn { text-decoration:none; padding:9px 13px; border-radius:10px; font-weight:700; font-size:0.84rem; border:1px solid var(--border); background:var(--card); color:var(--bright); cursor:pointer; display:inline-flex; align-items:center; justify-content:center; gap:6px; }
+    .btn-ok { background:linear-gradient(135deg,#34d399,#10b981); color:#04130d; border:none; font-weight:800; }
     .btn-wa { background:rgba(34,197,94,0.16); border-color:rgba(34,197,94,0.45); color:#86efac; }
     .btn-del { background:rgba(239,68,68,0.14); border-color:rgba(239,68,68,0.35); color:#fca5a5; }
-    .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; }
-    .stat { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:14px; }
-    .stat span { font-size:0.78rem; color:var(--muted); display:block; }
-    .stat strong { font-size:1.35rem; color:var(--bright); }
-    .card { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:16px; display:grid; gap:12px; }
-    .msg { background:var(--soft); padding:12px; border-radius:10px; font-size:0.9rem; word-break:break-word; }
-    input, select { padding:9px 10px; border-radius:8px; border:1px solid var(--border); background:var(--soft); color:var(--text); font-size:0.9rem; }
-    .locked-pill { padding:8px 12px; border-radius:8px; background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.35); color:#fcd34d; font-size:0.82rem; font-weight:700; }
+    .stats { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+    .stat { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:12px; }
+    .stat span { font-size:0.74rem; color:var(--muted); display:block; }
+    .stat strong { font-size:1.3rem; color:var(--bright); }
+    .card { background:var(--card); border:1px solid var(--border); border-radius:16px; padding:15px; display:grid; gap:12px; }
+    .msg { background:var(--soft); padding:11px 12px; border-radius:10px; font-size:0.88rem; word-break:break-word; border:1px solid rgba(16,185,129,0.12); }
+    input, select { padding:10px 11px; border-radius:10px; border:1px solid var(--border); background:var(--soft); color:var(--text); font-size:0.9rem; }
+    .locked-pill { padding:8px 12px; border-radius:10px; background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.35); color:#fcd34d; font-size:0.8rem; font-weight:700; }
     .menu-admin-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px; }
     .menu-box { background:var(--soft); border:1px solid var(--border); border-radius:12px; padding:12px; display:grid; gap:8px; }
     .menu-thumb { width:100%; aspect-ratio:16/10; object-fit:cover; border-radius:8px; }
-    .logo-preview { width:52px; height:52px; border-radius:10px; object-fit:cover; border:1px solid var(--border); }
+    .logo-preview { width:52px; height:52px; border-radius:12px; object-fit:cover; border:1px solid var(--border); }
     .row-flex { display:flex; gap:10px; flex-wrap:wrap; align-items:end; }
-    .share-box { background:var(--soft); border:1px dashed rgba(52,211,153,0.45); border-radius:10px; padding:10px 12px; display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; font-size:0.85rem; }
+    .share-box { background:var(--soft); border:1px dashed rgba(52,211,153,0.45); border-radius:12px; padding:11px 13px; display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; font-size:0.83rem; }
+    .pills { display:flex; gap:8px; overflow-x:auto; padding-bottom:2px; scrollbar-width:none; }
+    .pills::-webkit-scrollbar { display:none; }
+    .pill-tab { background:var(--card); color:var(--muted); border:1px solid var(--border); padding:7px 13px; border-radius:999px; font-size:0.8rem; font-weight:700; white-space:nowrap; cursor:pointer; }
+    .pill-tab.active { background:var(--accent); color:#04130d; border-color:var(--accent); }
+    .bottom-nav { position:fixed; bottom:0; left:0; right:0; height:64px; background:rgba(8,13,11,0.96); backdrop-filter:blur(14px); border-top:1px solid var(--border); display:grid; grid-template-columns:repeat({{ 3 if tenant.module_type == 'kafe-randevu' else 2 }},1fr); z-index:45; }
+    .bnav-btn { background:none; border:none; color:var(--muted); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; font-size:0.74rem; font-weight:700; cursor:pointer; }
+    .bnav-btn.active { color:var(--bright); }
+    .tab-pane { display:none; gap:14px; }
+    .tab-pane.active { display:grid; }
     @media (max-width:768px) {
       .row-flex > div, .row-flex > button { width:100% !important; min-width:0 !important; }
-      .top > div { width:100%; }
     }
   </style>
 </head>
 <body>
+  <header class="topbar">
+    <div style="min-width:0;">
+      <h1 style="font-size:1.05rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ tenant.business_name }}</h1>
+      <p style="color:var(--muted);font-size:0.75rem;">{{ mod_label }} • {{ tenant.plan|upper }}</p>
+    </div>
+    <form method="POST" action="{{ url_for('tenant_logout', slug=tenant.slug) }}"><button type="submit" class="btn btn-del">Çıkış</button></form>
+  </header>
+
   <div class="wrap">
-    <div class="top">
-      <div>
-        <h1>{{ tenant.business_name }} — Yönetim Paneli</h1>
-        <p style="color:var(--muted);font-size:0.84rem;">
-          Slug: <code>{{ tenant.slug }}</code> • Plan: <code>{{ tenant.plan|upper }}</code> • Kilitli Modül: <strong>{{ mod_label }}</strong>
-        </p>
-      </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <form method="POST" action="{{ url_for('tenant_logout', slug=tenant.slug) }}"><button type="submit" class="btn btn-del">Çıkış</button></form>
-      </div>
-    </div>
-
     <div class="share-box">
-      <span><strong>Müşteri Linki:</strong> <code id="custLinkText">{{ request.url_root }}i/{{ tenant.slug }}</code></span>
-      <button type="button" class="btn" onclick="copyCustLink()">Linki Kopyala</button>
+      <span style="word-break:break-all;"><strong>Müşteri Linki:</strong> <code id="custLinkText">{{ request.url_root }}i/{{ tenant.slug }}</code></span>
+      <button type="button" class="btn" id="copyBtn" onclick="copyCustLink()">Kopyala</button>
     </div>
 
-    <form class="card" method="POST" action="{{ url_for('tenant_update_settings', slug=tenant.slug) }}" enctype="multipart/form-data">
-      <div style="font-size:0.84rem;font-weight:800;color:var(--bright);">İŞLETME AYARLARI &amp; LOGO (MODÜL KİLİTLİ: {{ mod_label|upper }})</div>
-      <div class="row-flex">
-        {% if tenant.logo_filename %}
-          <img src="/images/logos/{{ tenant.id }}/{{ tenant.logo_filename }}" alt="Logo" class="logo-preview" onerror="this.style.display='none'" />
-        {% endif %}
-        <div style="min-width:190px;">
-          <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">İşletme Logosu</label>
-          <input type="file" name="logo" accept=".jpg,.jpeg,.png,.webp" style="width:100%;" />
-        </div>
-        <div style="flex:1;min-width:180px;">
-          <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">WhatsApp Numarası</label>
-          <input type="text" name="whatsapp_number" value="{{ tenant.whatsapp_number or '' }}" placeholder="05xx xxx xx xx" style="width:100%;" />
-        </div>
-        {% if tenant.module_type == 'kafe-randevu' %}
-        <div style="width:130px;">
-          <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Masa Sayısı</label>
-          <input type="number" name="table_count" min="1" max="200" value="{{ tenant.table_count or 8 }}" style="width:100%;" required />
-        </div>
-        {% endif %}
-        <div class="locked-pill">Modül: {{ mod_label }}</div>
-        <button type="submit" class="btn">Ayarları Kaydet</button>
+    <!-- SEKME 1: TALEPLER / RANDEVULAR -->
+    <section id="pane-tickets" class="tab-pane active">
+      <div class="stats">
+        <div class="stat"><span>Toplam</span><strong>{{ tickets|length }}</strong></div>
+        <div class="stat"><span>Yeni</span><strong style="color:var(--amber);">{{ yeni_count }}</strong></div>
+        <div class="stat"><span>Tamamlanan</span><strong>{{ tamam_count }}</strong></div>
       </div>
-    </form>
+
+      <div class="pills">
+        <button type="button" class="pill-tab active" onclick="filterTickets('ALL', this)">Tümü ({{ tickets|length }})</button>
+        <button type="button" class="pill-tab" onclick="filterTickets('Yeni', this)">Yeni ({{ yeni_count }})</button>
+        <button type="button" class="pill-tab" onclick="filterTickets('İnceleniyor', this)">İnceleniyor</button>
+        <button type="button" class="pill-tab" onclick="filterTickets('Tamamlandı', this)">Tamamlandı ({{ tamam_count }})</button>
+      </div>
+
+      {% for t in tickets %}
+      <div class="card ticket-card" data-status="{{ t.status }}">
+        <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:flex-start;">
+          <div>
+            <strong>{{ t.name }}</strong> — <span style="color:var(--bright);">{{ t.service or 'Genel' }}</span>
+            <div style="font-size:0.8rem;color:var(--muted);margin-top:2px;">{{ t.phone or '-' }} • {{ t.created_at }}</div>
+          </div>
+          <span style="font-size:0.76rem;font-weight:800;padding:3px 9px;border-radius:999px;background:rgba(245,158,11,0.15);color:var(--amber);">{{ t.status }}</span>
+        </div>
+        <div class="msg">{{ t.message }}</div>
+        <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center;">
+          <form method="POST" action="{{ url_for('tenant_update_ticket', slug=tenant.slug, ticket_id=t.id) }}" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <select name="status">
+              <option value="Yeni" {% if t.status=='Yeni' %}selected{% endif %}>Yeni</option>
+              <option value="İnceleniyor" {% if t.status=='İnceleniyor' %}selected{% endif %}>İnceleniyor</option>
+              <option value="Tamamlandı" {% if t.status=='Tamamlandı' %}selected{% endif %}>Tamamlandı</option>
+              <option value="İptal" {% if t.status=='İptal' %}selected{% endif %}>İptal</option>
+            </select>
+            <button type="submit" class="btn btn-ok">Kaydet</button>
+            {% if t.wa_link %}
+            <a class="btn btn-wa" href="{{ t.wa_link }}" target="_blank" rel="noopener noreferrer">WhatsApp</a>
+            {% endif %}
+          </form>
+          <form method="POST" action="{{ url_for('tenant_delete_ticket', slug=tenant.slug, ticket_id=t.id) }}" onsubmit="return confirm('Silinsin mi?');">
+            <button type="submit" class="btn btn-del">Sil</button>
+          </form>
+        </div>
+      </div>
+      {% else %}
+      <div class="card" style="text-align:center;color:var(--muted);">Bu işletmeye ait henüz talep yok.</div>
+      {% endfor %}
+    </section>
 
     {% if tenant.module_type == 'kafe-randevu' %}
-    <div class="card">
-      <div style="font-size:0.84rem;font-weight:800;color:var(--bright);">MENÜ YÖNETİMİ (EKLE / DÜZENLE / FOTOĞRAF YÜKLE)</div>
-      <form method="POST" action="{{ url_for('tenant_add_menu_item', slug=tenant.slug) }}" enctype="multipart/form-data" class="row-flex">
-        <div style="flex:1;min-width:160px;">
-          <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Ürün Adı</label>
-          <input type="text" name="name" placeholder="Örn: Latte veya Burger" style="width:100%;" required />
-        </div>
-        <div style="width:110px;">
-          <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Fiyat</label>
-          <input type="text" name="price" placeholder="140 TL" style="width:100%;" />
-        </div>
-        <div style="flex:1;min-width:160px;">
-          <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Kısa Açıklama</label>
-          <input type="text" name="description" placeholder="İçerik veya not" style="width:100%;" />
-        </div>
-        <div style="min-width:170px;">
-          <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Ürün Fotoğrafı</label>
-          <input type="file" name="image" accept=".jpg,.jpeg,.png,.webp" style="width:100%;" />
-        </div>
-        <button type="submit" class="btn">+ Menüye Ekle</button>
-      </form>
+    <!-- SEKME 2: MENÜ YÖNETİMİ -->
+    <section id="pane-menu" class="tab-pane">
+      <div class="card">
+        <div style="font-size:0.86rem;font-weight:800;color:var(--bright);">YENİ MENÜ ÜRÜNÜ EKLE</div>
+        <form method="POST" action="{{ url_for('tenant_add_menu_item', slug=tenant.slug) }}" enctype="multipart/form-data" class="row-flex">
+          <div style="flex:1;min-width:160px;">
+            <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Ürün Adı</label>
+            <input type="text" name="name" placeholder="Örn: Latte veya Burger" style="width:100%;" required />
+          </div>
+          <div style="width:110px;">
+            <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Fiyat</label>
+            <input type="text" name="price" placeholder="140 TL" style="width:100%;" />
+          </div>
+          <div style="flex:1;min-width:160px;">
+            <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Kısa Açıklama</label>
+            <input type="text" name="description" placeholder="İçerik veya not" style="width:100%;" />
+          </div>
+          <div style="min-width:170px;">
+            <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Ürün Fotoğrafı</label>
+            <input type="file" name="image" accept=".jpg,.jpeg,.png,.webp" style="width:100%;" />
+          </div>
+          <button type="submit" class="btn btn-ok">+ Menüye Ekle</button>
+        </form>
+      </div>
 
       {% if menu_items %}
       <div class="menu-admin-grid">
@@ -1308,7 +1339,7 @@ TENANT_PANEL_HTML = """
             <input type="text" name="price" value="{{ item.price or '' }}" placeholder="Fiyat" />
             <input type="text" name="description" value="{{ item.description or '' }}" placeholder="Açıklama" />
             <input type="file" name="image" accept=".jpg,.jpeg,.png,.webp" />
-            <button type="submit" class="btn">Kaydet</button>
+            <button type="submit" class="btn btn-ok">Kaydet</button>
           </form>
           <form method="POST" action="{{ url_for('tenant_delete_menu_item', slug=tenant.slug, item_id=item.id) }}" onsubmit="return confirm('Menü ürünü silinsin mi?');">
             <button type="submit" class="btn btn-del" style="width:100%;">Ürünü Sil</button>
@@ -1317,51 +1348,77 @@ TENANT_PANEL_HTML = """
         {% endfor %}
       </div>
       {% else %}
-      <p style="color:var(--muted);font-size:0.86rem;">Henüz menü ürünü eklenmedi. Müşteriler randevu alırken "Gelince Karar Vereceğim" seçeneğini kullanabilir veya yukarıdan menü ekleyebilirsin.</p>
+      <div class="card" style="color:var(--muted);font-size:0.86rem;">Henüz menü ürünü eklenmedi.</div>
       {% endif %}
-    </div>
+    </section>
     {% endif %}
 
-    <div class="stats">
-      <div class="stat"><span>Toplam Talep</span><strong>{{ tickets|length }}</strong></div>
-      <div class="stat"><span>Yeni</span><strong style="color:var(--amber);">{{ yeni_count }}</strong></div>
-      <div class="stat"><span>Tamamlanan</span><strong>{{ tamam_count }}</strong></div>
-    </div>
-
-    {% for t in tickets %}
-    <div class="card">
-      <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;">
-        <div><strong>{{ t.name }}</strong> — <span style="color:var(--bright);">{{ t.service or 'Genel' }}</span><div style="font-size:0.82rem;color:var(--muted);">{{ t.phone or '-' }} • {{ t.created_at }}</div></div>
-        <span style="font-size:0.8rem;font-weight:700;color:var(--amber);">{{ t.status }}</span>
-      </div>
-      <div class="msg">{{ t.message }}</div>
-      <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;">
-        <form method="POST" action="{{ url_for('tenant_update_ticket', slug=tenant.slug, ticket_id=t.id) }}" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-          <select name="status">
-            <option value="Yeni" {% if t.status=='Yeni' %}selected{% endif %}>Yeni</option>
-            <option value="İnceleniyor" {% if t.status=='İnceleniyor' %}selected{% endif %}>İnceleniyor</option>
-            <option value="Tamamlandı" {% if t.status=='Tamamlandı' %}selected{% endif %}>Tamamlandı</option>
-            <option value="İptal" {% if t.status=='İptal' %}selected{% endif %}>İptal</option>
-          </select>
-          <button type="submit" class="btn">Güncelle</button>
-          {% if t.wa_link %}
-          <a class="btn btn-wa" href="{{ t.wa_link }}" target="_blank" rel="noopener noreferrer">WhatsApp Yaz</a>
+    <!-- SEKME 3: İŞLETME AYARLARI -->
+    <section id="pane-settings" class="tab-pane">
+      <form class="card" method="POST" action="{{ url_for('tenant_update_settings', slug=tenant.slug) }}" enctype="multipart/form-data">
+        <div style="font-size:0.86rem;font-weight:800;color:var(--bright);">İŞLETME AYARLARI &amp; LOGO</div>
+        <div class="row-flex">
+          {% if tenant.logo_filename %}
+            <img src="/images/logos/{{ tenant.id }}/{{ tenant.logo_filename }}" alt="Logo" class="logo-preview" onerror="this.style.display='none'" />
           {% endif %}
-        </form>
-        <form method="POST" action="{{ url_for('tenant_delete_ticket', slug=tenant.slug, ticket_id=t.id) }}" onsubmit="return confirm('Silinsin mi?');">
-          <button type="submit" class="btn btn-del">Sil</button>
-        </form>
-      </div>
-    </div>
-    {% else %}
-    <div class="card" style="text-align:center;color:var(--muted);">Bu işletmeye ait henüz talep yok.</div>
-    {% endfor %}
+          <div style="min-width:190px;">
+            <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">İşletme Logosu</label>
+            <input type="file" name="logo" accept=".jpg,.jpeg,.png,.webp" style="width:100%;" />
+          </div>
+          <div style="flex:1;min-width:180px;">
+            <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">WhatsApp Numarası</label>
+            <input type="text" name="whatsapp_number" value="{{ tenant.whatsapp_number or '' }}" placeholder="05xx xxx xx xx" style="width:100%;" />
+          </div>
+          {% if tenant.module_type == 'kafe-randevu' %}
+          <div style="width:130px;">
+            <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Masa Sayısı</label>
+            <input type="number" name="table_count" min="1" max="200" value="{{ tenant.table_count or 8 }}" style="width:100%;" required />
+          </div>
+          {% endif %}
+          <div class="locked-pill">Kilitli Modül: {{ mod_label }}</div>
+          <button type="submit" class="btn btn-ok">Ayarları Kaydet</button>
+        </div>
+      </form>
+    </section>
   </div>
 
+  <nav class="bottom-nav">
+    <button type="button" class="bnav-btn active" onclick="openPane('pane-tickets', this)">
+      <span style="font-size:1.15rem;">📋</span>
+      <span>Talepler</span>
+    </button>
+    {% if tenant.module_type == 'kafe-randevu' %}
+    <button type="button" class="bnav-btn" onclick="openPane('pane-menu', this)">
+      <span style="font-size:1.15rem;">🍽️</span>
+      <span>Menü</span>
+    </button>
+    {% endif %}
+    <button type="button" class="bnav-btn" onclick="openPane('pane-settings', this)">
+      <span style="font-size:1.15rem;">⚙️</span>
+      <span>Ayarlar</span>
+    </button>
+  </nav>
+
   <script>
+    function openPane(id, btn) {
+      document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+      document.querySelectorAll('.bnav-btn').forEach(b => b.classList.remove('active'));
+      document.getElementById(id).classList.add('active');
+      btn.classList.add('active');
+    }
+    function filterTickets(status, btn) {
+      document.querySelectorAll('.pill-tab').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      document.querySelectorAll('.ticket-card').forEach(c => {
+        c.style.display = (status === 'ALL' || c.dataset.status === status) ? 'grid' : 'none';
+      });
+    }
     function copyCustLink() {
       const txt = document.getElementById("custLinkText").textContent.trim();
       navigator.clipboard?.writeText(txt);
+      const b = document.getElementById("copyBtn");
+      b.textContent = "Kopyalandı ✓";
+      setTimeout(() => b.textContent = "Kopyala", 1800);
     }
   </script>
 </body>
@@ -1373,24 +1430,55 @@ SUPERADMIN_LOGIN_HTML = """
 <html lang="tr">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Süper Admin Girişi</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>KOLAY Admin — Yönetim Girişi</title>
   <style>
     * { box-sizing:border-box; margin:0; padding:0; }
-    body { min-height:100vh; display:grid; place-items:center; background:#080d0b; color:#f8fafc; font-family:Inter,system-ui,sans-serif; padding:16px; }
-    .box { width:100%; max-width:400px; background:#121d18; border:1px solid rgba(16,185,129,0.25); border-radius:16px; padding:22px; display:grid; gap:13px; }
-    label { display:block; font-size:0.84rem; margin-bottom:5px; color:#d1d5db; }
-    input { width:100%; padding:10px 12px; border-radius:10px; border:1px solid rgba(16,185,129,0.25); background:#0f1714; color:#f8fafc; }
-    button { padding:11px; border-radius:10px; border:none; background:linear-gradient(135deg,#34d399,#10b981); color:#04130d; font-weight:800; cursor:pointer; width:100%; }
+    body {
+      min-height:100vh; display:grid; place-items:center;
+      background:radial-gradient(circle at 20% 15%, rgba(16,185,129,0.16), transparent 45%), #080d0b;
+      color:#f8fafc; font-family:Inter,system-ui,sans-serif; padding:18px;
+    }
+    .box {
+      width:100%; max-width:390px; background:#121d18;
+      border:1px solid rgba(16,185,129,0.28); border-radius:20px;
+      padding:26px 22px; display:grid; gap:15px;
+      box-shadow:0 20px 44px rgba(0,0,0,0.45);
+    }
+    .badge-icon {
+      width:50px; height:50px; border-radius:14px; margin:0 auto 4px;
+      display:grid; place-items:center; font-weight:900; font-size:1.3rem; color:#04130d;
+      background:linear-gradient(135deg,#34d399,#f59e0b);
+    }
+    label { display:block; font-size:0.82rem; margin-bottom:6px; color:#9ca3af; font-weight:600; }
+    input {
+      width:100%; padding:12px 14px; border-radius:12px;
+      border:1px solid rgba(16,185,129,0.25); background:#0f1714;
+      color:#f8fafc; font-size:0.95rem; outline:none;
+    }
+    input:focus { border-color:#34d399; }
+    button {
+      padding:13px; border-radius:12px; border:none;
+      background:linear-gradient(135deg,#34d399,#10b981);
+      color:#04130d; font-weight:800; font-size:0.95rem; cursor:pointer; width:100%; margin-top:4px;
+    }
+    .err {
+      padding:10px 12px; border-radius:10px; background:rgba(239,68,68,0.15);
+      border:1px solid rgba(239,68,68,0.35); color:#fca5a5; font-size:0.85rem; text-align:center;
+    }
   </style>
 </head>
 <body>
   <form class="box" method="POST">
-    <h1 style="font-size:1.2rem;">Süper Admin Girişi</h1>
-    {% if error %}<div style="color:#fca5a5;font-size:0.86rem;">{{ error }}</div>{% endif %}
-    <div><label>Kullanıcı Adı</label><input type="text" name="username" required /></div>
-    <div><label>Şifre</label><input type="password" name="password" required /></div>
-    <button type="submit">Giriş Yap</button>
+    <div style="text-align:center;">
+      <div class="badge-icon">K</div>
+      <h1 style="font-size:1.22rem;margin-top:6px;">KOLAY Süper Admin</h1>
+      <p style="font-size:0.82rem;color:#9ca3af;margin-top:3px;">IBAN Onay &amp; İşletme Kontrol Merkezi</p>
+    </div>
+    {% if error %}<div class="err">{{ error }}</div>{% endif %}
+    <div><label>Kullanıcı Adı</label><input type="text" name="username" autocomplete="username" required /></div>
+    <div><label>Şifre</label><input type="password" name="password" autocomplete="current-password" required /></div>
+    <button type="submit">Yönetim Paneline Gir</button>
   </form>
 </body>
 </html>
@@ -1401,88 +1489,238 @@ SUPERADMIN_HTML = """
 <html lang="tr">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>Süper Admin — IBAN Ödeme Onayı &amp; İşletmeler</title>
   <style>
     :root { --bg:#080d0b; --card:#121d18; --soft:#0f1714; --text:#f8fafc; --muted:#9ca3af; --accent:#10b981; --bright:#34d399; --amber:#f59e0b; --danger:#ef4444; --border:rgba(16,185,129,0.22); }
-    * { box-sizing:border-box; margin:0; padding:0; font-family:Inter,system-ui,sans-serif; }
-    body { background:var(--bg); color:var(--text); padding:20px 14px 48px; overflow-x:hidden; }
-    .wrap { max-width:1140px; margin:0 auto; display:grid; gap:16px; }
-    .top { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; border-bottom:1px solid var(--border); padding-bottom:14px; }
-    .btn { text-decoration:none; padding:8px 13px; border-radius:9px; font-weight:700; font-size:0.84rem; border:1px solid var(--border); background:var(--card); color:var(--bright); cursor:pointer; display:inline-flex; align-items:center; justify-content:center; }
+    * { box-sizing:border-box; margin:0; padding:0; font-family:Inter,system-ui,sans-serif; -webkit-tap-highlight-color:transparent; }
+    body { background:var(--bg); color:var(--text); padding:0 0 82px; overflow-x:hidden; }
+
+    .topbar {
+      position:sticky; top:0; z-index:40;
+      background:rgba(8,13,11,0.9); backdrop-filter:blur(12px);
+      border-bottom:1px solid var(--border);
+      padding:13px 16px; display:flex; justify-content:space-between; align-items:center; gap:10px;
+    }
+    .topbar-left { display:flex; align-items:center; gap:9px; }
+    .live-dot { width:9px; height:9px; border-radius:50%; background:var(--bright); box-shadow:0 0 10px var(--bright); }
+    .topbar h1 { font-size:1.05rem; font-weight:800; }
+
+    .wrap { max-width:1140px; margin:0 auto; padding:16px; display:grid; gap:14px; }
+
+    /* KPI Kartları */
+    .kpi-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
+    .kpi { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:12px; }
+    .kpi span { font-size:0.74rem; color:var(--muted); display:block; margin-bottom:3px; }
+    .kpi strong { font-size:1.3rem; font-weight:800; }
+    .kpi strong.green { color:var(--bright); }
+    .kpi strong.amber { color:#fcd34d; }
+
+    /* IBAN Hızlı Kopyala Barı */
+    .iban-bar {
+      background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.34);
+      border-radius:14px; padding:11px 14px;
+      display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;
+    }
+    .iban-bar code { font-size:0.84rem; color:#fcd34d; font-weight:800; word-break:break-all; }
+
+    /* Arama ve Filtre Hapları */
+    .search-wrap { position:relative; }
+    .search-wrap input {
+      width:100%; padding:11px 14px 11px 38px; border-radius:12px;
+      border:1px solid var(--border); background:var(--card); color:var(--text); font-size:0.9rem; outline:none;
+    }
+    .search-wrap input:focus { border-color:var(--bright); }
+    .search-ico { position:absolute; left:13px; top:50%; transform:translateY(-50%); font-size:0.9rem; opacity:0.7; }
+
+    .filter-row { display:flex; gap:8px; overflow-x:auto; padding-bottom:2px; scrollbar-width:none; }
+    .filter-row::-webkit-scrollbar { display:none; }
+    .f-pill {
+      background:var(--card); color:var(--muted); border:1px solid var(--border);
+      padding:7px 14px; border-radius:999px; font-size:0.8rem; font-weight:700; white-space:nowrap; cursor:pointer;
+    }
+    .f-pill.active { background:var(--accent); color:#04130d; border-color:var(--accent); }
+
+    /* İşletme Kartları */
+    .btn { text-decoration:none; padding:9px 13px; border-radius:10px; font-weight:700; font-size:0.83rem; border:1px solid var(--border); background:var(--soft); color:var(--bright); cursor:pointer; display:inline-flex; align-items:center; justify-content:center; gap:5px; }
     .btn-approve { background:linear-gradient(135deg,#34d399,#10b981); color:#04130d; border:none; font-weight:800; }
-    .btn-suspend { background:rgba(239,68,68,0.15); border-color:rgba(239,68,68,0.4); color:#fca5a5; }
-    .card { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:16px; display:grid; gap:10px; }
-    .card.pending { border-color:rgba(245,158,11,0.48); }
-    .badge-on { padding:3px 9px; border-radius:999px; font-size:0.75rem; font-weight:800; background:rgba(16,185,129,0.16); color:#6ee7b7; }
-    .badge-off { padding:3px 9px; border-radius:999px; font-size:0.75rem; font-weight:800; background:rgba(245,158,11,0.18); color:#fcd34d; }
-    select { padding:7px 10px; border-radius:8px; border:1px solid var(--border); background:var(--soft); color:var(--text); }
+    .btn-suspend { background:rgba(239,68,68,0.14); border-color:rgba(239,68,68,0.38); color:#fca5a5; }
+    .card { background:var(--card); border:1px solid var(--border); border-radius:16px; padding:16px; display:grid; gap:12px; }
+    .card.pending { border-color:rgba(245,158,11,0.52); box-shadow:0 0 0 1px rgba(245,158,11,0.12); }
+    .badge-on { padding:3px 9px; border-radius:999px; font-size:0.72rem; font-weight:800; background:rgba(16,185,129,0.16); color:#6ee7b7; }
+    .badge-off { padding:3px 9px; border-radius:999px; font-size:0.72rem; font-weight:800; background:rgba(245,158,11,0.18); color:#fcd34d; }
+    .badge-notify { padding:3px 9px; border-radius:999px; font-size:0.72rem; font-weight:800; background:rgba(59,130,246,0.2); color:#93c5fd; }
+    select { padding:8px 10px; border-radius:9px; border:1px solid var(--border); background:var(--soft); color:var(--text); font-size:0.84rem; }
+
+    .actions-bar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding-top:10px; border-top:1px solid rgba(16,185,129,0.12); }
+
+    /* Alt Navigasyon */
+    .bottom-nav {
+      position:fixed; bottom:0; left:0; right:0; height:64px;
+      background:rgba(8,13,11,0.96); backdrop-filter:blur(14px);
+      border-top:1px solid var(--border); display:grid; grid-template-columns:repeat(3,1fr); z-index:45;
+    }
+    .bnav { background:none; border:none; color:var(--muted); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; font-size:0.74rem; font-weight:700; cursor:pointer; text-decoration:none; }
+    .bnav.active { color:var(--bright); }
+
     @media (max-width:768px) {
-      .card > div > div:last-child { width:100%; }
-      .card > div > div:last-child form, .card > div > div:last-child a { width:100%; }
+      .kpi-grid { grid-template-columns:repeat(2,1fr); }
+      .actions-bar > a, .actions-bar > form { flex:1 1 calc(50% - 4px); }
+      .actions-bar > form button { width:100%; }
     }
   </style>
 </head>
 <body>
+  {% set active_count = tenants|selectattr('is_active')|list|length %}
+  {% set pending_count = (tenants|length) - active_count %}
+  {% set notify_count = tenants|rejectattr('is_active')|selectattr('payment_requested')|list|length %}
+
+  <header class="topbar">
+    <div class="topbar-left">
+      <span class="live-dot"></span>
+      <h1>KOLAY Süper Admin</h1>
+    </div>
+    <form method="POST" action="{{ url_for('superadmin_logout') }}">
+      <button type="submit" class="btn btn-suspend">Çıkış</button>
+    </form>
+  </header>
+
   <div class="wrap">
-    <div class="top">
-      <div>
-        <h1>Süper Admin — IBAN Ödeme Onayı</h1>
-        <p style="color:var(--muted);font-size:0.84rem;">Toplam {{ tenants|length }} işletme • IBAN: <code>{{ iban_number }}</code></p>
-      </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <form method="POST" action="{{ url_for('superadmin_logout') }}"><button type="submit" class="btn">Çıkış</button></form>
-      </div>
+    <!-- Özet Kartlar -->
+    <div class="kpi-grid">
+      <div class="kpi"><span>Toplam İşletme</span><strong>{{ tenants|length }}</strong></div>
+      <div class="kpi"><span>Aktif İşletme</span><strong class="green">{{ active_count }}</strong></div>
+      <div class="kpi"><span>Onay Bekleyen</span><strong class="amber">{{ pending_count }}</strong></div>
+      <div class="kpi"><span>Ödeme Bildirimi</span><strong style="color:#93c5fd;">{{ notify_count }}</strong></div>
     </div>
 
+    <!-- IBAN Kopyala -->
+    <div class="iban-bar">
+      <div>
+        <div style="font-size:0.72rem;color:var(--muted);font-weight:700;">AKTİF TAHSİLAT IBAN</div>
+        <code id="adminIban">{{ iban_number }}</code>
+      </div>
+      <button type="button" class="btn" id="ibanCopyBtn" onclick="copyAdminIban()">IBAN Kopyala</button>
+    </div>
+
+    <!-- Canlı Arama -->
+    <div class="search-wrap">
+      <span class="search-ico">🔍</span>
+      <input type="text" id="tenantSearch" placeholder="İşletme adı, slug veya e-posta ara..." onkeyup="filterTenants()" />
+    </div>
+
+    <!-- Hızlı Filtre Hapları -->
+    <div class="filter-row">
+      <button type="button" class="f-pill active" onclick="setTenantFilter('all', this)">Tümü ({{ tenants|length }})</button>
+      <button type="button" class="f-pill" onclick="setTenantFilter('notify', this)">Ödeme Bildirimi ({{ notify_count }})</button>
+      <button type="button" class="f-pill" onclick="setTenantFilter('pending', this)">Onay Bekleyen ({{ pending_count }})</button>
+      <button type="button" class="f-pill" onclick="setTenantFilter('active', this)">Aktifler ({{ active_count }})</button>
+    </div>
+
+    <!-- İşletme Listesi -->
     {% for tn in tenants %}
-    <div class="card {% if not tn.is_active %}pending{% endif %}">
-      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
-        <div>
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-            <strong>{{ tn.business_name }}</strong>
-            <code>/i/{{ tn.slug }}</code>
-            {% if tn.is_active %}
-              <span class="badge-on">AKTİF</span>
-            {% else %}
-              <span class="badge-off">ONAY BEKLİYOR</span>
-            {% endif %}
-            {% if tn.payment_requested and not tn.is_active %}
-              <span class="badge-off">ÖDEME BİLDİRİMİ VAR</span>
-            {% endif %}
-          </div>
-          <div style="font-size:0.82rem;color:var(--muted);margin-top:4px;">
-            {{ tn.owner_email }} • Paket: <strong>{{ tn.plan|upper }}</strong> • Modül: <code>{{ tn.module_type }}</code> • Masa: {{ tn.table_count or '-' }} • Talep: {{ tn.ticket_count }}
-            {% if tn.payment_note %} • Not: <span style="color:#fcd34d;">{{ tn.payment_note }}</span>{% endif %}
-          </div>
-        </div>
-
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-          <a class="btn" href="{{ url_for('tenant_public', slug=tn.slug) }}">Müşteri Linki</a>
-          <a class="btn" href="{{ url_for('tenant_panel', slug=tn.slug) }}">Panel</a>
-
-          {% if not tn.is_active %}
-          <form method="POST" action="{{ url_for('superadmin_approve_tenant', tenant_id=tn.id) }}">
-            <button type="submit" class="btn btn-approve" style="width:100%;">Ödeme Alındı &amp; Onayla</button>
-          </form>
+    <div class="card tenant-item {% if not tn.is_active %}pending{% endif %}"
+         data-search="{{ (tn.business_name ~ ' ' ~ tn.slug ~ ' ' ~ tn.owner_email)|lower }}"
+         data-state="{{ 'active' if tn.is_active else ('notify' if tn.payment_requested else 'pending') }}"
+         data-pending="{{ '0' if tn.is_active else '1' }}">
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <strong style="font-size:1.02rem;">{{ tn.business_name }}</strong>
+          <code style="font-size:0.82rem;color:var(--bright);">/i/{{ tn.slug }}</code>
+          {% if tn.is_active %}
+            <span class="badge-on">AKTİF</span>
           {% else %}
-          <form method="POST" action="{{ url_for('superadmin_suspend_tenant', tenant_id=tn.id) }}">
-            <button type="submit" class="btn btn-suspend" style="width:100%;">Askıya Al</button>
-          </form>
+            <span class="badge-off">ONAY BEKLİYOR</span>
           {% endif %}
-
-          <form method="POST" action="{{ url_for('superadmin_tenant_plan', tenant_id=tn.id) }}" style="display:flex;gap:6px;">
-            <select name="plan">
-              <option value="starter" {% if tn.plan!='pro' %}selected{% endif %}>STARTER</option>
-              <option value="pro" {% if tn.plan=='pro' %}selected{% endif %}>PRO</option>
-            </select>
-            <button type="submit" class="btn">Plan Kaydet</button>
-          </form>
+          {% if tn.payment_requested and not tn.is_active %}
+            <span class="badge-notify">ÖDEME BİLDİRİMİ VAR</span>
+          {% endif %}
         </div>
+        <div style="font-size:0.82rem;color:var(--muted);margin-top:6px;line-height:1.5;">
+          {{ tn.owner_email }} • Paket: <strong style="color:var(--text);">{{ tn.plan|upper }}</strong> • Modül: <code>{{ tn.module_type }}</code> • Masa: {{ tn.table_count or '-' }} • Talep: {{ tn.ticket_count }}
+          {% if tn.payment_note %}
+          <div style="margin-top:5px;padding:7px 10px;border-radius:8px;background:rgba(245,158,11,0.1);color:#fcd34d;">
+            Dekont Notu: <strong>{{ tn.payment_note }}</strong>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="actions-bar">
+        <a class="btn" href="{{ url_for('tenant_public', slug=tn.slug) }}">Müşteri Linki</a>
+        <a class="btn" href="{{ url_for('tenant_panel', slug=tn.slug) }}">Paneli Aç</a>
+
+        {% if not tn.is_active %}
+        <form method="POST" action="{{ url_for('superadmin_approve_tenant', tenant_id=tn.id) }}">
+          <button type="submit" class="btn btn-approve">Ödeme Alındı &amp; Onayla</button>
+        </form>
+        {% else %}
+        <form method="POST" action="{{ url_for('superadmin_suspend_tenant', tenant_id=tn.id) }}">
+          <button type="submit" class="btn btn-suspend">Askıya Al</button>
+        </form>
+        {% endif %}
+
+        <form method="POST" action="{{ url_for('superadmin_tenant_plan', tenant_id=tn.id) }}" style="display:flex;gap:6px;flex:1 1 100%;">
+          <select name="plan" style="flex:1;">
+            <option value="starter" {% if tn.plan!='pro' %}selected{% endif %}>STARTER</option>
+            <option value="pro" {% if tn.plan=='pro' %}selected{% endif %}>PRO</option>
+          </select>
+          <button type="submit" class="btn">Plan Kaydet</button>
+        </form>
       </div>
     </div>
     {% endfor %}
   </div>
+
+  <!-- Mobil Alt Gezinme Çubuğu -->
+  <nav class="bottom-nav">
+    <button type="button" class="bnav active" onclick="setTenantFilter('all', document.querySelector('.f-pill'))">
+      <span style="font-size:1.15rem;">🏢</span>
+      <span>İşletmeler</span>
+    </button>
+    <button type="button" class="bnav" onclick="setTenantFilter('pending', document.querySelectorAll('.f-pill')[2])">
+      <span style="font-size:1.15rem;">⏳</span>
+      <span>Onay Bekleyen ({{ pending_count }})</span>
+    </button>
+    <a class="bnav" href="{{ url_for('index') }}">
+      <span style="font-size:1.15rem;">🌐</span>
+      <span>Ana Vitrin</span>
+    </a>
+  </nav>
+
+  <script>
+    let activeFilter = 'all';
+
+    function setTenantFilter(mode, pillBtn) {
+      activeFilter = mode;
+      document.querySelectorAll('.f-pill').forEach(p => p.classList.remove('active'));
+      if (pillBtn) pillBtn.classList.add('active');
+      filterTenants();
+    }
+
+    function filterTenants() {
+      const q = document.getElementById('tenantSearch').value.toLowerCase().trim();
+      document.querySelectorAll('.tenant-item').forEach(card => {
+        const hay = card.dataset.search || '';
+        const st = card.dataset.state || 'active';
+        const isPending = card.dataset.pending === '1';
+        const matchText = hay.includes(q);
+        let matchMode = true;
+        if (activeFilter === 'notify') matchMode = (st === 'notify');
+        else if (activeFilter === 'pending') matchMode = isPending;
+        else if (activeFilter === 'active') matchMode = !isPending;
+        card.style.display = (matchText && matchMode) ? 'grid' : 'none';
+      });
+    }
+
+    function copyAdminIban() {
+      const txt = document.getElementById('adminIban').textContent.trim();
+      navigator.clipboard?.writeText(txt);
+      const btn = document.getElementById('ibanCopyBtn');
+      btn.textContent = 'Kopyalandı ✓';
+      setTimeout(() => btn.textContent = 'IBAN Kopyala', 1800);
+    }
+  </script>
 </body>
 </html>
 """
