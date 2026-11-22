@@ -55,7 +55,7 @@ PLAN_PRICE_STARTER = os.environ.get("PLAN_PRICE_STARTER", os.environ.get("PLAN_P
 PLAN_PRICE_PRO = os.environ.get("PLAN_PRICE_PRO", "999 TL / Ay")
 
 MODULE_LABELS = {
-    "kafe-randevu": "Kafe & Restoran Masa Randevu",
+    "kafe-randevu": "Kafe & Restoran Masa Randevu + Masa QR",
     "berber-randevu": "Berber & Kuaför Saat Randevu",
     "masa-qr": "Masa QR Menü, Sipariş & Garson Çağır",
     "genel": "Genel Talep Formu",
@@ -107,15 +107,15 @@ SERVICES_DATA = [
     {
         "id": "kafe-restoran-randevu",
         "tag": "Kafe & Restoran",
-        "title": "Masa & Kişi Bazlı Randevu Sistemi",
+        "title": "Masa Randevu & Masa QR Sistemi",
         "image": "kaferesrandevu.jpg",
-        "short": "Yoğun saatlerde masa planlamasını kolaylaştıran, müşteri rezervasyonlarını düzenli yöneten randevu altyapısı.",
-        "details": "Kafe ve restoranlarda özel gün, akşam yoğunluğu veya grup rezervasyonlarını karmaşa yaşamadan planlamanı sağlayan masa rezervasyon sistemi.",
+        "short": "Tarih/saat/masa bazlı rezervasyon ve her masaya özel QR kod etiketiyle hızlı masa yönetimi.",
+        "details": "Kafe ve restoranlarda hem önceden masa randevusu almanı hem de her masaya özel QR kod etiketi basıp menü/sipariş yönetmeni sağlayan sistem.",
         "features": [
-            "Tarih, saat ve kişi sayısına göre hızlı masa talebi",
-            "İşletme panelinden tek tıkla onay veya alternatif saat önerisi",
-            "Müşteri iletişim bilgisi ve özel not yönetimi",
-            "Boş/dolu masa yoğunluğunu tek ekranda görme imkânı"
+            "Tarih, saat, boş masa ve kişi sayısına göre rezervasyon",
+            "Her masa için otomatik QR kod üretimi ve A4 yazdırma",
+            "Fotoğraflı dijital menü ve ön sipariş seçimi",
+            "İşletme panelinden tek tıkla onay ve WhatsApp dönüşü"
         ]
     },
     {
@@ -867,7 +867,7 @@ INDEX_HTML = """
               <label for="module_type">Modül Seçimi (Üyelik Sonrası Kilitlenir)</label>
               <select id="module_type" name="module_type">
                 <option value="masa-qr">Masa QR Menü, Sipariş &amp; Garson Çağır</option>
-                <option value="kafe-randevu">Kafe &amp; Restoran Masa Randevu</option>
+                <option value="kafe-randevu">Kafe &amp; Restoran Masa Randevu + Masa QR</option>
                 <option value="berber-randevu">Berber &amp; Kuaför Saat Randevu</option>
                 <option value="genel">Genel Talep / Müşteri Formu</option>
               </select>
@@ -1047,7 +1047,6 @@ TENANT_PUBLIC_HTML = """
     .menu-check { display:flex; align-items:flex-start; gap:8px; font-size:0.85rem; color:#e5e7eb; cursor:pointer; }
     .menu-check input[type="checkbox"] { width:auto; margin-top:3px; flex-shrink:0; }
 
-    /* Masa QR Hızlı Aksiyonlar & Sepet */
     .quick-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
     .q-btn {
       padding:13px 12px; border-radius:13px; font-weight:800; font-size:0.88rem;
@@ -1095,7 +1094,7 @@ TENANT_PUBLIC_HTML = """
     {% endif %}
 
     {% if tenant.module_type == 'masa-qr' %}
-    <!-- MASA QR MODÜLÜ (RANDEVUDAN BAĞIMSIZ: MASAYA OTURAN MÜŞTERİ EKRANI) -->
+    <!-- MASA QR MODÜLÜ -->
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
         <div>
@@ -1115,7 +1114,6 @@ TENANT_PUBLIC_HTML = """
         {% endif %}
       </div>
 
-      <!-- TEK DOKUNUŞLA GARSON ÇAĞIR / HESAP İSTE -->
       <div class="quick-grid">
         <form method="POST">
           <input type="hidden" name="action_type" value="garson" />
@@ -1130,7 +1128,6 @@ TENANT_PUBLIC_HTML = """
       </div>
     </div>
 
-    <!-- QR MENÜ & SEPETLİ SİPARİŞ -->
     <form class="card" method="POST" id="qrOrderForm">
       <input type="hidden" name="action_type" value="siparis" />
       <input type="hidden" name="masa_name" class="masa-hidden-input" value="{{ preselected_masa or 'Masa 1' }}" />
@@ -1254,11 +1251,17 @@ TENANT_PUBLIC_HTML = """
     </script>
 
     {% elif tenant.module_type == 'kafe-randevu' %}
-    <!-- KAFE & RESTORAN RANDEVU MODÜLÜ (QR'DAN TAMAMEN AYRI) -->
+    <!-- KAFE & RESTORAN RANDEVU + QR MENÜ MODÜLÜ -->
     <form class="card" method="POST">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">
-        <h2 style="font-size:1.1rem;">Masa Randevusu Talebi</h2>
-        <span style="font-size:0.8rem;color:#9ca3af;">Kapasite: <strong>{{ tenant.table_count or 8 }} Masa</strong></span>
+        <h2 style="font-size:1.1rem;">Masa Randevusu &amp; QR Menü</h2>
+        <span style="font-size:0.8rem;color:#9ca3af;">
+          {% if preselected_masa %}
+            Seçili Masa: <strong style="color:#34d399;">{{ preselected_masa }}</strong>
+          {% else %}
+            Kapasite: <strong>{{ tenant.table_count or 8 }} Masa</strong>
+          {% endif %}
+        </span>
       </div>
 
       <div class="row-2">
@@ -1299,12 +1302,35 @@ TENANT_PUBLIC_HTML = """
         </select>
       </div>
 
+      {% if menu_items %}
+      <div>
+        <label>Dijital Menü &amp; Ön Sipariş Seçimi (Opsiyonel)</label>
+        <div class="menu-grid">
+          {% for item in menu_items %}
+          <div class="menu-card">
+            {% if item.image_filename %}
+              <img src="/images/menu/{{ tenant.id }}/{{ item.image_filename }}" alt="{{ item.name }}" class="menu-img" onerror="this.style.display='none'" />
+            {% endif %}
+            <label class="menu-check">
+              <input type="checkbox" name="menu_order" value="{{ item.name }}{% if item.price %} ({{ item.price }}){% endif %}" />
+              <span>
+                <strong>{{ item.name }}</strong> {% if item.price %}<span style="color:#34d399;font-weight:700;">— {{ item.price }}</span>{% endif %}
+                {% if item.description %}<small style="display:block;color:#9ca3af;margin-top:2px;">{{ item.description }}</small>{% endif %}
+              </span>
+            </label>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
       <div><label>Ek Not / Özel İstek</label><textarea name="message" rows="2" placeholder="Cam kenarı, doğum günü notu veya ek istek..."></textarea></div>
       <button type="submit" class="btn-main">Randevu Talebini Gönder</button>
     </form>
 
     <script>
       const SLOT_DATA = {{ slot_options | tojson }};
+      const PRESELECTED_MASA = {{ preselected_masa | tojson }};
       let lastDate = document.getElementById("resDateInput").value;
 
       function updateTableOptions() {
@@ -1334,9 +1360,13 @@ TENANT_PUBLIC_HTML = """
           return;
         }
         currentObj.free_tables.forEach(tNo => {
+          const label = `Masa ${tNo}`;
           const opt = document.createElement("option");
-          opt.value = `Masa ${tNo}`;
-          opt.textContent = `Masa ${tNo} (Müsait)`;
+          opt.value = label;
+          opt.textContent = `${label} (Müsait)`;
+          if (PRESELECTED_MASA && PRESELECTED_MASA.toLowerCase() === label.toLowerCase()) {
+            opt.selected = true;
+          }
           tableSel.appendChild(opt);
         });
       }
@@ -1485,7 +1515,7 @@ TENANT_PANEL_HTML = """
       <button type="button" class="btn" id="copyBtn" onclick="copyCustLink()">Kopyala</button>
     </div>
 
-    <!-- SEKME 1: TALEPLER / SİPARİŞLER / ÇAĞRILAR -->
+    <!-- SEKME 1: TALEPLER / SİPARİŞLER -->
     <section id="pane-tickets" class="tab-pane active">
       <div class="stats">
         <div class="stat"><span>Toplam</span><strong>{{ tickets|length }}</strong></div>
@@ -1533,11 +1563,11 @@ TENANT_PANEL_HTML = """
       {% endfor %}
     </section>
 
-    {% if tenant.module_type == 'masa-qr' %}
-    <!-- SEKME 2: QR MENÜ YÖNETİMİ (SADECE MASA QR MODÜLÜNE ÖZEL) -->
+    {% if has_qr_menu %}
+    <!-- SEKME 2: MENÜ YÖNETİMİ -->
     <section id="pane-menu" class="tab-pane">
       <div class="card">
-        <div style="font-size:0.86rem;font-weight:800;color:var(--bright);">QR MENÜYE YENİ ÜRÜN EKLE</div>
+        <div style="font-size:0.86rem;font-weight:800;color:var(--bright);">DİJİTAL MENÜYE YENİ ÜRÜN EKLE</div>
         <form method="POST" action="{{ url_for('tenant_add_menu_item', slug=tenant.slug) }}" enctype="multipart/form-data" class="row-flex">
           <div style="flex:1;min-width:160px;">
             <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Ürün Adı</label>
@@ -1580,17 +1610,17 @@ TENANT_PANEL_HTML = """
         {% endfor %}
       </div>
       {% else %}
-      <div class="card" style="color:var(--muted);font-size:0.86rem;">Henüz QR menü ürünü eklenmedi.</div>
+      <div class="card" style="color:var(--muted);font-size:0.86rem;">Henüz dijital menü ürünü eklenmedi.</div>
       {% endif %}
     </section>
 
-    <!-- SEKME 3: MASA QR KODLARI & YAZDIRMA (SADECE MASA QR MODÜLÜNE ÖZEL) -->
+    <!-- SEKME 3: MASA QR KODLARI & YAZDIRMA -->
     <section id="pane-qr" class="tab-pane">
       <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
           <div>
             <div style="font-size:0.88rem;font-weight:800;color:var(--bright);">MASA QR KODLARI ({{ tenant.table_count or 8 }} MASA)</div>
-            <p style="font-size:0.8rem;color:var(--muted);margin-top:2px;">Müşteri masadaki QR'ı okuttuğunda doğrudan o masanın menü, sipariş ve garson çağırma ekranı açılır.</p>
+            <p style="font-size:0.8rem;color:var(--muted);margin-top:2px;">Her masa için özel QR kod üretildi. Müşteri okuttuğunda doğrudan o masa seçili açılır.</p>
           </div>
           <a href="{{ url_for('tenant_qr_print', slug=tenant.slug) }}" target="_blank" class="btn btn-ok">🖨️ Yazdırılabilir A4 QR Sayfası</a>
         </div>
@@ -1624,7 +1654,7 @@ TENANT_PANEL_HTML = """
             <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">WhatsApp Numarası</label>
             <input type="text" name="whatsapp_number" value="{{ tenant.whatsapp_number or '' }}" placeholder="05xx xxx xx xx" style="width:100%;" />
           </div>
-          {% if tenant.module_type in ['kafe-randevu', 'masa-qr'] %}
+          {% if has_qr_menu %}
           <div style="width:130px;">
             <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Masa Sayısı</label>
             <input type="number" name="table_count" min="1" max="200" value="{{ tenant.table_count or 8 }}" style="width:100%;" required />
@@ -1642,10 +1672,10 @@ TENANT_PANEL_HTML = """
       <span style="font-size:1.15rem;">📋</span>
       <span>{{ 'Siparişler' if tenant.module_type == 'masa-qr' else 'Talepler' }}</span>
     </button>
-    {% if tenant.module_type == 'masa-qr' %}
+    {% if has_qr_menu %}
     <button type="button" class="bnav-btn" onclick="openPane('pane-menu', this)">
       <span style="font-size:1.15rem;">🍽️</span>
-      <span>QR Menü</span>
+      <span>Menü</span>
     </button>
     <button type="button" class="bnav-btn" onclick="openPane('pane-qr', this)">
       <span style="font-size:1.15rem;">📱</span>
@@ -2038,7 +2068,7 @@ SUPERADMIN_HTML = """
         <label>Modül Türü</label>
         <select name="module_type" id="etModule">
           <option value="masa-qr">Masa QR Menü, Sipariş &amp; Garson Çağır</option>
-          <option value="kafe-randevu">Kafe &amp; Restoran Masa Randevu</option>
+          <option value="kafe-randevu">Kafe &amp; Restoran Masa Randevu + Masa QR</option>
           <option value="berber-randevu">Berber &amp; Kuaför Saat Randevu</option>
           <option value="genel">Genel Talep Formu</option>
         </select>
@@ -2272,7 +2302,8 @@ def tenant_public(slug):
 
     preselected_masa = request.args.get("masa", "").strip()
     selected_date = request.args.get("date") or datetime.now().strftime("%Y-%m-%d")
-    menu_items = get_menu_items(tenant["id"]) if mod_type == "masa-qr" else []
+    has_qr_menu = mod_type in {"kafe-randevu", "masa-qr"}
+    menu_items = get_menu_items(tenant["id"]) if has_qr_menu else []
     table_cap = max(1, int(tenant.get("table_count") or 8))
     booked_map = get_booked_tables_by_slot(tenant["id"], selected_date) if mod_type == "kafe-randevu" else {}
     slot_options = []
@@ -2316,6 +2347,7 @@ def tenant_public(slug):
         table_no = request.form.get("table_no", "").strip()
         guest_count = request.form.get("guest_count", "").strip()
         res_date = request.form.get("res_date", selected_date).strip()
+        selected_menu = [m.strip() for m in request.form.getlist("menu_order") if m.strip()]
         raw_message = request.form.get("message", "").strip()
 
         if mod_type == "kafe-randevu":
@@ -2328,6 +2360,8 @@ def tenant_public(slug):
                 parts.append(f"Masa: {table_no}")
             if guest_count:
                 parts.append(f"Kişi: {guest_count}")
+            if selected_menu:
+                parts.append(f"Menü Seçimi: {', '.join(selected_menu)}")
             if raw_message:
                 parts.append(f"Not: {raw_message}")
             message = " | ".join(parts)
@@ -2439,18 +2473,20 @@ def tenant_panel(slug):
             wa_number=WHATSAPP_NUMBER,
         )
 
+    has_qr_menu = mod_type in {"kafe-randevu", "masa-qr"}
     tickets = load_tickets(tenant["id"])
-    menu_items = get_menu_items(tenant["id"]) if mod_type == "masa-qr" else []
-    qr_list = build_tenant_qr_list(tenant) if mod_type == "masa-qr" else []
+    menu_items = get_menu_items(tenant["id"]) if has_qr_menu else []
+    qr_list = build_tenant_qr_list(tenant) if has_qr_menu else []
     yeni_count = sum(1 for t in tickets if (t.get("status") or "Yeni") == "Yeni")
     tamam_count = sum(1 for t in tickets if t.get("status") == "Tamamlandı")
 
-    nav_count = 4 if mod_type == "masa-qr" else 2
+    nav_count = 4 if has_qr_menu else 2
 
     return render_template_string(
         TENANT_PANEL_HTML,
         tenant=tenant,
         mod_label=mod_label,
+        has_qr_menu=has_qr_menu,
         menu_items=menu_items,
         qr_list=qr_list,
         nav_count=nav_count,
@@ -2499,7 +2535,7 @@ def tenant_update_settings(slug):
 @tenant_login_required
 def tenant_add_menu_item(slug):
     tenant = get_tenant_by_slug(slug)
-    if (tenant.get("module_type") or "genel") != "masa-qr":
+    if (tenant.get("module_type") or "genel") not in {"kafe-randevu", "masa-qr"}:
         return redirect(url_for("tenant_panel", slug=slug))
 
     name = request.form.get("name", "").strip()
