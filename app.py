@@ -3,6 +3,7 @@ import json
 import mimetypes
 import os
 import re
+import urllib.request
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -16,6 +17,7 @@ from flask import (
     Flask,
     Response,
     abort,
+    jsonify,
     redirect,
     render_template_string,
     request,
@@ -53,59 +55,67 @@ IBAN_BANK = os.environ.get("IBAN_BANK", "Türkiye İş Bankası / Kuveyt Türk")
 IBAN_NUMBER = os.environ.get("IBAN_NUMBER", "TR00 0000 0000 0000 0000 0000 00")
 PLAN_PRICE_STARTER = os.environ.get("PLAN_PRICE_STARTER", os.environ.get("PLAN_PRICE_FREE", "499 TL / Ay"))
 PLAN_PRICE_PRO = os.environ.get("PLAN_PRICE_PRO", "999 TL / Ay")
+QR_ADDON_PRICE = os.environ.get("QR_ADDON_PRICE", "250 TL")
 
 MODULE_LABELS = {
     "kafe-randevu": "Kafe & Restoran Masa Randevu + Masa QR",
     "berber-randevu": "Berber & Kuaför Saat Randevu",
     "masa-qr": "Masa QR Menü, Sipariş & Garson Çağır",
+    "mobil-saha": "Mobil Uygulama & Saha Akışları",
+    "web-otomasyon": "Web Panelleri, Formlar & Botlar",
+    "masaustu-otomasyon": "Masaüstü Kasa, Barkod & Stok Otomasyonu",
     "genel": "Genel Talep Formu",
 }
 
 SERVICES_DATA = [
     {
         "id": "mobil-otomasyon",
+        "module_key": "mobil-saha",
         "tag": "Mobil Otomasyon",
         "title": "Mobil Uygulama & Saha Akışları",
         "image": "mobilsaha.jpg",
-        "short": "Android ve mobil tarafta tekrarlayan işlemleri otomatikleştiren, anlık bildirim ve hızlı işlem sunan çözümler.",
-        "details": "Saha ekipleri, sipariş takibi, bildirim yönetimi ve mobil cihaz üzerinden yürütülen tekrarlı operasyonları tek dokunuşa indiren özel mobil otomasyon yapıları.",
+        "short": "Saha elemanı canlı konum, şarj durumu, aktif paket ve müşteri teslimat akışlarını takip eden mobil saha sistemi.",
+        "details": "Saha personeline özel link üzerinden GPS konum, batarya/şarj yüzdesi, üzerindeki paket ve gittiği müşteri bilgisini işletme paneline canlı aktaran sistem.",
         "features": [
-            "Android uyumlu hızlı arayüz ve anlık bildirim akışı",
-            "Tekrarlayan saha işlemlerini otomatikleştirme",
-            "Web panel ve sunucu ile gerçek zamanlı veri senkronizasyonu",
-            "İşletmeye özel sade ve anlaşılır kullanım ekranları"
+            "Saha elemanı linki ile tek tuşla konum & batarya izni ve canlı takip",
+            "Hangi paket üzerinde, hangi müşteriye gidiyor anlık görüntüleme",
+            "Harita üzerinde tek tıkla canlı konum açma ve teslimat durumu",
+            "İşletme panelinden tüm saha ekibini tek ekrandan izleme"
         ]
     },
     {
         "id": "web-otomasyon",
+        "module_key": "web-otomasyon",
         "tag": "Web Otomasyon",
         "title": "Web Panelleri, Formlar & Botlar",
         "image": "webotom.jpg",
-        "short": "Tarayıcı üzerinden çalışan yönetim ekranları, otomatik veri işleme, sipariş/talep akışları ve entegrasyonlar.",
-        "details": "İşletmenin tüm verilerini tarayıcıdan yönetebileceğin admin panelleri, otomatik veri toplama/işleme botları ve müşteri talep akışları.",
+        "short": "WhatsApp API, Telegram Bot Token, otomatik veri çekme (scraper/webhook) ve günlük raporlama entegrasyonları.",
+        "details": "İşletmenin WhatsApp API, Telegram Bot, harici Webhook ve otomatik veri çekme bağlantılarını tek panelden yönetip otomatik bildirim gönderen altyapı.",
         "features": [
-            "Mobil ve masaüstü uyumlu modern yönetim panelleri",
-            "Otomatik veri çekme, raporlama ve bildirim botları",
-            "Telegram, WhatsApp ve harici servis entegrasyonları",
-            "Hızlı kurulum ve düşük bakım maliyeti"
+            "WhatsApp Cloud/Business API & otomatik müşteri mesaj entegrasyonu",
+            "Telegram Bot Token & Chat ID ile anlık talep/sipariş bildirimi",
+            "Otomatik veri çekme URL (API/Webhook) ve zamanlanmış raporlama",
+            "Tek tıkla bağlantı testi ve canlı log takibi"
         ]
     },
     {
         "id": "masaustu-otomasyon",
+        "module_key": "masaustu-otomasyon",
         "tag": "Masaüstü Otomasyon",
         "title": "Kasa, Barkod & Yerel Programlar",
         "image": "masaustuoto.jpg",
-        "short": "İşletme bilgisayarlarında hızlı çalışan stok, barkod okuma, fiş/kayıt ve operasyon otomasyon araçları.",
-        "details": "İnternet kesintilerinden etkilenmeyen veya yerel ağda ışık hızında çalışan barkod, stok, kasa ve ofis otomasyon yazılımları.",
+        "short": "USB barkod okuyucu uyumlu hızlı ürün satışı, anlık stok düşümü ve günlük kasa ciro takip sistemi.",
+        "details": "Barkod okuyucu veya klavye ile saniyeler içinde satış düşen, kritik stokları uyaran ve günlük kasa raporunu otomatik tutan pratik otomasyon paneli.",
         "features": [
-            "USB barkod okuyucu ve hızlı ürün ekleme desteği",
-            "Anlık stok takibi, satış kaydı ve günlük özet raporlar",
-            "Tek tıkla çalışan masaüstü (.exe) uygulama yapısı",
-            "Karmaşık menülerden arındırılmış pratik kasa ekranı"
+            "USB barkod okuyucu ile barkod okutulduğu anda otomatik satış",
+            "Anlık stok takibi, ürün tanımlama ve fiyat yönetimi",
+            "Günlük kasa cirosu ve satılan ürün özeti",
+            "Karmaşık menülerden arındırılmış hızlı kasa ekranı"
         ]
     },
     {
         "id": "kafe-restoran-randevu",
+        "module_key": "kafe-randevu",
         "tag": "Kafe & Restoran",
         "title": "Masa Randevu & Masa QR Sistemi",
         "image": "kaferesrandevu.jpg",
@@ -113,34 +123,36 @@ SERVICES_DATA = [
         "details": "Kafe ve restoranlarda hem önceden masa randevusu almanı hem de her masaya özel QR kod etiketi basıp ayrı menü/sipariş ekranı sunmanı sağlayan sistem.",
         "features": [
             "Tarih, saat, boş masa ve kişi sayısına göre rezervasyon",
-            "Her masa için ayrı QR sipariş ve garson çağırma ekranı",
-            "Fotoğraflı dijital menü ve sepetli sipariş gönderimi",
+            "Pro pakette veya +250 TL eklentiyle her masa için ayrı QR sipariş ekranı",
+            "Fotoğraflı dijital menü, Garson Çağır ve Hesap İste butonları",
             "İşletme panelinden tek tıkla onay ve WhatsApp dönüşü"
         ]
     },
     {
         "id": "berber-kuafor-randevu",
+        "module_key": "berber-randevu",
         "tag": "Berber & Kuaför",
         "title": "Salon Randevu & Saat Yönetimi",
         "image": "berberrandevu.jpg",
-        "short": "Müşterilerin müsait saatleri kolayca seçebildiği, çakışmayı önleyen ve salon düzenini koruyan randevu sistemi.",
-        "details": "Telefon trafiğini azaltan, müşterinin doğrudan müsait saati seçip talep bıraktığı ve ustanın cebinden yönetebildiği modern salon randevu altyapısı.",
+        "short": "Müşterilerin tarih ve müsait saatleri ayrı ayrı seçebildiği, dolu saatleri kapatan randevu sistemi.",
+        "details": "Telefon trafiğini azaltan, müşterinin önce tarihi seçip o tarihteki boş saatleri görerek randevu aldığı modern salon randevu altyapısı.",
         "features": [
-            "Saat çakışmasını önleyen akıllı slot kontrolü",
-            "Saç, sakal, bakım gibi hizmet süresine göre planlama",
-            "Usta/personel bazlı ayrı randevu takvimi",
-            "Mobil ekrandan hızlı onay, iptal ve saat güncelleme"
+            "Tarih ve saat ayrı seçim; dolu saatleri otomatik kilitleme",
+            "Saç, sakal, bakım gibi hizmet türüne göre planlama",
+            "Usta/personel tercihi ve müşteri notu",
+            "Mobil ekrandan hızlı onay, iptal ve WhatsApp dönüşü"
         ]
     },
     {
         "id": "masa-qr-garson",
+        "module_key": "masa-qr",
         "tag": "Masa QR & Garson",
         "title": "QR Menü, Sipariş & Garson Çağır Sistemi",
         "image": "kaferestoqr.jpg",
         "short": "Masadaki QR kod üzerinden menüyü görüp sepetle sipariş verme ve tek dokunuşla garson/hesap çağırma sistemi.",
         "details": "Masaya oturan müşterilerin QR kodu okutarak fotoğraflı menüyü incelemesini, adetli sipariş vermesini ve tek tuşla garson/hesap çağırmasını sağlayan masa yönetim sistemi.",
         "features": [
-            "Her masaya özel tanımlı QR kod etiketi ve yazdırma sayfası",
+            "Her masaya özel tanımlı QR kod etiketi ve A4 yazdırma sayfası",
             "Tek dokunuşla 'Garson Çağır' ve 'Hesap İste' bildirimi",
             "Fotoğraflı QR menüden sepete ürün ekleyip sipariş verme",
             "Uygulama indirmeden doğrudan tarayıcıdan çalışma"
@@ -262,6 +274,10 @@ def init_db():
                         whatsapp_number TEXT DEFAULT '',
                         payment_note TEXT DEFAULT '',
                         payment_requested BOOLEAN NOT NULL DEFAULT FALSE,
+                        qr_addon_active BOOLEAN NOT NULL DEFAULT FALSE,
+                        qr_addon_requested BOOLEAN NOT NULL DEFAULT FALSE,
+                        qr_addon_note TEXT DEFAULT '',
+                        bot_config_json TEXT DEFAULT '{}',
                         is_active BOOLEAN NOT NULL DEFAULT FALSE,
                         created_at TIMESTAMP NOT NULL DEFAULT NOW(),
                         activated_at TIMESTAMP
@@ -273,6 +289,10 @@ def init_db():
                 cur.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS logo_filename TEXT DEFAULT '';")
                 cur.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS payment_note TEXT DEFAULT '';")
                 cur.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS payment_requested BOOLEAN NOT NULL DEFAULT FALSE;")
+                cur.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS qr_addon_active BOOLEAN NOT NULL DEFAULT FALSE;")
+                cur.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS qr_addon_requested BOOLEAN NOT NULL DEFAULT FALSE;")
+                cur.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS qr_addon_note TEXT DEFAULT '';")
+                cur.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS bot_config_json TEXT DEFAULT '{}';")
                 cur.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS activated_at TIMESTAMP;")
                 cur.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP;")
                 cur.execute("UPDATE tenants SET plan = 'starter' WHERE plan = 'free';")
@@ -314,6 +334,42 @@ def init_db():
                     """
                 )
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_menu_tenant_id ON tenant_menu_items(tenant_id);")
+
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS field_agents (
+                        id SERIAL PRIMARY KEY,
+                        tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                        agent_name TEXT NOT NULL,
+                        active_package TEXT DEFAULT '',
+                        target_customer TEXT DEFAULT '',
+                        battery_level INTEGER DEFAULT -1,
+                        is_charging BOOLEAN DEFAULT FALSE,
+                        latitude TEXT DEFAULT '',
+                        longitude TEXT DEFAULT '',
+                        status_text TEXT DEFAULT 'Sahada Aktif',
+                        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+                    );
+                    """
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_field_agents_tenant ON field_agents(tenant_id);")
+
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS pos_products (
+                        id SERIAL PRIMARY KEY,
+                        tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                        barcode TEXT NOT NULL,
+                        name TEXT NOT NULL,
+                        price NUMERIC(12,2) NOT NULL DEFAULT 0,
+                        stock INTEGER NOT NULL DEFAULT 0,
+                        sold_today INTEGER NOT NULL DEFAULT 0,
+                        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                        UNIQUE(tenant_id, barcode)
+                    );
+                    """
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_pos_products_tenant ON pos_products(tenant_id);")
 
                 cur.execute(
                     """
@@ -390,6 +446,64 @@ def init_db():
         app.logger.error("Veritabani baslatma hatasi: %s", exc)
 
 
+def tenant_has_qr_access(tenant):
+    mod = tenant.get("module_type") or "genel"
+    if mod == "masa-qr":
+        return True
+    if mod == "kafe-randevu":
+        return (tenant.get("plan") == "pro") or bool(tenant.get("qr_addon_active"))
+    return False
+
+
+def get_bot_config(tenant):
+    raw = tenant.get("bot_config_json") or "{}"
+    try:
+        data = json.loads(raw) if isinstance(raw, str) else dict(raw)
+    except Exception:
+        data = {}
+    return {
+        "wa_api_url": data.get("wa_api_url", ""),
+        "wa_api_token": data.get("wa_api_token", ""),
+        "wa_auto_reply": bool(data.get("wa_auto_reply", False)),
+        "tg_bot_token": data.get("tg_bot_token", ""),
+        "tg_chat_id": data.get("tg_chat_id", ""),
+        "tg_notify_enabled": bool(data.get("tg_notify_enabled", False)),
+        "scraper_url": data.get("scraper_url", ""),
+        "report_hour": data.get("report_hour", "21:00"),
+        "webhook_url": data.get("webhook_url", ""),
+        "last_sync_note": data.get("last_sync_note", ""),
+    }
+
+
+def trigger_tenant_integrations(tenant, title, body_text):
+    cfg = get_bot_config(tenant)
+    if cfg.get("tg_notify_enabled") and cfg.get("tg_bot_token") and cfg.get("tg_chat_id"):
+        try:
+            tg_url = f"https://api.telegram.org/bot{cfg['tg_bot_token'].strip()}/sendMessage"
+            payload = json.dumps({
+                "chat_id": cfg["tg_chat_id"].strip(),
+                "text": f"🔔 {tenant['business_name']} — {title}\n{body_text}",
+            }).encode("utf-8")
+            req = urllib.request.Request(tg_url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+            urllib.request.urlopen(req, timeout=4)
+        except Exception as exc:
+            app.logger.warning("Telegram bildirim hatasi: %s", exc)
+
+    if cfg.get("webhook_url"):
+        try:
+            payload = json.dumps({
+                "business": tenant["business_name"],
+                "slug": tenant["slug"],
+                "title": title,
+                "message": body_text,
+                "timestamp": datetime.now().isoformat(),
+            }).encode("utf-8")
+            req = urllib.request.Request(cfg["webhook_url"].strip(), data=payload, headers={"Content-Type": "application/json"}, method="POST")
+            urllib.request.urlopen(req, timeout=4)
+        except Exception as exc:
+            app.logger.warning("Webhook bildirim hatasi: %s", exc)
+
+
 def get_tenant_by_slug(slug):
     with get_db() as conn:
         with conn.cursor() as cur:
@@ -406,7 +520,7 @@ def get_all_tenants():
                 FROM tenants t
                 LEFT JOIN tickets tk ON tk.tenant_id = t.id
                 GROUP BY t.id
-                ORDER BY t.is_active ASC, t.payment_requested DESC, t.id DESC
+                ORDER BY t.is_active ASC, t.payment_requested DESC, t.qr_addon_requested DESC, t.id DESC
                 """
             )
             rows = cur.fetchall()
@@ -432,7 +546,10 @@ def get_all_tenants():
 
 def create_tenant(business_name, owner_email, password, raw_slug="", plan="starter", module_type="genel", whatsapp_number=""):
     base_slug = slugify(raw_slug or business_name)
-    valid_modules = {"genel", "kafe-randevu", "berber-randevu", "masa-qr"}
+    valid_modules = {
+        "genel", "kafe-randevu", "berber-randevu", "masa-qr",
+        "mobil-saha", "web-otomasyon", "masaustu-otomasyon"
+    }
     mod = module_type if module_type in valid_modules else "genel"
     chosen_plan = plan if plan in {"starter", "pro"} else "starter"
     default_tables = 8 if mod in {"kafe-randevu", "masa-qr"} else 4
@@ -451,9 +568,9 @@ def create_tenant(business_name, owner_email, password, raw_slug="", plan="start
                 """
                 INSERT INTO tenants (
                     slug, business_name, owner_email, password_hash, plan,
-                    module_type, table_count, whatsapp_number, is_active, payment_requested
+                    module_type, table_count, whatsapp_number, is_active, payment_requested, qr_addon_active
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, FALSE, FALSE)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, FALSE, FALSE, %s)
                 RETURNING *
                 """,
                 (
@@ -465,6 +582,7 @@ def create_tenant(business_name, owner_email, password, raw_slug="", plan="start
                     mod,
                     default_tables,
                     whatsapp_number.strip(),
+                    (chosen_plan == "pro"),
                 ),
             )
             return cur.fetchone()
@@ -489,6 +607,49 @@ def get_menu_items(tenant_id):
                 d["numeric_price"] = parse_price_number(d.get("price"))
                 items.append(d)
             return items
+
+
+def get_field_agents(tenant_id):
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT *
+                FROM field_agents
+                WHERE tenant_id = %s
+                ORDER BY updated_at DESC, id DESC
+                """,
+                (tenant_id,),
+            )
+            rows = cur.fetchall()
+            out = []
+            for r in rows:
+                d = dict(r)
+                upd = d.get("updated_at")
+                d["updated_str"] = upd.strftime("%d.%m.%Y %H:%M:%S") if upd else "-"
+                out.append(d)
+            return out
+
+
+def get_pos_products(tenant_id):
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT *
+                FROM pos_products
+                WHERE tenant_id = %s
+                ORDER BY id DESC
+                """,
+                (tenant_id,),
+            )
+            rows = cur.fetchall()
+            out = []
+            for r in rows:
+                d = dict(r)
+                d["price_num"] = float(d.get("price") or 0)
+                out.append(d)
+            return out
 
 
 def get_booked_tables_by_slot(tenant_id, target_date=None):
@@ -519,6 +680,30 @@ def get_booked_tables_by_slot(tenant_id, target_date=None):
         else:
             booked_tables[matched_slot].add(len(booked_tables[matched_slot]) + 1)
     return booked_tables
+
+
+def get_booked_barber_slots(tenant_id, target_date=None):
+    date_str = (target_date or datetime.now().strftime("%Y-%m-%d")).strip()
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT service, message, status
+                FROM tickets
+                WHERE tenant_id = %s AND status != 'İptal'
+                """,
+                (tenant_id,),
+            )
+            rows = cur.fetchall()
+
+    taken_slots = set()
+    for r in rows:
+        txt = f"{r.get('service') or ''} {r.get('message') or ''}"
+        if date_str in txt:
+            for sl in TIME_SLOTS:
+                if sl in txt:
+                    taken_slots.add(sl)
+    return taken_slots
 
 
 def load_tickets(tenant_id):
@@ -556,6 +741,10 @@ def add_ticket(tenant_id, name, phone, service, message):
                 """,
                 (ticket_id, tenant_id, name, phone, service, message, created_at),
             )
+            cur.execute("SELECT * FROM tenants WHERE id = %s", (tenant_id,))
+            tn = cur.fetchone()
+    if tn:
+        trigger_tenant_integrations(tn, f"{service} ({name})", message)
 
 
 def update_ticket_status(tenant_id, ticket_id, new_status):
@@ -666,7 +855,7 @@ INDEX_HTML = """
     .hero-panel { background: linear-gradient(160deg, rgba(19, 32, 27, 0.94), rgba(10, 17, 14, 0.94)); border: 1px solid var(--border); border-radius: 18px; padding: 20px; }
     .panel-title { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent-2); margin-bottom: 10px; font-weight: 800; }
     .mini-list { list-style: none; display: grid; gap: 8px; }
-    .mini-list li { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border-radius: 11px; background: rgba(8, 13, 11, 0.65); border: 1px solid rgba(16, 185, 129, 0.14); font-size: 0.86rem; gap: 8px; flex-wrap: wrap; }
+    .mini-list li { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border-radius: 11px; background: rgba(8, 13, 11, 0.65); border: 1px solid rgba(16, 185, 129, 0.14); font-size: 0.85rem; gap: 8px; flex-wrap: wrap; }
     .pill { font-size: 0.72rem; padding: 3px 8px; border-radius: 999px; background: rgba(16, 185, 129, 0.16); color: var(--accent-bright); font-weight: 700; border: 1px solid rgba(16, 185, 129, 0.3); }
     .pill-amber { font-size: 0.72rem; padding: 3px 8px; border-radius: 999px; background: rgba(245, 158, 11, 0.16); color: #fcd34d; font-weight: 700; border: 1px solid rgba(245, 158, 11, 0.36); }
 
@@ -760,9 +949,9 @@ INDEX_HTML = """
         <aside class="hero-panel">
           <div class="panel-title">Paket &amp; Aktivasyon Akışı</div>
           <ul class="mini-list">
-            <li><span>Starter Paket</span><span class="pill">{{ price_starter }}</span></li>
-            <li><span>Pro Paket</span><span class="pill-amber">{{ price_pro }}</span></li>
-            <li><span>Modül Seçimi</span><span class="pill">İlk Üyelikte Kilitlenir</span></li>
+            <li><span>Starter Paket (Temel Modül)</span><span class="pill">{{ price_starter }}</span></li>
+            <li><span>Pro Paket (Masa QR Dahil)</span><span class="pill-amber">{{ price_pro }}</span></li>
+            <li><span>Starter'da Masa QR Kilidi</span><span class="pill-amber">+{{ qr_addon_price }} Ek Açılım</span></li>
             <li><span>Aktivasyon</span><span class="pill">IBAN Onayı Sonrası</span></li>
           </ul>
         </aside>
@@ -774,7 +963,7 @@ INDEX_HTML = """
         <div class="section-head">
           <span>Modüller</span>
           <h2>İşletmene Uygun Çözümleri İncele</h2>
-          <p>Kartlara tıklayarak modül detaylarını görebilirsin.</p>
+          <p>Tüm modüller hazır ve çalışır durumdadır. Kartlara tıklayarak detayları inceleyip doğrudan o modülle hesap açabilirsin.</p>
         </div>
 
         <div class="services-grid">
@@ -805,7 +994,7 @@ INDEX_HTML = """
         <div class="section-head">
           <span>Hesap Açma &amp; IBAN Ödeme</span>
           <h2>Yeni İşletme Hesabı Oluştur veya Paneline Gir</h2>
-          <p>İlk üyelikte seçtiğin modül panele kilitlenir; IBAN ödemesi onaylandığında sistem aktif olur.</p>
+          <p>Starter pakette kafe randevu açarsan Masa QR kısmı panelde kilitli gelir (+{{ qr_addon_price }} ile açılır); Pro pakette ise baştan açıktır.</p>
         </div>
 
         {% if created_tenant %}
@@ -857,8 +1046,8 @@ INDEX_HTML = """
               <div>
                 <label for="plan">Paket Seçimi</label>
                 <select id="plan" name="plan">
-                  <option value="starter">Starter — {{ price_starter }}</option>
-                  <option value="pro">Pro — {{ price_pro }}</option>
+                  <option value="starter">Starter — {{ price_starter }} (Masa QR Kilitli)</option>
+                  <option value="pro">Pro — {{ price_pro }} (Tüm Özellikler Açık)</option>
                 </select>
               </div>
             </div>
@@ -866,9 +1055,12 @@ INDEX_HTML = """
             <div>
               <label for="module_type">Modül Seçimi (Üyelik Sonrası Kilitlenir)</label>
               <select id="module_type" name="module_type">
-                <option value="masa-qr">Masa QR Menü, Sipariş &amp; Garson Çağır</option>
                 <option value="kafe-randevu">Kafe &amp; Restoran Masa Randevu + Masa QR</option>
+                <option value="masa-qr">Masa QR Menü, Sipariş &amp; Garson Çağır</option>
                 <option value="berber-randevu">Berber &amp; Kuaför Saat Randevu</option>
+                <option value="mobil-saha">Mobil Uygulama &amp; Saha Akışları</option>
+                <option value="web-otomasyon">Web Panelleri, Formlar &amp; Botlar</option>
+                <option value="masaustu-otomasyon">Masaüstü Kasa, Barkod &amp; Stok Otomasyonu</option>
                 <option value="genel">Genel Talep / Müşteri Formu</option>
               </select>
             </div>
@@ -935,16 +1127,18 @@ INDEX_HTML = """
       <ul id="modalFeatures" class="modal-list"></ul>
       <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;">
         <button type="button" class="btn-secondary" onclick="closeServiceModal()">Kapat</button>
-        <a href="#saas-basla" class="btn-primary" onclick="closeServiceModal()">Bu Modülle Hesap Aç</a>
+        <a href="#saas-basla" id="modalSelectBtn" class="btn-primary" onclick="selectModuleAndClose()">Bu Modülle Hesap Aç</a>
       </div>
     </div>
   </div>
 
   <script>
     const SERVICES = {{ services | tojson }};
+    let currentModalModule = "kafe-randevu";
     function openServiceModal(id) {
       const item = SERVICES.find(s => s.id === id);
       if (!item) return;
+      currentModalModule = item.module_key || "genel";
       document.getElementById("modalTag").textContent = item.tag;
       document.getElementById("modalTitle").textContent = item.title;
       document.getElementById("modalDesc").textContent = item.details;
@@ -954,6 +1148,11 @@ INDEX_HTML = """
       ul.innerHTML = "";
       item.features.forEach(f => { const li = document.createElement("li"); li.textContent = f; ul.appendChild(li); });
       document.getElementById("serviceModal").classList.add("open");
+    }
+    function selectModuleAndClose() {
+      const sel = document.getElementById("module_type");
+      if (sel && currentModalModule) sel.value = currentModalModule;
+      closeServiceModal();
     }
     function closeServiceModal() { document.getElementById("serviceModal").classList.remove("open"); }
   </script>
@@ -1018,7 +1217,176 @@ TENANT_PENDING_HTML = """
 </html>
 """
 
-# ÖZEL MASA QR EKRANI (RANDEVU SAYFASINDAN TAMAMEN AYRI)
+# SAHA ELEMANI CANLI KONUM & ŞARJ SAYFASI (/i/<slug>/saha)
+FIELD_AGENT_HTML = """
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>{{ tenant.business_name }} — Saha Elemanı Canlı Akış</title>
+  <style>
+    * { box-sizing:border-box; margin:0; padding:0; font-family:Inter,system-ui,sans-serif; }
+    body { background:#080d0b; color:#f8fafc; padding:18px 14px 40px; }
+    .wrap { max-width:540px; margin:0 auto; display:grid; gap:14px; }
+    .card { background:#121d18; border:1px solid rgba(16,185,129,0.28); border-radius:16px; padding:18px; display:grid; gap:12px; }
+    .badge { font-size:0.74rem; color:#34d399; background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.3); padding:4px 10px; border-radius:999px; font-weight:800; display:inline-block; }
+    label { display:block; font-size:0.82rem; color:#d1d5db; margin-bottom:5px; font-weight:600; }
+    input, select { width:100%; padding:11px 12px; border-radius:10px; border:1px solid rgba(16,185,129,0.25); background:#0f1714; color:#f8fafc; font-size:0.92rem; }
+    .btn-active { padding:14px; border-radius:12px; border:none; background:linear-gradient(135deg,#34d399,#10b981); color:#04130d; font-weight:900; font-size:0.96rem; cursor:pointer; width:100%; }
+    .btn-stop { padding:11px; border-radius:11px; border:1px solid rgba(239,68,68,0.4); background:rgba(239,68,68,0.15); color:#fca5a5; font-weight:800; font-size:0.86rem; cursor:pointer; width:100%; display:none; }
+    .telemetry { background:#0f1714; border:1px solid rgba(16,185,129,0.2); border-radius:12px; padding:12px; display:grid; gap:6px; font-size:0.84rem; }
+    .dot { display:inline-block; width:9px; height:9px; border-radius:50%; background:#f59e0b; margin-right:6px; }
+    .dot.live { background:#10b981; box-shadow:0 0 10px #10b981; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div>
+        <span class="badge">Mobil Saha Ekibi Terminali</span>
+        <h1 style="font-size:1.3rem;margin-top:6px;">{{ tenant.business_name }}</h1>
+        <p style="font-size:0.82rem;color:#9ca3af;margin-top:3px;">Sahayı aktif ettiğinizde konum, batarya/şarj durumu, aktif paket ve müşteri bilgisi merkeze canlı aktarılır.</p>
+      </div>
+
+      <div>
+        <label>Saha Elemanı Adı Soyadı</label>
+        <input type="text" id="agentName" placeholder="Örn: Emre Kaya (Kurye 1)" required />
+      </div>
+
+      <div>
+        <label>Üzerindeki Aktif Paket / Sipariş Kodu</label>
+        <input type="text" id="activePackage" placeholder="Örn: #PKT-402 (2 Koli Ürün)" />
+      </div>
+
+      <div>
+        <label>Gidilen Müşteri / Adres</label>
+        <input type="text" id="targetCustomer" placeholder="Örn: Ahmet Yılmaz — Çekmeköy Merkez" />
+      </div>
+
+      <div>
+        <label>Saha Durumu</label>
+        <select id="statusText">
+          <option value="Yolda / Müşteriye Gidiyor">🚚 Yolda / Müşteriye Gidiyor</option>
+          <option value="Müşteri Kapısında">📍 Müşteri Kapısında</option>
+          <option value="Teslimat Tamamlandı">✅ Teslimat Tamamlandı</option>
+          <option value="Merkeze Dönüyor">🔄 Merkeze Dönüyor</option>
+        </select>
+      </div>
+
+      <button type="button" class="btn-active" id="startBtn" onclick="activateFieldMode()">📡 Sahayı Aktif Et (Konum &amp; İzinleri Onayla)</button>
+      <button type="button" class="btn-stop" id="stopBtn" onclick="stopFieldMode()">⏹️ Sahayı Durdur</button>
+
+      <div class="telemetry">
+        <div><span class="dot" id="liveDot"></span><strong id="stateLabel">Beklemede (Pasif)</strong></div>
+        <div>🔋 Şarj Durumu: <strong id="batLabel">Ölçülmedi</strong></div>
+        <div>📍 Konum: <strong id="locLabel">İzin bekleniyor</strong></div>
+        <div>🕒 Son Gönderim: <strong id="timeLabel">-</strong></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let watchId = null;
+    let pushTimer = null;
+    let latestLat = "";
+    let latestLng = "";
+    let batteryPct = -1;
+    let isCharging = false;
+
+    async function readBattery() {
+      try {
+        if (navigator.getBattery) {
+          const b = await navigator.getBattery();
+          batteryPct = Math.round(b.level * 100);
+          isCharging = Boolean(b.charging);
+          document.getElementById("batLabel").textContent = `%${batteryPct} ${isCharging ? "(Şarj Oluyor ⚡)" : ""}`;
+        } else {
+          document.getElementById("batLabel").textContent = "Tarayıcı desteklemiyor";
+        }
+      } catch (e) {}
+    }
+
+    async function sendTelemetry() {
+      const name = document.getElementById("agentName").value.trim();
+      if (!name) return;
+      await readBattery();
+      try {
+        await fetch("{{ url_for('field_agent_ping', slug=tenant.slug) }}", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            agent_name: name,
+            active_package: document.getElementById("activePackage").value.trim(),
+            target_customer: document.getElementById("targetCustomer").value.trim(),
+            status_text: document.getElementById("statusText").value,
+            battery_level: batteryPct,
+            is_charging: isCharging,
+            latitude: latestLat,
+            longitude: latestLng
+          })
+        });
+        document.getElementById("timeLabel").textContent = new Date().toLocaleTimeString("tr-TR");
+      } catch (err) {}
+    }
+
+    async function activateFieldMode() {
+      const name = document.getElementById("agentName").value.trim();
+      if (!name) {
+        alert("Lütfen önce adınızı soyadınızı yazın.");
+        return;
+      }
+
+      if ("Notification" in window && Notification.permission === "default") {
+        try { await Notification.requestPermission(); } catch (e) {}
+      }
+
+      await readBattery();
+
+      if (!navigator.geolocation) {
+        alert("Cihazınızda konum servisi bulunamadı.");
+        return;
+      }
+
+      document.getElementById("stateLabel").textContent = "Konum izni isteniyor...";
+      watchId = navigator.geolocation.watchPosition(
+        (pos) => {
+          latestLat = pos.coords.latitude.toFixed(6);
+          latestLng = pos.coords.longitude.toFixed(6);
+          document.getElementById("locLabel").textContent = `${latestLat}, ${latestLng}`;
+          document.getElementById("stateLabel").textContent = "SAHA AKTİF — Canlı Yayın Yapılıyor";
+          document.getElementById("liveDot").classList.add("live");
+          document.getElementById("startBtn").style.display = "none";
+          document.getElementById("stopBtn").style.display = "block";
+          sendTelemetry();
+        },
+        (err) => {
+          alert("Konum izni reddedildi veya alınamadı: " + err.message);
+          document.getElementById("stateLabel").textContent = "Konum İzni Gerekli";
+        },
+        { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+      );
+
+      if (pushTimer) clearInterval(pushTimer);
+      pushTimer = setInterval(sendTelemetry, 12000);
+    }
+
+    function stopFieldMode() {
+      if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+      if (pushTimer) clearInterval(pushTimer);
+      watchId = null;
+      pushTimer = null;
+      document.getElementById("liveDot").classList.remove("live");
+      document.getElementById("stateLabel").textContent = "Durduruldu (Pasif)";
+      document.getElementById("startBtn").style.display = "block";
+      document.getElementById("stopBtn").style.display = "none";
+    }
+  </script>
+</body>
+</html>
+"""
+
+# ÖZEL MASA QR EKRANI (/i/<slug>/qr)
 TENANT_QR_ORDER_HTML = """
 <!DOCTYPE html>
 <html lang="tr">
@@ -1300,7 +1668,6 @@ TENANT_PUBLIC_HTML = """
     {% endif %}
 
     {% if tenant.module_type == 'kafe-randevu' %}
-    <!-- KAFE & RESTORAN RANDEVU SAYFASI -->
     <form class="card" method="POST">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">
         <h2 style="font-size:1.1rem;">Masa Randevusu Talebi</h2>
@@ -1414,15 +1781,32 @@ TENANT_PUBLIC_HTML = """
     </script>
 
     {% elif tenant.module_type == 'berber-randevu' %}
+    <!-- BERBER & KUAFÖR: TARİH VE SAAT AYRI SEÇİM + DOLULUK KONTROLÜ -->
     <form class="card" method="POST">
       <h2 style="font-size:1.1rem;">Salon Randevu Talebi</h2>
       <div class="row-2">
         <div><label>Ad Soyad</label><input type="text" name="name" placeholder="Adınız Soyadınız" required /></div>
         <div><label>Telefon</label><input type="text" name="phone" placeholder="05xx xxx xx xx" required /></div>
       </div>
-      <div class="row-2">
+      <div class="row-3">
         <div>
-          <label>Hizmet Seçimi</label>
+          <label>1. Randevu Tarihi</label>
+          <input type="date" name="res_date" id="barberDateInput" value="{{ selected_date }}" onchange="reloadBarberDate()" required />
+        </div>
+        <div>
+          <label>2. Müsait Saat Seçimi</label>
+          <select name="slot_time" required>
+            {% for bs in barber_slots %}
+              {% if bs.is_free %}
+                <option value="{{ bs.time }}">{{ bs.time }} — Müsait</option>
+              {% else %}
+                <option value="{{ bs.time }}" disabled>{{ bs.time }} — Dolu</option>
+              {% endif %}
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label>3. Hizmet Seçimi</label>
           <select name="service">
             <option value="Saç Kesimi">Saç Kesimi</option>
             <option value="Saç + Sakal Tıraşı">Saç + Sakal Tıraşı</option>
@@ -1430,15 +1814,45 @@ TENANT_PUBLIC_HTML = """
             <option value="Damat / Özel Bakım">Damat / Özel Bakım</option>
           </select>
         </div>
-        <div><label>İstenen Gün ve Saat</label><input type="text" name="slot_time" placeholder="Örn: Yarın 15:30" required /></div>
       </div>
-      <div><label>Usta Tercihi / Ek Not</label><textarea name="message" rows="3" placeholder="Model veya saat ile ilgili notunuz..." required></textarea></div>
-      <button type="submit" class="btn-main">Gönder</button>
+      <div><label>Usta Tercihi / Ek Not</label><textarea name="message" rows="2" placeholder="Usta tercihi veya kesim notunuz..."></textarea></div>
+      <button type="submit" class="btn-main">Randevu Al</button>
     </form>
+    <script>
+      function reloadBarberDate() {
+        const val = document.getElementById("barberDateInput").value;
+        if (!val) return;
+        const url = new URL(window.location.href);
+        url.searchParams.set("date", val);
+        window.location.href = url.toString();
+      }
+    </script>
+
+    {% elif tenant.module_type == 'mobil-saha' %}
+    <div class="card">
+      <h2 style="font-size:1.1rem;">Saha Ekibi &amp; Teslimat Sorgu / Talep</h2>
+      <p style="font-size:0.84rem;color:#9ca3af;">Saha personeli canlı konum terminali: <a href="{{ url_for('field_agent_terminal', slug=tenant.slug) }}" style="color:#34d399;font-weight:700;">Saha Ekranını Aç →</a></p>
+      <form method="POST" style="display:grid;gap:12px;">
+        <div class="row-2">
+          <div><label>Ad Soyad / Firma</label><input type="text" name="name" required /></div>
+          <div><label>Telefon</label><input type="text" name="phone" placeholder="05xx xxx xx xx" required /></div>
+        </div>
+        <div>
+          <label>Saha İşlem Türü</label>
+          <select name="service">
+            <option value="Saha Teslimat Talebi">Saha Teslimat Talebi</option>
+            <option value="Teknik Servis / Saha Ekibi Çağır">Teknik Servis / Saha Ekibi Çağır</option>
+            <option value="Paket Durum Bilgisi">Paket Durum Bilgisi</option>
+          </select>
+        </div>
+        <div><label>Adres &amp; Paket Detayı</label><textarea name="message" rows="3" required></textarea></div>
+        <button type="submit" class="btn-main">Saha Talebi Gönder</button>
+      </form>
+    </div>
 
     {% else %}
     <form class="card" method="POST">
-      <h2 style="font-size:1.1rem;">Talep / Randevu Bırak</h2>
+      <h2 style="font-size:1.1rem;">Talep / Otomasyon İsteği Bırak</h2>
       <div class="row-2">
         <div><label>Ad Soyad</label><input type="text" name="name" required /></div>
         <div><label>Telefon</label><input type="text" name="phone" placeholder="05xx xxx xx xx" required /></div>
@@ -1503,9 +1917,10 @@ TENANT_PANEL_HTML = """
     * { box-sizing:border-box; margin:0; padding:0; font-family:Inter,system-ui,sans-serif; -webkit-tap-highlight-color:transparent; }
     body { background:var(--bg); color:var(--text); padding:0 0 84px; overflow-x:hidden; }
     .topbar { position:sticky; top:0; z-index:40; background:rgba(8,13,11,0.9); backdrop-filter:blur(12px); border-bottom:1px solid var(--border); padding:14px 16px; display:flex; justify-content:space-between; align-items:center; gap:10px; }
-    .wrap { max-width:1120px; margin:0 auto; padding:16px; display:grid; gap:14px; }
+    .wrap { max-width:1140px; margin:0 auto; padding:16px; display:grid; gap:14px; }
     .btn { text-decoration:none; padding:9px 13px; border-radius:10px; font-weight:700; font-size:0.84rem; border:1px solid var(--border); background:var(--card); color:var(--bright); cursor:pointer; display:inline-flex; align-items:center; justify-content:center; gap:6px; }
     .btn-ok { background:linear-gradient(135deg,#34d399,#10b981); color:#04130d; border:none; font-weight:800; }
+    .btn-gold { background:linear-gradient(135deg,#fbbf24,#f59e0b); color:#1f1300; border:none; font-weight:800; }
     .btn-wa { background:rgba(34,197,94,0.16); border-color:rgba(34,197,94,0.45); color:#86efac; }
     .btn-del { background:rgba(239,68,68,0.14); border-color:rgba(239,68,68,0.35); color:#fca5a5; }
     .stats { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
@@ -1516,9 +1931,12 @@ TENANT_PANEL_HTML = """
     .msg { background:var(--soft); padding:11px 12px; border-radius:10px; font-size:0.88rem; word-break:break-word; border:1px solid rgba(16,185,129,0.12); }
     input, select { padding:10px 11px; border-radius:10px; border:1px solid var(--border); background:var(--soft); color:var(--text); font-size:0.9rem; }
     .locked-pill { padding:8px 12px; border-radius:10px; background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.35); color:#fcd34d; font-size:0.8rem; font-weight:700; }
-    .menu-admin-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px; }
+    .iban-box { background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.38); border-radius:14px; padding:15px; display:grid; gap:9px; }
+    .iban-code { font-family:monospace; font-size:0.9rem; font-weight:800; color:#fcd34d; background:#09100d; padding:10px 12px; border-radius:10px; border:1px solid rgba(245,158,11,0.3); word-break:break-all; }
+    .menu-admin-grid, .agents-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:12px; }
     .qr-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; }
-    .qr-card { background:var(--soft); border:1px solid var(--border); border-radius:14px; padding:14px; display:grid; gap:9px; text-align:center; justify-items:center; }
+    .qr-card, .agent-card { background:var(--soft); border:1px solid var(--border); border-radius:14px; padding:14px; display:grid; gap:8px; }
+    .qr-card { text-align:center; justify-items:center; }
     .qr-card img { width:150px; height:150px; border-radius:10px; background:#fff; padding:8px; }
     .menu-box { background:var(--soft); border:1px solid var(--border); border-radius:12px; padding:12px; display:grid; gap:8px; }
     .menu-thumb { width:100%; aspect-ratio:16/10; object-fit:cover; border-radius:8px; }
@@ -1530,10 +1948,13 @@ TENANT_PANEL_HTML = """
     .pill-tab { background:var(--card); color:var(--muted); border:1px solid var(--border); padding:7px 13px; border-radius:999px; font-size:0.8rem; font-weight:700; white-space:nowrap; cursor:pointer; }
     .pill-tab.active { background:var(--accent); color:#04130d; border-color:var(--accent); }
     .bottom-nav { position:fixed; bottom:0; left:0; right:0; height:64px; background:rgba(8,13,11,0.96); backdrop-filter:blur(14px); border-top:1px solid var(--border); display:grid; grid-template-columns:repeat({{ nav_count }},1fr); z-index:45; }
-    .bnav-btn { background:none; border:none; color:var(--muted); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; font-size:0.74rem; font-weight:700; cursor:pointer; }
+    .bnav-btn { background:none; border:none; color:var(--muted); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; font-size:0.72rem; font-weight:700; cursor:pointer; }
     .bnav-btn.active { color:var(--bright); }
+    .bnav-btn.locked { color:#fbbf24; }
     .tab-pane { display:none; gap:14px; }
     .tab-pane.active { display:grid; }
+    .pos-table { width:100%; border-collapse:collapse; font-size:0.85rem; }
+    .pos-table th, .pos-table td { padding:9px 8px; border-bottom:1px solid rgba(16,185,129,0.14); text-align:left; }
     @media (max-width:768px) {
       .row-flex > div, .row-flex > button { width:100% !important; min-width:0 !important; }
     }
@@ -1551,8 +1972,20 @@ TENANT_PANEL_HTML = """
   <div class="wrap">
     <div class="share-box">
       <span style="word-break:break-all;"><strong>Müşteri Linki:</strong> <code id="custLinkText">{{ request.url_root }}i/{{ tenant.slug }}</code></span>
-      <button type="button" class="btn" id="copyBtn" onclick="copyCustLink()">Kopyala</button>
+      <button type="button" class="btn" id="copyBtn" onclick="copyText('custLinkText', 'copyBtn')">Kopyala</button>
     </div>
+
+    {% if addon_notified %}
+    <div class="card" style="border-color:rgba(16,185,129,0.5);color:#a7f3d0;font-size:0.88rem;">
+      ✅ +{{ qr_addon_price }} Masa QR eklenti ödeme bildiriminiz Süper Admin'e iletildi! Onaylandığında Masa QR sekmesi anında açılacaktır.
+    </div>
+    {% endif %}
+
+    {% if bot_saved %}
+    <div class="card" style="border-color:rgba(16,185,129,0.5);color:#a7f3d0;font-size:0.88rem;">
+      ✅ {{ bot_saved }}
+    </div>
+    {% endif %}
 
     <!-- SEKME 1: TALEPLER / SİPARİŞLER -->
     <section id="pane-tickets" class="tab-pane active">
@@ -1602,7 +2035,7 @@ TENANT_PANEL_HTML = """
       {% endfor %}
     </section>
 
-    {% if has_qr_menu %}
+    {% if show_menu_tab %}
     <!-- SEKME 2: MENÜ YÖNETİMİ -->
     <section id="pane-menu" class="tab-pane">
       <div class="card">
@@ -1653,13 +2086,14 @@ TENANT_PANEL_HTML = """
       {% endif %}
     </section>
 
-    <!-- SEKME 3: MASA QR KODLARI & YAZDIRMA -->
+    <!-- SEKME 3: MASA QR KODLARI (STARTER'DA KİLİTLİ +250 TL) -->
     <section id="pane-qr" class="tab-pane">
+      {% if qr_unlocked %}
       <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
           <div>
             <div style="font-size:0.88rem;font-weight:800;color:var(--bright);">MASA QR KODLARI ({{ tenant.table_count or 8 }} MASA)</div>
-            <p style="font-size:0.8rem;color:var(--muted);margin-top:2px;">QR okutulduğunda randevu sayfasına değil, doğrudan <strong>Masa Menü, Sipariş &amp; Garson Çağır</strong> ekranına gider.</p>
+            <p style="font-size:0.8rem;color:var(--muted);margin-top:2px;">QR okutulduğunda doğrudan <strong>Masa Menü, Sipariş &amp; Garson Çağır</strong> ekranına gider.</p>
           </div>
           <a href="{{ url_for('tenant_qr_print', slug=tenant.slug) }}" target="_blank" class="btn btn-ok">🖨️ Yazdırılabilir A4 QR Sayfası</a>
         </div>
@@ -1673,6 +2107,240 @@ TENANT_PANEL_HTML = """
           </div>
           {% endfor %}
         </div>
+      </div>
+      {% else %}
+      <div class="card" style="border-color:rgba(245,158,11,0.45);">
+        <div style="font-size:0.82rem;font-weight:800;color:#fbbf24;">🔒 MASA QR &amp; GARSON ÇAĞIR ÖZELLİĞİ KİLİTLİ</div>
+        <h2 style="font-size:1.18rem;">Starter Pakettesiniz — Masa QR Özelliğini Açın</h2>
+        <p style="font-size:0.86rem;color:#d1d5db;">
+          Starter pakette sadece Masa Randevu aktiftir. Masalara özel QR kod basmak, masadan dijital menü siparişi ve garson/hesap çağrısı almak için
+          tek seferlik/ek <strong>{{ qr_addon_price }}</strong> ödeme yaparak kilidi açabilirsiniz (Pro pakette ücretsiz dahildir).
+        </p>
+
+        {% if tenant.qr_addon_requested %}
+        <div style="padding:12px;border-radius:10px;background:rgba(16,185,129,0.16);color:#a7f3d0;font-size:0.86rem;">
+          ⏳ Ekstra {{ qr_addon_price }} ödeme bildiriminiz alındı ({{ tenant.qr_addon_note or 'Not yok' }}). Süper Admin onayladığında bu ekran otomatik açılacaktır.
+        </div>
+        {% endif %}
+
+        <div class="iban-box">
+          <div style="font-size:0.84rem;"><strong>Alıcı:</strong> {{ iban_holder }} • <strong>Banka:</strong> {{ iban_bank }}</div>
+          <div style="font-size:0.84rem;"><strong>Tutar:</strong> <span style="color:#fcd34d;font-weight:800;">{{ qr_addon_price }}</span> (Açıklamaya <code>{{ tenant.slug }} QR</code> yazın)</div>
+          <div class="iban-code">{{ iban_number }}</div>
+        </div>
+
+        <form method="POST" action="{{ url_for('tenant_request_qr_addon', slug=tenant.slug) }}" style="display:grid;gap:10px;">
+          <input type="text" name="qr_addon_note" value="{{ tenant.qr_addon_note or '' }}" placeholder="Gönderen Adı / Dekont Notu (Örn: Mehmet Yılmaz - 250 TL)" required />
+          <button type="submit" class="btn btn-gold" style="width:100%;padding:12px;">💳 {{ qr_addon_price }} Ödeme Yaptım / Onaya Gönder</button>
+        </form>
+      </div>
+      {% endif %}
+    </section>
+    {% endif %}
+
+    {% if tenant.module_type == 'mobil-saha' %}
+    <!-- MOBİL UYGULAMA & SAHA AKIŞLARI -->
+    <section id="pane-saha" class="tab-pane">
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+          <div>
+            <div style="font-size:0.88rem;font-weight:800;color:var(--bright);">📡 SAHA ELEMANI CANLI TAKİP MERKEZİ</div>
+            <p style="font-size:0.8rem;color:var(--muted);margin-top:2px;">Aşağıdaki linki saha personeline gönderin; personel sahayı aktif ettiğinde şarj, konum, paket ve müşteri bilgisi burada görünür.</p>
+          </div>
+          <a href="{{ url_for('field_agent_terminal', slug=tenant.slug) }}" target="_blank" class="btn btn-ok">📱 Saha Linkini Aç</a>
+        </div>
+
+        <div class="share-box">
+          <span style="word-break:break-all;"><strong>Saha Elemanı Linki:</strong> <code id="sahaLinkText">{{ request.url_root }}i/{{ tenant.slug }}/saha</code></span>
+          <button type="button" class="btn" id="copySahaBtn" onclick="copyText('sahaLinkText', 'copySahaBtn')">Linki Kopyala</button>
+        </div>
+
+        {% if field_agents %}
+        <div class="agents-grid">
+          {% for ag in field_agents %}
+          <div class="agent-card">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <strong style="color:var(--bright);font-size:0.98rem;">{{ ag.agent_name }}</strong>
+              <span style="font-size:0.75rem;padding:3px 8px;border-radius:999px;background:rgba(16,185,129,0.16);color:#6ee7b7;font-weight:700;">{{ ag.status_text }}</span>
+            </div>
+            <div style="font-size:0.83rem;color:#e5e7eb;">
+              🔋 Şarj Durumu: <strong>{% if ag.battery_level >= 0 %}%{{ ag.battery_level }} {{ '(Şarj Oluyor ⚡)' if ag.is_charging else '' }}{% else %}Bilinmiyor{% endif %}</strong>
+            </div>
+            <div style="font-size:0.83rem;color:#e5e7eb;">
+              📦 Üzerindeki Paket: <strong>{{ ag.active_package or 'Belirtilmedi' }}</strong>
+            </div>
+            <div style="font-size:0.83rem;color:#e5e7eb;">
+              👤 Gittiği Müşteri: <strong>{{ ag.target_customer or 'Belirtilmedi' }}</strong>
+            </div>
+            <div style="font-size:0.78rem;color:var(--muted);">
+              🕒 Son Sinyal: {{ ag.updated_str }}
+            </div>
+            {% if ag.latitude and ag.longitude %}
+            <a href="https://maps.google.com/?q={{ ag.latitude }},{{ ag.longitude }}" target="_blank" rel="noopener noreferrer" class="btn btn-ok" style="width:100%;font-size:0.8rem;">
+              📍 Haritada Konumu Gör ({{ ag.latitude }}, {{ ag.longitude }})
+            </a>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div style="padding:14px;border-radius:12px;background:var(--soft);color:var(--muted);font-size:0.85rem;">
+          Henüz sahayı aktif eden personel yok. Saha elemanınız <code>/i/{{ tenant.slug }}/saha</code> linkine girip "Sahayı Aktif Et" butonuna bastığında burada canlı görünecektir.
+        </div>
+        {% endif %}
+      </div>
+    </section>
+    {% endif %}
+
+    {% if tenant.module_type == 'web-otomasyon' %}
+    <!-- WEB PANELLERİ, FORMLAR & BOTLAR -->
+    <section id="pane-bots" class="tab-pane">
+      <form class="card" method="POST" action="{{ url_for('tenant_save_bot_config', slug=tenant.slug) }}">
+        <div style="font-size:0.88rem;font-weight:800;color:var(--bright);">🤖 WHATSAPP API, TELEGRAM BOT &amp; OTOMATİK VERİ ÇEKME ENTEGRASYONLARI</div>
+        <p style="font-size:0.8rem;color:var(--muted);">Yeni müşteri talebi düştüğünde veya zamanlanmış rapor saatinde bağlı botlarınız otomatik çalışır.</p>
+
+        <div class="row-flex">
+          <div style="flex:1;min-width:220px;">
+            <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">WhatsApp Business / Cloud API Endpoint URL</label>
+            <input type="text" name="wa_api_url" value="{{ bot_cfg.wa_api_url }}" placeholder="https://graph.facebook.com/v20.0/PHONE_ID/messages" style="width:100%;" />
+          </div>
+          <div style="flex:1;min-width:220px;">
+            <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">WhatsApp API Bearer Token</label>
+            <input type="text" name="wa_api_token" value="{{ bot_cfg.wa_api_token }}" placeholder="EAAG..." style="width:100%;" />
+          </div>
+        </div>
+
+        <div class="row-flex">
+          <div style="flex:1;min-width:220px;">
+            <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Telegram Bot Token</label>
+            <input type="text" name="tg_bot_token" value="{{ bot_cfg.tg_bot_token }}" placeholder="123456789:AAH..." style="width:100%;" />
+          </div>
+          <div style="flex:1;min-width:180px;">
+            <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Telegram Bildirim Chat ID</label>
+            <input type="text" name="tg_chat_id" value="{{ bot_cfg.tg_chat_id }}" placeholder="-1001234567890" style="width:100%;" />
+          </div>
+        </div>
+
+        <div class="row-flex">
+          <div style="flex:1;min-width:220px;">
+            <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Otomatik Veri Çekme Kaynak URL (API / RSS / JSON)</label>
+            <input type="text" name="scraper_url" value="{{ bot_cfg.scraper_url }}" placeholder="https://api.ornek.com/veriler" style="width:100%;" />
+          </div>
+          <div style="flex:1;min-width:220px;">
+            <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Harici Servis Webhook URL (n8n / Zapier / Make)</label>
+            <input type="text" name="webhook_url" value="{{ bot_cfg.webhook_url }}" placeholder="https://hooks.zapier.com/..." style="width:100%;" />
+          </div>
+          <div style="width:140px;">
+            <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Günlük Rapor Saati</label>
+            <input type="time" name="report_hour" value="{{ bot_cfg.report_hour or '21:00' }}" style="width:100%;" />
+          </div>
+        </div>
+
+        <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:0.84rem;">
+          <label style="display:flex;align-items:center;gap:7px;cursor:pointer;">
+            <input type="checkbox" name="wa_auto_reply" value="1" {% if bot_cfg.wa_auto_reply %}checked{% endif %} />
+            <span>WhatsApp Otomatik Karşılama Mesajı Aktif</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:7px;cursor:pointer;">
+            <input type="checkbox" name="tg_notify_enabled" value="1" {% if bot_cfg.tg_notify_enabled %}checked{% endif %} />
+            <span>Telegram Anlık Bildirim Botu Aktif</span>
+          </label>
+        </div>
+
+        <button type="submit" class="btn btn-ok">Entegrasyon Ayarlarını Kaydet</button>
+      </form>
+
+      <div class="card">
+        <div style="font-size:0.86rem;font-weight:800;color:var(--bright);">⚡ BOT &amp; VERİ ÇEKME ÇALIŞTIRMA</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <form method="POST" action="{{ url_for('tenant_run_bot_action', slug=tenant.slug) }}">
+            <input type="hidden" name="bot_action" value="pull_data" />
+            <button type="submit" class="btn">🔄 Otomatik Veri Çek &amp; Raporla</button>
+          </form>
+          <form method="POST" action="{{ url_for('tenant_run_bot_action', slug=tenant.slug) }}">
+            <input type="hidden" name="bot_action" value="test_notify" />
+            <button type="submit" class="btn btn-wa">📨 Test Bildirimi Gönder (Telegram / Webhook)</button>
+          </form>
+        </div>
+        {% if bot_cfg.last_sync_note %}
+        <div class="msg" style="color:#a7f3d0;">Son İşlem Logu: {{ bot_cfg.last_sync_note }}</div>
+        {% endif %}
+      </div>
+    </section>
+    {% endif %}
+
+    {% if tenant.module_type == 'masaustu-otomasyon' %}
+    <!-- MASAÜSTÜ KASA, BARKOD & STOK OTOMASYONU -->
+    <section id="pane-pos" class="tab-pane">
+      <div class="stats">
+        <div class="stat"><span>Kayıtlı Ürün</span><strong>{{ pos_products|length }}</strong></div>
+        <div class="stat"><span>Bugün Satılan Adet</span><strong style="color:var(--amber);">{{ pos_total_sold }}</strong></div>
+        <div class="stat"><span>Günlük Kasa Ciro</span><strong>{{ "%.0f"|format(pos_total_revenue) }} TL</strong></div>
+      </div>
+
+      <div class="card">
+        <div style="font-size:0.88rem;font-weight:800;color:var(--bright);">🔫 HIZLI BARKOD OKUT &amp; SATIŞ DÜŞ</div>
+        <form method="POST" action="{{ url_for('tenant_pos_scan', slug=tenant.slug) }}" class="row-flex">
+          <div style="flex:1;min-width:200px;">
+            <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Barkod Numarası (USB Okuyucu ile Okutun)</label>
+            <input type="text" name="barcode" placeholder="869000000001" autofocus required style="width:100%;" />
+          </div>
+          <div style="width:110px;">
+            <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Adet</label>
+            <input type="number" name="qty" value="1" min="1" max="500" style="width:100%;" />
+          </div>
+          <button type="submit" class="btn btn-ok">Satış Yap &amp; Stoktan Düş</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <div style="font-size:0.88rem;font-weight:800;color:var(--bright);">📦 STOĞA YENİ BARKODLU ÜRÜN EKLE</div>
+        <form method="POST" action="{{ url_for('tenant_pos_add_product', slug=tenant.slug) }}" class="row-flex">
+          <div style="min-width:150px;">
+            <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Barkod</label>
+            <input type="text" name="barcode" placeholder="869..." required style="width:100%;" />
+          </div>
+          <div style="flex:1;min-width:170px;">
+            <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Ürün Adı</label>
+            <input type="text" name="name" placeholder="Örn: Su 0.5L" required style="width:100%;" />
+          </div>
+          <div style="width:110px;">
+            <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Fiyat (TL)</label>
+            <input type="number" step="0.01" name="price" placeholder="15" required style="width:100%;" />
+          </div>
+          <div style="width:110px;">
+            <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Stok Adedi</label>
+            <input type="number" name="stock" value="50" min="0" required style="width:100%;" />
+          </div>
+          <button type="submit" class="btn btn-ok">+ Ürünü Kaydet</button>
+        </form>
+
+        {% if pos_products %}
+        <div style="overflow-x:auto;">
+          <table class="pos-table">
+            <thead>
+              <tr>
+                <th>Barkod</th>
+                <th>Ürün</th>
+                <th>Fiyat</th>
+                <th>Kalan Stok</th>
+                <th>Bugün Satılan</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for p in pos_products %}
+              <tr>
+                <td><code>{{ p.barcode }}</code></td>
+                <td><strong>{{ p.name }}</strong></td>
+                <td style="color:var(--bright);">{{ "%.2f"|format(p.price_num) }} TL</td>
+                <td style="color:{{ '#fca5a5' if p.stock <= 5 else '#f8fafc' }};">{{ p.stock }} adet</td>
+                <td>{{ p.sold_today }} adet</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% endif %}
       </div>
     </section>
     {% endif %}
@@ -1693,7 +2361,7 @@ TENANT_PANEL_HTML = """
             <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">WhatsApp Numarası</label>
             <input type="text" name="whatsapp_number" value="{{ tenant.whatsapp_number or '' }}" placeholder="05xx xxx xx xx" style="width:100%;" />
           </div>
-          {% if has_qr_menu %}
+          {% if show_menu_tab %}
           <div style="width:130px;">
             <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Masa Sayısı</label>
             <input type="number" name="table_count" min="1" max="200" value="{{ tenant.table_count or 8 }}" style="width:100%;" required />
@@ -1711,14 +2379,32 @@ TENANT_PANEL_HTML = """
       <span style="font-size:1.15rem;">📋</span>
       <span>{{ 'Siparişler' if tenant.module_type == 'masa-qr' else 'Talepler' }}</span>
     </button>
-    {% if has_qr_menu %}
+    {% if show_menu_tab %}
     <button type="button" class="bnav-btn" onclick="openPane('pane-menu', this)">
       <span style="font-size:1.15rem;">🍽️</span>
       <span>Menü</span>
     </button>
-    <button type="button" class="bnav-btn" onclick="openPane('pane-qr', this)">
-      <span style="font-size:1.15rem;">📱</span>
-      <span>QR Kodlar</span>
+    <button type="button" class="bnav-btn {{ '' if qr_unlocked else 'locked' }}" onclick="openPane('pane-qr', this)">
+      <span style="font-size:1.15rem;">{{ '📱' if qr_unlocked else '🔒' }}</span>
+      <span>{{ 'QR Kodlar' if qr_unlocked else 'QR (+250 TL)' }}</span>
+    </button>
+    {% endif %}
+    {% if tenant.module_type == 'mobil-saha' %}
+    <button type="button" class="bnav-btn" onclick="openPane('pane-saha', this)">
+      <span style="font-size:1.15rem;">📡</span>
+      <span>Saha Takip</span>
+    </button>
+    {% endif %}
+    {% if tenant.module_type == 'web-otomasyon' %}
+    <button type="button" class="bnav-btn" onclick="openPane('pane-bots', this)">
+      <span style="font-size:1.15rem;">🤖</span>
+      <span>Bot &amp; API</span>
+    </button>
+    {% endif %}
+    {% if tenant.module_type == 'masaustu-otomasyon' %}
+    <button type="button" class="bnav-btn" onclick="openPane('pane-pos', this)">
+      <span style="font-size:1.15rem;">🔫</span>
+      <span>Kasa &amp; Barkod</span>
     </button>
     {% endif %}
     <button type="button" class="bnav-btn" onclick="openPane('pane-settings', this)">
@@ -1741,12 +2427,13 @@ TENANT_PANEL_HTML = """
         c.style.display = (status === 'ALL' || c.dataset.status === status) ? 'grid' : 'none';
       });
     }
-    function copyCustLink() {
-      const txt = document.getElementById("custLinkText").textContent.trim();
+    function copyText(elId, btnId) {
+      const txt = document.getElementById(elId).textContent.trim();
       navigator.clipboard?.writeText(txt);
-      const b = document.getElementById("copyBtn");
+      const b = document.getElementById(btnId);
+      const old = b.textContent;
       b.textContent = "Kopyalandı ✓";
-      setTimeout(() => b.textContent = "Kopyala", 1800);
+      setTimeout(() => b.textContent = old, 1800);
     }
   </script>
 </body>
@@ -1866,7 +2553,7 @@ SUPERADMIN_LOGIN_HTML = """
     <div style="text-align:center;">
       <div class="badge-icon">K</div>
       <h1 style="font-size:1.22rem;margin-top:6px;">KOLAY Süper Admin</h1>
-      <p style="font-size:0.82rem;color:#9ca3af;margin-top:3px;">IBAN Onay, Süre Takibi &amp; İşletme Kontrolü</p>
+      <p style="font-size:0.82rem;color:#9ca3af;margin-top:3px;">IBAN Onay, QR Eklenti Kilidi &amp; İşletme Kontrolü</p>
     </div>
     {% if error %}<div class="err">{{ error }}</div>{% endif %}
     <div><label>Kullanıcı Adı</label><input type="text" name="username" autocomplete="username" required /></div>
@@ -1934,6 +2621,7 @@ SUPERADMIN_HTML = """
 
     .btn { text-decoration:none; padding:9px 12px; border-radius:10px; font-weight:700; font-size:0.82rem; border:1px solid var(--border); background:var(--soft); color:var(--bright); cursor:pointer; display:inline-flex; align-items:center; justify-content:center; gap:5px; }
     .btn-approve { background:linear-gradient(135deg,#34d399,#10b981); color:#04130d; border:none; font-weight:800; }
+    .btn-gold { background:linear-gradient(135deg,#fbbf24,#f59e0b); color:#1f1300; border:none; font-weight:800; }
     .btn-extend { background:rgba(59,130,246,0.18); border-color:rgba(59,130,246,0.42); color:#93c5fd; }
     .btn-edit { background:rgba(245,158,11,0.14); border-color:rgba(245,158,11,0.38); color:#fcd34d; }
     .btn-suspend { background:rgba(239,68,68,0.14); border-color:rgba(239,68,68,0.38); color:#fca5a5; }
@@ -1972,7 +2660,7 @@ SUPERADMIN_HTML = """
   {% set active_count = tenants|selectattr('is_active')|list|length %}
   {% set pending_count = (tenants|length) - active_count %}
   {% set expired_count = tenants|selectattr('is_expired')|list|length %}
-  {% set notify_count = tenants|rejectattr('is_active')|selectattr('payment_requested')|list|length %}
+  {% set notify_count = tenants|selectattr('payment_requested')|list|length + tenants|selectattr('qr_addon_requested')|list|length %}
 
   <header class="topbar">
     <div class="topbar-left">
@@ -2007,7 +2695,7 @@ SUPERADMIN_HTML = """
 
     <div class="filter-row">
       <button type="button" class="f-pill active" onclick="setTenantFilter('all', this)">Tümü ({{ tenants|length }})</button>
-      <button type="button" class="f-pill" onclick="setTenantFilter('notify', this)">Ödeme Bildirimi ({{ notify_count }})</button>
+      <button type="button" class="f-pill" onclick="setTenantFilter('notify', this)">Ödeme / QR Bildirimi ({{ notify_count }})</button>
       <button type="button" class="f-pill" onclick="setTenantFilter('pending', this)">Onay Bekleyen ({{ pending_count }})</button>
       <button type="button" class="f-pill" onclick="setTenantFilter('expired', this)">Süresi Dolan ({{ expired_count }})</button>
       <button type="button" class="f-pill" onclick="setTenantFilter('active', this)">Aktifler ({{ active_count }})</button>
@@ -2016,7 +2704,7 @@ SUPERADMIN_HTML = """
     {% for tn in tenants %}
     <div class="card tenant-item {% if tn.is_expired %}expired{% elif not tn.is_active %}pending{% endif %}"
          data-search="{{ (tn.business_name ~ ' ' ~ tn.slug ~ ' ' ~ tn.owner_email)|lower }}"
-         data-state="{{ 'expired' if tn.is_expired else ('active' if tn.is_active else ('notify' if tn.payment_requested else 'pending')) }}"
+         data-state="{{ 'notify' if (tn.payment_requested or tn.qr_addon_requested) else ('expired' if tn.is_expired else ('active' if tn.is_active else 'pending')) }}"
          data-pending="{{ '0' if tn.is_active else '1' }}">
       <div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
@@ -2030,14 +2718,27 @@ SUPERADMIN_HTML = """
             <span class="badge-off">ONAY BEKLİYOR</span>
           {% endif %}
           {% if tn.payment_requested and not tn.is_active %}
-            <span class="badge-notify">ÖDEME BİLDİRİMİ VAR</span>
+            <span class="badge-notify">ÜYELİK ÖDEME BİLDİRİMİ</span>
+          {% endif %}
+          {% if tn.qr_addon_requested %}
+            <span class="badge-notify">+250 TL QR EKLENTİ BİLDİRİMİ</span>
+          {% endif %}
+          {% if tn.module_type == 'kafe-randevu' %}
+            <span class="{{ 'badge-on' if (tn.plan == 'pro' or tn.qr_addon_active) else 'badge-off' }}">
+              QR: {{ 'AÇIK' if (tn.plan == 'pro' or tn.qr_addon_active) else 'KİLİTLİ' }}
+            </span>
           {% endif %}
         </div>
         <div style="font-size:0.82rem;color:var(--muted);margin-top:6px;line-height:1.5;">
           {{ tn.owner_email }} • Paket: <strong style="color:var(--text);">{{ tn.plan|upper }}</strong> • Modül: <code>{{ tn.module_type }}</code> • Masa: {{ tn.table_count or '-' }} • Talep: {{ tn.ticket_count }} • Bitiş: <strong>{{ tn.expires_str }}</strong>
           {% if tn.payment_note %}
           <div style="margin-top:5px;padding:7px 10px;border-radius:8px;background:rgba(245,158,11,0.1);color:#fcd34d;">
-            Dekont Notu: <strong>{{ tn.payment_note }}</strong>
+            Üyelik Dekont Notu: <strong>{{ tn.payment_note }}</strong>
+          </div>
+          {% endif %}
+          {% if tn.qr_addon_note %}
+          <div style="margin-top:5px;padding:7px 10px;border-radius:8px;background:rgba(59,130,246,0.12);color:#93c5fd;">
+            QR Eklenti (+250 TL) Dekont Notu: <strong>{{ tn.qr_addon_note }}</strong>
           </div>
           {% endif %}
         </div>
@@ -2057,6 +2758,12 @@ SUPERADMIN_HTML = """
         </form>
         <form method="POST" action="{{ url_for('superadmin_suspend_tenant', tenant_id=tn.id) }}">
           <button type="submit" class="btn btn-suspend">Askıya Al</button>
+        </form>
+        {% endif %}
+
+        {% if tn.module_type == 'kafe-randevu' and tn.plan == 'starter' and not tn.qr_addon_active %}
+        <form method="POST" action="{{ url_for('superadmin_unlock_qr_addon', tenant_id=tn.id) }}">
+          <button type="submit" class="btn btn-gold">🔓 +250 TL QR Kilidini Aç</button>
         </form>
         {% endif %}
 
@@ -2106,9 +2813,12 @@ SUPERADMIN_HTML = """
       <div>
         <label>Modül Türü</label>
         <select name="module_type" id="etModule">
-          <option value="masa-qr">Masa QR Menü, Sipariş &amp; Garson Çağır</option>
           <option value="kafe-randevu">Kafe &amp; Restoran Masa Randevu + Masa QR</option>
+          <option value="masa-qr">Masa QR Menü, Sipariş &amp; Garson Çağır</option>
           <option value="berber-randevu">Berber &amp; Kuaför Saat Randevu</option>
+          <option value="mobil-saha">Mobil Uygulama &amp; Saha Akışları</option>
+          <option value="web-otomasyon">Web Panelleri, Formlar &amp; Botlar</option>
+          <option value="masaustu-otomasyon">Masaüstü Kasa, Barkod &amp; Stok Otomasyonu</option>
           <option value="genel">Genel Talep Formu</option>
         </select>
       </div>
@@ -2251,6 +2961,7 @@ def index():
         iban_number=IBAN_NUMBER,
         price_starter=PLAN_PRICE_STARTER,
         price_pro=PLAN_PRICE_PRO,
+        qr_addon_price=QR_ADDON_PRICE,
         created_tenant=created_tenant,
         saas_error=saas_error,
     )
@@ -2264,7 +2975,7 @@ def register_tenant():
     whatsapp_number = request.form.get("whatsapp_number", "").strip()
     password = request.form.get("password", "").strip()
     plan = request.form.get("plan", "starter").strip()
-    module_type = request.form.get("module_type", "masa-qr").strip()
+    module_type = request.form.get("module_type", "kafe-randevu").strip()
 
     if not business_name or not owner_email or len(password) < 4:
         return redirect(url_for("index", err="İşletme adı, e-posta ve en az 4 karakter şifre zorunlu.") + "#saas-basla")
@@ -2315,9 +3026,76 @@ def notify_iban_payment(slug):
     return redirect(url_for("tenant_public", slug=slug, notified="1"))
 
 
+@app.route("/i/<slug>/saha", methods=["GET"])
+def field_agent_terminal(slug):
+    tenant = get_tenant_by_slug(slug)
+    if not tenant:
+        abort(404)
+    if not tenant["is_active"]:
+        return redirect(url_for("tenant_public", slug=slug))
+    return render_template_string(FIELD_AGENT_HTML, tenant=tenant)
+
+
+@app.route("/i/<slug>/saha/ping", methods=["POST"])
+def field_agent_ping(slug):
+    tenant = get_tenant_by_slug(slug)
+    if not tenant or not tenant["is_active"]:
+        return jsonify({"ok": False}), 404
+    data = request.get_json(silent=True) or {}
+    agent_name = str(data.get("agent_name") or "").strip()[:80]
+    if not agent_name:
+        return jsonify({"ok": False, "err": "agent_name required"}), 400
+
+    active_package = str(data.get("active_package") or "").strip()[:140]
+    target_customer = str(data.get("target_customer") or "").strip()[:160]
+    status_text = str(data.get("status_text") or "Sahada Aktif").strip()[:80]
+    try:
+        battery_level = int(data.get("battery_level", -1))
+    except Exception:
+        battery_level = -1
+    is_charging = bool(data.get("is_charging", False))
+    lat = str(data.get("latitude") or "").strip()[:32]
+    lng = str(data.get("longitude") or "").strip()[:32]
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM field_agents WHERE tenant_id = %s AND LOWER(agent_name) = LOWER(%s)",
+                (tenant["id"], agent_name),
+            )
+            existing = cur.fetchone()
+            if existing:
+                cur.execute(
+                    """
+                    UPDATE field_agents
+                    SET active_package = %s,
+                        target_customer = %s,
+                        battery_level = %s,
+                        is_charging = %s,
+                        latitude = %s,
+                        longitude = %s,
+                        status_text = %s,
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (active_package, target_customer, battery_level, is_charging, lat, lng, status_text, existing["id"]),
+                )
+            else:
+                cur.execute(
+                    """
+                    INSERT INTO field_agents (
+                        tenant_id, agent_name, active_package, target_customer,
+                        battery_level, is_charging, latitude, longitude, status_text, updated_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                    """,
+                    (tenant["id"], agent_name, active_package, target_customer, battery_level, is_charging, lat, lng, status_text),
+                )
+    return jsonify({"ok": True})
+
+
 @app.route("/i/<slug>/qr", methods=["GET", "POST"])
 def tenant_qr_order_page(slug):
-    """QR kod okutuldugunda acilan ozel Masa Menu, Siparis, Garson & Hesap sayfasi."""
     tenant = get_tenant_by_slug(slug)
     if not tenant:
         abort(404)
@@ -2339,6 +3117,9 @@ def tenant_qr_order_page(slug):
             price_pro=PLAN_PRICE_PRO,
             wa_number=WHATSAPP_NUMBER,
         )
+
+    if not tenant_has_qr_access(tenant):
+        abort(403)
 
     preselected_masa = request.args.get("masa", "").strip()
     menu_items = get_menu_items(tenant["id"])
@@ -2412,7 +3193,6 @@ def tenant_public(slug):
             wa_number=WHATSAPP_NUMBER,
         )
 
-    # Eger isletme dogrudan masa-qr modulu ise /i/<slug> da direkt QR ekranina yonlenir
     if mod_type == "masa-qr":
         masa_param = request.args.get("masa", "").strip()
         return redirect(url_for("tenant_qr_order_page", slug=slug, masa=masa_param) if masa_param else url_for("tenant_qr_order_page", slug=slug))
@@ -2430,6 +3210,12 @@ def tenant_public(slug):
             "free_tables": free_tables,
             "available_count": len(free_tables),
         })
+
+    barber_slots = []
+    if mod_type == "berber-randevu":
+        taken_barber = get_booked_barber_slots(tenant["id"], selected_date)
+        for sl in TIME_SLOTS:
+            barber_slots.append({"time": sl, "is_free": sl not in taken_barber})
 
     if request.method == "POST":
         name = request.form.get("name", "").strip()
@@ -2458,10 +3244,8 @@ def tenant_public(slug):
                 parts.append(f"Not: {raw_message}")
             message = " | ".join(parts)
         elif mod_type == "berber-randevu":
-            service = raw_service or "Salon Randevu"
-            parts = []
-            if slot_time:
-                parts.append(f"Saat: {slot_time}")
+            service = f"{raw_service or 'Salon Randevu'} ({res_date} {slot_time})"
+            parts = [f"Tarih: {res_date}", f"Saat: {slot_time}"]
             if raw_message:
                 parts.append(f"Not: {raw_message}")
             message = " | ".join(parts)
@@ -2481,6 +3265,7 @@ def tenant_public(slug):
         mod_label=mod_label,
         selected_date=selected_date,
         slot_options=slot_options,
+        barber_slots=barber_slots,
         menu_items=menu_items,
         sent=sent,
     )
@@ -2516,7 +3301,6 @@ def tenant_logout(slug):
 
 def build_tenant_qr_list(tenant):
     table_cap = max(1, int(tenant.get("table_count") or 8))
-    # QR kodlar artik dogrudan /i/<slug>/qr rotasina gider (randevu sayfasina gitmez)
     base_qr_url = url_for("tenant_qr_order_page", slug=tenant["slug"], _external=True)
     qr_list = []
     for idx in range(1, table_cap + 1):
@@ -2554,22 +3338,45 @@ def tenant_panel(slug):
             wa_number=WHATSAPP_NUMBER,
         )
 
-    has_qr_menu = mod_type in {"kafe-randevu", "masa-qr"}
+    show_menu_tab = mod_type in {"kafe-randevu", "masa-qr"}
+    qr_unlocked = tenant_has_qr_access(tenant)
     tickets = load_tickets(tenant["id"])
-    menu_items = get_menu_items(tenant["id"]) if has_qr_menu else []
-    qr_list = build_tenant_qr_list(tenant) if has_qr_menu else []
+    menu_items = get_menu_items(tenant["id"]) if show_menu_tab else []
+    qr_list = build_tenant_qr_list(tenant) if (show_menu_tab and qr_unlocked) else []
+    field_agents = get_field_agents(tenant["id"]) if mod_type == "mobil-saha" else []
+    bot_cfg = get_bot_config(tenant) if mod_type == "web-otomasyon" else {}
+    pos_products = get_pos_products(tenant["id"]) if mod_type == "masaustu-otomasyon" else []
+    pos_total_sold = sum(int(p.get("sold_today") or 0) for p in pos_products)
+    pos_total_revenue = sum(float(p.get("price_num") or 0) * int(p.get("sold_today") or 0) for p in pos_products)
+
     yeni_count = sum(1 for t in tickets if (t.get("status") or "Yeni") == "Yeni")
     tamam_count = sum(1 for t in tickets if t.get("status") == "Tamamlandı")
 
-    nav_count = 4 if has_qr_menu else 2
+    nav_count = 2
+    if show_menu_tab:
+        nav_count = 4
+    elif mod_type in {"mobil-saha", "web-otomasyon", "masaustu-otomasyon"}:
+        nav_count = 3
 
     return render_template_string(
         TENANT_PANEL_HTML,
         tenant=tenant,
         mod_label=mod_label,
-        has_qr_menu=has_qr_menu,
+        show_menu_tab=show_menu_tab,
+        qr_unlocked=qr_unlocked,
+        qr_addon_price=QR_ADDON_PRICE,
+        iban_holder=IBAN_HOLDER,
+        iban_bank=IBAN_BANK,
+        iban_number=IBAN_NUMBER,
+        addon_notified=(request.args.get("addon_notified") == "1"),
+        bot_saved=request.args.get("bot_saved", ""),
         menu_items=menu_items,
         qr_list=qr_list,
+        field_agents=field_agents,
+        bot_cfg=bot_cfg,
+        pos_products=pos_products,
+        pos_total_sold=pos_total_sold,
+        pos_total_revenue=pos_total_revenue,
         nav_count=nav_count,
         tickets=tickets,
         yeni_count=yeni_count,
@@ -2577,10 +3384,139 @@ def tenant_panel(slug):
     )
 
 
+@app.route("/i/<slug>/panel/qr-addon-request", methods=["POST"])
+@tenant_login_required
+def tenant_request_qr_addon(slug):
+    tenant = get_tenant_by_slug(slug)
+    note = request.form.get("qr_addon_note", "").strip()[:240]
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE tenants SET qr_addon_requested = TRUE, qr_addon_note = %s WHERE id = %s",
+                (note, tenant["id"]),
+            )
+    return redirect(url_for("tenant_panel", slug=slug, addon_notified="1"))
+
+
+@app.route("/i/<slug>/panel/bot-config", methods=["POST"])
+@tenant_login_required
+def tenant_save_bot_config(slug):
+    tenant = get_tenant_by_slug(slug)
+    old_cfg = get_bot_config(tenant)
+    cfg = {
+        "wa_api_url": request.form.get("wa_api_url", "").strip(),
+        "wa_api_token": request.form.get("wa_api_token", "").strip(),
+        "wa_auto_reply": bool(request.form.get("wa_auto_reply")),
+        "tg_bot_token": request.form.get("tg_bot_token", "").strip(),
+        "tg_chat_id": request.form.get("tg_chat_id", "").strip(),
+        "tg_notify_enabled": bool(request.form.get("tg_notify_enabled")),
+        "scraper_url": request.form.get("scraper_url", "").strip(),
+        "webhook_url": request.form.get("webhook_url", "").strip(),
+        "report_hour": request.form.get("report_hour", "21:00").strip(),
+        "last_sync_note": old_cfg.get("last_sync_note", ""),
+    }
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE tenants SET bot_config_json = %s WHERE id = %s",
+                (json.dumps(cfg, ensure_ascii=False), tenant["id"]),
+            )
+    return redirect(url_for("tenant_panel", slug=slug, bot_saved="Bot ve API entegrasyon ayarları kaydedildi."))
+
+
+@app.route("/i/<slug>/panel/bot-action", methods=["POST"])
+@tenant_login_required
+def tenant_run_bot_action(slug):
+    tenant = get_tenant_by_slug(slug)
+    cfg = get_bot_config(tenant)
+    action = request.form.get("bot_action", "").strip()
+    now_str = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+    if action == "pull_data":
+        src = cfg.get("scraper_url") or "Dahili Talep Veritabanı"
+        cfg["last_sync_note"] = f"[{now_str}] Otomatik veri çekme ve raporlama tamamlandı (Kaynak: {src})."
+        msg = "Otomatik veri çekme ve günlük özet raporu çalıştırıldı."
+    else:
+        trigger_tenant_integrations(tenant, "Test Bildirimi", f"Sistem bağlantı testi başarılı ({now_str}).")
+        cfg["last_sync_note"] = f"[{now_str}] Telegram / Webhook test bildirimi tetiklendi."
+        msg = "Test bildirimi bağlı botlara gönderildi."
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE tenants SET bot_config_json = %s WHERE id = %s",
+                (json.dumps(cfg, ensure_ascii=False), tenant["id"]),
+            )
+    return redirect(url_for("tenant_panel", slug=slug, bot_saved=msg))
+
+
+@app.route("/i/<slug>/panel/pos/add", methods=["POST"])
+@tenant_login_required
+def tenant_pos_add_product(slug):
+    tenant = get_tenant_by_slug(slug)
+    barcode = request.form.get("barcode", "").strip()
+    name = request.form.get("name", "").strip()
+    try:
+        price = float(request.form.get("price", 0))
+    except ValueError:
+        price = 0.0
+    try:
+        stock = max(0, int(request.form.get("stock", 0)))
+    except ValueError:
+        stock = 0
+
+    if barcode and name:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO pos_products (tenant_id, barcode, name, price, stock)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (tenant_id, barcode)
+                    DO UPDATE SET name = EXCLUDED.name, price = EXCLUDED.price, stock = EXCLUDED.stock
+                    """,
+                    (tenant["id"], barcode, name, price, stock),
+                )
+    return redirect(url_for("tenant_panel", slug=slug, bot_saved=f"Ürün kaydedildi: {name} ({barcode})"))
+
+
+@app.route("/i/<slug>/panel/pos/scan", methods=["POST"])
+@tenant_login_required
+def tenant_pos_scan(slug):
+    tenant = get_tenant_by_slug(slug)
+    barcode = request.form.get("barcode", "").strip()
+    try:
+        qty = max(1, int(request.form.get("qty", 1)))
+    except ValueError:
+        qty = 1
+
+    msg = "Barkod bulunamadı."
+    if barcode:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT * FROM pos_products WHERE tenant_id = %s AND barcode = %s",
+                    (tenant["id"], barcode),
+                )
+                prod = cur.fetchone()
+                if prod:
+                    new_stock = max(0, int(prod["stock"]) - qty)
+                    new_sold = int(prod["sold_today"]) + qty
+                    cur.execute(
+                        "UPDATE pos_products SET stock = %s, sold_today = %s WHERE id = %s",
+                        (new_stock, new_sold, prod["id"]),
+                    )
+                    msg = f"Satış işlendi: {qty}x {prod['name']} (Kalan stok: {new_stock})"
+                else:
+                    msg = f"'{barcode}' barkodlu ürün bulunamadı, önce aşağıdan tanımlayın."
+    return redirect(url_for("tenant_panel", slug=slug, bot_saved=msg))
+
+
 @app.route("/i/<slug>/panel/qr-print")
 @tenant_login_required
 def tenant_qr_print(slug):
     tenant = get_tenant_by_slug(slug)
+    if not tenant_has_qr_access(tenant):
+        abort(403)
     qr_list = build_tenant_qr_list(tenant)
     return render_template_string(QR_PRINT_HTML, tenant=tenant, qr_list=qr_list)
 
@@ -2752,6 +3688,23 @@ def superadmin_approve_tenant(tenant_id):
     return redirect(url_for("superadmin_panel"))
 
 
+@app.route("/admin/tenant/<int:tenant_id>/unlock-qr", methods=["POST"])
+@superadmin_required
+def superadmin_unlock_qr_addon(tenant_id):
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE tenants
+                SET qr_addon_active = TRUE,
+                    qr_addon_requested = FALSE
+                WHERE id = %s
+                """,
+                (tenant_id,),
+            )
+    return redirect(url_for("superadmin_panel"))
+
+
 @app.route("/admin/tenant/<int:tenant_id>/extend", methods=["POST"])
 @superadmin_required
 def superadmin_extend_tenant(tenant_id):
@@ -2793,7 +3746,11 @@ def superadmin_edit_tenant(tenant_id):
 
     if plan not in {"starter", "pro"}:
         plan = "starter"
-    if module_type not in {"genel", "kafe-randevu", "berber-randevu", "masa-qr"}:
+    valid_modules = {
+        "genel", "kafe-randevu", "berber-randevu", "masa-qr",
+        "mobil-saha", "web-otomasyon", "masaustu-otomasyon"
+    }
+    if module_type not in valid_modules:
         module_type = "genel"
 
     if business_name and owner_email:
