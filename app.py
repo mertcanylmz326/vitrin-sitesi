@@ -110,11 +110,11 @@ SERVICES_DATA = [
         "title": "Masa Randevu & Masa QR Sistemi",
         "image": "kaferesrandevu.jpg",
         "short": "Tarih/saat/masa bazlı rezervasyon ve her masaya özel QR kod etiketiyle hızlı masa yönetimi.",
-        "details": "Kafe ve restoranlarda hem önceden masa randevusu almanı hem de her masaya özel QR kod etiketi basıp menü/sipariş yönetmeni sağlayan sistem.",
+        "details": "Kafe ve restoranlarda hem önceden masa randevusu almanı hem de her masaya özel QR kod etiketi basıp ayrı menü/sipariş ekranı sunmanı sağlayan sistem.",
         "features": [
             "Tarih, saat, boş masa ve kişi sayısına göre rezervasyon",
-            "Her masa için otomatik QR kod üretimi ve A4 yazdırma",
-            "Fotoğraflı dijital menü ve ön sipariş seçimi",
+            "Her masa için ayrı QR sipariş ve garson çağırma ekranı",
+            "Fotoğraflı dijital menü ve sepetli sipariş gönderimi",
             "İşletme panelinden tek tıkla onay ve WhatsApp dönüşü"
         ]
     },
@@ -1018,58 +1018,48 @@ TENANT_PENDING_HTML = """
 </html>
 """
 
-TENANT_PUBLIC_HTML = """
+# ÖZEL MASA QR EKRANI (RANDEVU SAYFASINDAN TAMAMEN AYRI)
+TENANT_QR_ORDER_HTML = """
 <!DOCTYPE html>
 <html lang="tr">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>{{ tenant.business_name }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>{{ tenant.business_name }} — Masa QR Menü &amp; Sipariş</title>
   <style>
     * { box-sizing:border-box; margin:0; padding:0; }
-    body { background:#080d0b; color:#f8fafc; font-family:Inter,system-ui,sans-serif; padding:18px 14px {{ '100px' if tenant.module_type == 'masa-qr' else '48px' }}; overflow-x:hidden; }
-    .wrap { max-width:940px; margin:0 auto; display:grid; gap:15px; }
+    body { background:#080d0b; color:#f8fafc; font-family:Inter,system-ui,sans-serif; padding:18px 14px 104px; overflow-x:hidden; }
+    .wrap { max-width:920px; margin:0 auto; display:grid; gap:15px; }
     .top { display:flex; justify-content:space-between; align-items:center; gap:12px; border-bottom:1px solid rgba(16,185,129,0.22); padding-bottom:14px; }
     .brand-row { display:flex; align-items:center; gap:12px; min-width:0; }
     .biz-logo { width:48px; height:48px; border-radius:12px; object-fit:cover; border:1px solid rgba(16,185,129,0.35); background:#0f1714; flex-shrink:0; display:block; }
     .biz-logo-fallback { width:48px; height:48px; border-radius:12px; display:grid; place-items:center; font-weight:900; font-size:1.1rem; color:#04130d; background:linear-gradient(135deg,#34d399,#10b981); flex-shrink:0; }
-    .btn-main { text-decoration:none; padding:12px 16px; border-radius:11px; font-weight:800; font-size:0.92rem; background:linear-gradient(135deg,#34d399,#10b981); color:#04130d; border:none; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; width:100%; }
-    .card { background:#121d18; border:1px solid rgba(16,185,129,0.22); border-radius:16px; padding:16px; display:grid; gap:13px; }
-    .row-2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-    .row-3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
-    label { display:block; font-size:0.84rem; color:#d1d5db; margin-bottom:5px; font-weight:600; }
-    input, select, textarea { width:100%; padding:10px 12px; border-radius:10px; border:1px solid rgba(16,185,129,0.22); background:#0f1714; color:#f8fafc; font-size:0.92rem; }
-    .ok { padding:13px 15px; border-radius:12px; background:rgba(16,185,129,0.18); border:1px solid rgba(16,185,129,0.45); color:#a7f3d0; font-weight:700; font-size:0.9rem; }
     .badge { font-size:0.74rem; color:#34d399; background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.28); padding:3px 9px; border-radius:999px; font-weight:700; display:inline-block; margin-bottom:4px; }
-    .menu-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px; }
-    .menu-card { background:#0f1714; border:1px solid rgba(16,185,129,0.2); border-radius:14px; padding:12px; display:flex; flex-direction:column; justify-content:space-between; gap:10px; }
-    .menu-img { width:100%; aspect-ratio:16/10; object-fit:cover; border-radius:9px; display:block; }
-    .menu-check { display:flex; align-items:flex-start; gap:8px; font-size:0.85rem; color:#e5e7eb; cursor:pointer; }
-    .menu-check input[type="checkbox"] { width:auto; margin-top:3px; flex-shrink:0; }
-
+    .card { background:#121d18; border:1px solid rgba(16,185,129,0.22); border-radius:16px; padding:16px; display:grid; gap:13px; }
+    .ok { padding:13px 15px; border-radius:12px; background:rgba(16,185,129,0.18); border:1px solid rgba(16,185,129,0.45); color:#a7f3d0; font-weight:700; font-size:0.9rem; }
+    label { display:block; font-size:0.84rem; color:#d1d5db; margin-bottom:5px; font-weight:600; }
+    select, textarea { width:100%; padding:10px 12px; border-radius:10px; border:1px solid rgba(16,185,129,0.22); background:#0f1714; color:#f8fafc; font-size:0.92rem; }
+    .btn-main { text-decoration:none; padding:12px 16px; border-radius:11px; font-weight:800; font-size:0.92rem; background:linear-gradient(135deg,#34d399,#10b981); color:#04130d; border:none; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; width:100%; }
     .quick-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
     .q-btn {
-      padding:13px 12px; border-radius:13px; font-weight:800; font-size:0.88rem;
-      border:1px solid rgba(245,158,11,0.4); background:rgba(245,158,11,0.14); color:#fcd34d;
+      padding:14px 12px; border-radius:13px; font-weight:800; font-size:0.9rem;
+      border:1px solid rgba(245,158,11,0.42); background:rgba(245,158,11,0.14); color:#fcd34d;
       cursor:pointer; display:flex; align-items:center; justify-content:center; gap:7px; width:100%;
     }
     .q-btn.bill { border-color:rgba(59,130,246,0.45); background:rgba(59,130,246,0.15); color:#93c5fd; }
+    .menu-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(215px,1fr)); gap:12px; }
+    .menu-card { background:#0f1714; border:1px solid rgba(16,185,129,0.2); border-radius:14px; padding:12px; display:flex; flex-direction:column; justify-content:space-between; gap:10px; }
+    .menu-img { width:100%; aspect-ratio:16/10; object-fit:cover; border-radius:9px; display:block; }
     .qty-bar { display:flex; align-items:center; justify-content:space-between; background:#121d18; border:1px solid rgba(16,185,129,0.25); border-radius:10px; padding:5px 8px; }
-    .qty-btn { width:32px; height:32px; border-radius:8px; border:none; background:#10b981; color:#04130d; font-weight:900; font-size:1.05rem; cursor:pointer; }
+    .qty-btn { width:34px; height:34px; border-radius:8px; border:none; background:#10b981; color:#04130d; font-weight:900; font-size:1.1rem; cursor:pointer; }
     .qty-btn.minus { background:#1e293b; color:#f8fafc; }
     .cart-bar {
       position:fixed; bottom:0; left:0; right:0; z-index:50;
       background:rgba(12,21,17,0.97); backdrop-filter:blur(14px);
-      border-top:1px solid rgba(52,211,153,0.4); padding:12px 16px;
+      border-top:1px solid rgba(52,211,153,0.45); padding:12px 16px;
       display:none; justify-content:space-between; align-items:center; gap:12px;
     }
     .cart-bar.show { display:flex; }
-
-    @media (max-width:768px) {
-      .row-2, .row-3 { grid-template-columns:1fr; }
-      .card { padding:15px; }
-      h1 { font-size:1.25rem !important; }
-    }
   </style>
 </head>
 <body>
@@ -1077,30 +1067,28 @@ TENANT_PUBLIC_HTML = """
     <div class="top">
       <div class="brand-row">
         {% if tenant.logo_filename %}
-          <img src="/images/logos/{{ tenant.id }}/{{ tenant.logo_filename }}" alt="{{ tenant.business_name }}" class="biz-logo" onerror="this.style.display='none';document.getElementById('bizFallback').style.display='grid';" />
-          <div id="bizFallback" class="biz-logo-fallback" style="display:none;">{{ tenant.business_name[:1]|upper }}</div>
+          <img src="/images/logos/{{ tenant.id }}/{{ tenant.logo_filename }}" alt="{{ tenant.business_name }}" class="biz-logo" onerror="this.style.display='none';document.getElementById('bizFallbackQr').style.display='grid';" />
+          <div id="bizFallbackQr" class="biz-logo-fallback" style="display:none;">{{ tenant.business_name[:1]|upper }}</div>
         {% else %}
           <div class="biz-logo-fallback">{{ tenant.business_name[:1]|upper }}</div>
         {% endif %}
         <div style="min-width:0;">
-          <div class="badge">{{ mod_label }}</div>
-          <h1 style="font-size:1.42rem;word-break:break-word;">{{ tenant.business_name }}</h1>
+          <div class="badge">Masa QR Menü &amp; Sipariş</div>
+          <h1 style="font-size:1.38rem;word-break:break-word;">{{ tenant.business_name }}</h1>
         </div>
       </div>
     </div>
 
     {% if sent %}
-    <div class="ok">{{ sent_msg or ('Kaydınız ' + tenant.business_name + ' tarafına başarıyla iletildi!') }}</div>
+    <div class="ok">{{ sent_msg }}</div>
     {% endif %}
 
-    {% if tenant.module_type == 'masa-qr' %}
-    <!-- MASA QR MODÜLÜ -->
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
         <div>
-          <span style="font-size:0.75rem;color:#9ca3af;font-weight:700;">OTURDUĞUNUZ MASA</span>
-          <div style="font-size:1.15rem;font-weight:900;color:#34d399;">
-            {{ preselected_masa if preselected_masa else 'Masa Seçiniz' }}
+          <span style="font-size:0.74rem;color:#9ca3af;font-weight:700;">OTURDUĞUNUZ MASA</span>
+          <div style="font-size:1.2rem;font-weight:900;color:#34d399;">
+            {{ preselected_masa if preselected_masa else 'Masa 1' }}
           </div>
         </div>
         {% if not preselected_masa %}
@@ -1115,12 +1103,12 @@ TENANT_PUBLIC_HTML = """
       </div>
 
       <div class="quick-grid">
-        <form method="POST">
+        <form method="POST" action="{{ url_for('tenant_qr_order_page', slug=tenant.slug) }}">
           <input type="hidden" name="action_type" value="garson" />
           <input type="hidden" name="masa_name" class="masa-hidden-input" value="{{ preselected_masa or 'Masa 1' }}" />
           <button type="submit" class="q-btn">🔔 Garson Çağır</button>
         </form>
-        <form method="POST">
+        <form method="POST" action="{{ url_for('tenant_qr_order_page', slug=tenant.slug) }}">
           <input type="hidden" name="action_type" value="hesap" />
           <input type="hidden" name="masa_name" class="masa-hidden-input" value="{{ preselected_masa or 'Masa 1' }}" />
           <button type="submit" class="q-btn bill">💳 Hesap İste</button>
@@ -1128,7 +1116,7 @@ TENANT_PUBLIC_HTML = """
       </div>
     </div>
 
-    <form class="card" method="POST" id="qrOrderForm">
+    <form class="card" method="POST" action="{{ url_for('tenant_qr_order_page', slug=tenant.slug) }}" id="qrOrderForm">
       <input type="hidden" name="action_type" value="siparis" />
       <input type="hidden" name="masa_name" class="masa-hidden-input" value="{{ preselected_masa or 'Masa 1' }}" />
       <input type="hidden" name="order_summary" id="orderSummaryInput" value="" />
@@ -1148,7 +1136,7 @@ TENANT_PUBLIC_HTML = """
             {% endif %}
             <div style="margin-top:8px;">
               <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px;">
-                <strong style="font-size:0.95rem;">{{ item.name }}</strong>
+                <strong style="font-size:0.96rem;">{{ item.name }}</strong>
                 {% if item.price %}<span style="color:#34d399;font-weight:800;white-space:nowrap;">{{ item.price }}</span>{% endif %}
               </div>
               {% if item.description %}
@@ -1159,7 +1147,7 @@ TENANT_PUBLIC_HTML = """
 
           <div class="qty-bar">
             <button type="button" class="qty-btn minus" onclick="changeQty({{ item.id }}, -1)">−</button>
-            <span id="qty-{{ item.id }}" style="font-weight:800;font-size:0.95rem;">0</span>
+            <span id="qty-{{ item.id }}" style="font-weight:800;font-size:0.96rem;">0</span>
             <button type="button" class="qty-btn" onclick="changeQty({{ item.id }}, 1)">+</button>
           </div>
         </div>
@@ -1186,82 +1174,137 @@ TENANT_PUBLIC_HTML = """
       </div>
       <button type="button" class="btn-main" style="width:auto;padding:11px 18px;" onclick="submitFloatingOrder()">Siparişi Onayla →</button>
     </div>
+  </div>
 
-    <script>
-      const QR_MENU = {{ menu_items | tojson }};
-      const cart = {};
+  <script>
+    const QR_MENU = {{ menu_items | tojson }};
+    const cart = {};
 
-      function syncMasaInputs(val) {
-        document.querySelectorAll('.masa-hidden-input').forEach(el => el.value = val);
-      }
+    function syncMasaInputs(val) {
+      document.querySelectorAll('.masa-hidden-input').forEach(el => el.value = val);
+    }
 
-      function changeQty(id, delta) {
-        const cur = cart[id] || 0;
-        const next = Math.max(0, cur + delta);
-        cart[id] = next;
-        const lbl = document.getElementById('qty-' + id);
-        if (lbl) lbl.textContent = next;
-        renderCartSummary();
-      }
+    function changeQty(id, delta) {
+      const cur = cart[id] || 0;
+      const next = Math.max(0, cur + delta);
+      cart[id] = next;
+      const lbl = document.getElementById('qty-' + id);
+      if (lbl) lbl.textContent = next;
+      renderCartSummary();
+    }
 
-      function renderCartSummary() {
-        let count = 0;
-        let total = 0;
-        QR_MENU.forEach(item => {
-          const q = cart[item.id] || 0;
-          if (q > 0) {
-            count += q;
-            total += q * (parseFloat(item.numeric_price) || 0);
-          }
-        });
-        document.getElementById('cartCount').textContent = count;
-        document.getElementById('cartTotalText').textContent = total > 0 ? (total.toFixed(0) + ' TL') : (count + ' Ürün');
-        const bar = document.getElementById('floatingCartBar');
-        if (count > 0) bar.classList.add('show');
-        else bar.classList.remove('show');
-      }
-
-      function prepareQrOrder() {
-        const lines = [];
-        let total = 0;
-        QR_MENU.forEach(item => {
-          const q = cart[item.id] || 0;
-          if (q > 0) {
-            const p = parseFloat(item.numeric_price) || 0;
-            total += q * p;
-            lines.push(`${q}x ${item.name}${item.price ? ' (' + item.price + ')' : ''}`);
-          }
-        });
-        const note = document.getElementById('qrOrderNote').value.trim();
-        if (!lines.length && !note) {
-          alert('Lütfen menüden en az bir ürün seçin veya sipariş notu yazın.');
-          return false;
+    function renderCartSummary() {
+      let count = 0;
+      let total = 0;
+      QR_MENU.forEach(item => {
+        const q = cart[item.id] || 0;
+        if (q > 0) {
+          count += q;
+          total += q * (parseFloat(item.numeric_price) || 0);
         }
-        let summary = lines.join(', ');
-        if (total > 0) summary += ` | Toplam: ${total.toFixed(0)} TL`;
-        document.getElementById('orderSummaryInput').value = summary;
-        return true;
-      }
+      });
+      document.getElementById('cartCount').textContent = count;
+      document.getElementById('cartTotalText').textContent = total > 0 ? (total.toFixed(0) + ' TL') : (count + ' Ürün');
+      const bar = document.getElementById('floatingCartBar');
+      if (count > 0) bar.classList.add('show');
+      else bar.classList.remove('show');
+    }
 
-      function submitFloatingOrder() {
-        if (prepareQrOrder()) {
-          document.getElementById('qrOrderForm').submit();
+    function prepareQrOrder() {
+      const lines = [];
+      let total = 0;
+      QR_MENU.forEach(item => {
+        const q = cart[item.id] || 0;
+        if (q > 0) {
+          const p = parseFloat(item.numeric_price) || 0;
+          total += q * p;
+          lines.push(`${q}x ${item.name}${item.price ? ' (' + item.price + ')' : ''}`);
         }
+      });
+      const note = document.getElementById('qrOrderNote').value.trim();
+      if (!lines.length && !note) {
+        alert('Lütfen menüden en az bir ürün seçin veya sipariş notu yazın.');
+        return false;
       }
-    </script>
+      let summary = lines.join(', ');
+      if (total > 0) summary += ` | Toplam: ${total.toFixed(0)} TL`;
+      document.getElementById('orderSummaryInput').value = summary;
+      return true;
+    }
 
-    {% elif tenant.module_type == 'kafe-randevu' %}
-    <!-- KAFE & RESTORAN RANDEVU + QR MENÜ MODÜLÜ -->
+    function submitFloatingOrder() {
+      if (prepareQrOrder()) {
+        document.getElementById('qrOrderForm').submit();
+      }
+    }
+  </script>
+</body>
+</html>
+"""
+
+TENANT_PUBLIC_HTML = """
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ tenant.business_name }}</title>
+  <style>
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { background:#080d0b; color:#f8fafc; font-family:Inter,system-ui,sans-serif; padding:18px 14px 48px; overflow-x:hidden; }
+    .wrap { max-width:940px; margin:0 auto; display:grid; gap:15px; }
+    .top { display:flex; justify-content:space-between; align-items:center; gap:12px; border-bottom:1px solid rgba(16,185,129,0.22); padding-bottom:14px; }
+    .brand-row { display:flex; align-items:center; gap:12px; min-width:0; }
+    .biz-logo { width:48px; height:48px; border-radius:12px; object-fit:cover; border:1px solid rgba(16,185,129,0.35); background:#0f1714; flex-shrink:0; display:block; }
+    .biz-logo-fallback { width:48px; height:48px; border-radius:12px; display:grid; place-items:center; font-weight:900; font-size:1.1rem; color:#04130d; background:linear-gradient(135deg,#34d399,#10b981); flex-shrink:0; }
+    .btn-main { text-decoration:none; padding:12px 16px; border-radius:11px; font-weight:800; font-size:0.92rem; background:linear-gradient(135deg,#34d399,#10b981); color:#04130d; border:none; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; width:100%; }
+    .card { background:#121d18; border:1px solid rgba(16,185,129,0.22); border-radius:16px; padding:16px; display:grid; gap:13px; }
+    .row-2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .row-3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
+    label { display:block; font-size:0.84rem; color:#d1d5db; margin-bottom:5px; font-weight:600; }
+    input, select, textarea { width:100%; padding:10px 12px; border-radius:10px; border:1px solid rgba(16,185,129,0.22); background:#0f1714; color:#f8fafc; font-size:0.92rem; }
+    .ok { padding:13px 15px; border-radius:12px; background:rgba(16,185,129,0.18); border:1px solid rgba(16,185,129,0.45); color:#a7f3d0; font-weight:700; font-size:0.9rem; }
+    .badge { font-size:0.74rem; color:#34d399; background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.28); padding:3px 9px; border-radius:999px; font-weight:700; display:inline-block; margin-bottom:4px; }
+    .menu-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px; }
+    .menu-card { background:#0f1714; border:1px solid rgba(16,185,129,0.2); border-radius:14px; padding:12px; display:flex; flex-direction:column; justify-content:space-between; gap:10px; }
+    .menu-img { width:100%; aspect-ratio:16/10; object-fit:cover; border-radius:9px; display:block; }
+    .menu-check { display:flex; align-items:flex-start; gap:8px; font-size:0.85rem; color:#e5e7eb; cursor:pointer; }
+    .menu-check input[type="checkbox"] { width:auto; margin-top:3px; flex-shrink:0; }
+
+    @media (max-width:768px) {
+      .row-2, .row-3 { grid-template-columns:1fr; }
+      .card { padding:15px; }
+      h1 { font-size:1.25rem !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div class="brand-row">
+        {% if tenant.logo_filename %}
+          <img src="/images/logos/{{ tenant.id }}/{{ tenant.logo_filename }}" alt="{{ tenant.business_name }}" class="biz-logo" onerror="this.style.display='none';document.getElementById('bizFallback').style.display='grid';" />
+          <div id="bizFallback" class="biz-logo-fallback" style="display:none;">{{ tenant.business_name[:1]|upper }}</div>
+        {% else %}
+          <div class="biz-logo-fallback">{{ tenant.business_name[:1]|upper }}</div>
+        {% endif %}
+        <div style="min-width:0;">
+          <div class="badge">{{ mod_label }}</div>
+          <h1 style="font-size:1.42rem;word-break:break-word;">{{ tenant.business_name }}</h1>
+        </div>
+      </div>
+    </div>
+
+    {% if sent %}
+    <div class="ok">Kaydınız {{ tenant.business_name }} tarafına başarıyla iletildi!</div>
+    {% endif %}
+
+    {% if tenant.module_type == 'kafe-randevu' %}
+    <!-- KAFE & RESTORAN RANDEVU SAYFASI -->
     <form class="card" method="POST">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">
-        <h2 style="font-size:1.1rem;">Masa Randevusu &amp; QR Menü</h2>
-        <span style="font-size:0.8rem;color:#9ca3af;">
-          {% if preselected_masa %}
-            Seçili Masa: <strong style="color:#34d399;">{{ preselected_masa }}</strong>
-          {% else %}
-            Kapasite: <strong>{{ tenant.table_count or 8 }} Masa</strong>
-          {% endif %}
-        </span>
+        <h2 style="font-size:1.1rem;">Masa Randevusu Talebi</h2>
+        <span style="font-size:0.8rem;color:#9ca3af;">Kapasite: <strong>{{ tenant.table_count or 8 }} Masa</strong></span>
       </div>
 
       <div class="row-2">
@@ -1304,7 +1347,7 @@ TENANT_PUBLIC_HTML = """
 
       {% if menu_items %}
       <div>
-        <label>Dijital Menü &amp; Ön Sipariş Seçimi (Opsiyonel)</label>
+        <label>Ön Sipariş / Menü Seçimi (Opsiyonel)</label>
         <div class="menu-grid">
           {% for item in menu_items %}
           <div class="menu-card">
@@ -1330,7 +1373,6 @@ TENANT_PUBLIC_HTML = """
 
     <script>
       const SLOT_DATA = {{ slot_options | tojson }};
-      const PRESELECTED_MASA = {{ preselected_masa | tojson }};
       let lastDate = document.getElementById("resDateInput").value;
 
       function updateTableOptions() {
@@ -1364,9 +1406,6 @@ TENANT_PUBLIC_HTML = """
           const opt = document.createElement("option");
           opt.value = label;
           opt.textContent = `${label} (Müsait)`;
-          if (PRESELECTED_MASA && PRESELECTED_MASA.toLowerCase() === label.toLowerCase()) {
-            opt.selected = true;
-          }
           tableSel.appendChild(opt);
         });
       }
@@ -1620,7 +1659,7 @@ TENANT_PANEL_HTML = """
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
           <div>
             <div style="font-size:0.88rem;font-weight:800;color:var(--bright);">MASA QR KODLARI ({{ tenant.table_count or 8 }} MASA)</div>
-            <p style="font-size:0.8rem;color:var(--muted);margin-top:2px;">Her masa için özel QR kod üretildi. Müşteri okuttuğunda doğrudan o masa seçili açılır.</p>
+            <p style="font-size:0.8rem;color:var(--muted);margin-top:2px;">QR okutulduğunda randevu sayfasına değil, doğrudan <strong>Masa Menü, Sipariş &amp; Garson Çağır</strong> ekranına gider.</p>
           </div>
           <a href="{{ url_for('tenant_qr_print', slug=tenant.slug) }}" target="_blank" class="btn btn-ok">🖨️ Yazdırılabilir A4 QR Sayfası</a>
         </div>
@@ -1630,7 +1669,7 @@ TENANT_PANEL_HTML = """
           <div class="qr-card">
             <strong style="font-size:0.95rem;color:var(--bright);">{{ qr.label }}</strong>
             <img src="{{ qr.qr_img_url }}" alt="{{ qr.label }} QR" loading="lazy" />
-            <a href="{{ qr.target_url }}" target="_blank" class="btn" style="width:100%;font-size:0.78rem;">Masayı Test Et</a>
+            <a href="{{ qr.target_url }}" target="_blank" class="btn" style="width:100%;font-size:0.78rem;">QR Ekranını Test Et</a>
           </div>
           {% endfor %}
         </div>
@@ -2276,6 +2315,79 @@ def notify_iban_payment(slug):
     return redirect(url_for("tenant_public", slug=slug, notified="1"))
 
 
+@app.route("/i/<slug>/qr", methods=["GET", "POST"])
+def tenant_qr_order_page(slug):
+    """QR kod okutuldugunda acilan ozel Masa Menu, Siparis, Garson & Hesap sayfasi."""
+    tenant = get_tenant_by_slug(slug)
+    if not tenant:
+        abort(404)
+
+    mod_type = tenant.get("module_type") or "genel"
+    mod_label = MODULE_LABELS.get(mod_type, MODULE_LABELS["genel"])
+
+    if not tenant["is_active"]:
+        notified = request.args.get("notified") == "1"
+        return render_template_string(
+            TENANT_PENDING_HTML,
+            tenant=tenant,
+            mod_label=mod_label,
+            notified=notified,
+            iban_holder=IBAN_HOLDER,
+            iban_bank=IBAN_BANK,
+            iban_number=IBAN_NUMBER,
+            price_starter=PLAN_PRICE_STARTER,
+            price_pro=PLAN_PRICE_PRO,
+            wa_number=WHATSAPP_NUMBER,
+        )
+
+    preselected_masa = request.args.get("masa", "").strip()
+    menu_items = get_menu_items(tenant["id"])
+
+    if request.method == "POST":
+        action_type = request.form.get("action_type", "siparis").strip()
+        masa_name = request.form.get("masa_name", "").strip() or preselected_masa or "Masa 1"
+        raw_message = request.form.get("message", "").strip()
+        order_summary = request.form.get("order_summary", "").strip()
+
+        if action_type == "garson":
+            add_ticket(tenant["id"], masa_name, "", "🔔 Garson Çağır", f"{masa_name} garson çağırıyor.")
+            return redirect(url_for("tenant_qr_order_page", slug=slug, masa=masa_name, sent="1", stype="garson"))
+        elif action_type == "hesap":
+            add_ticket(tenant["id"], masa_name, "", "💳 Hesap İste", f"{masa_name} hesap istiyor.")
+            return redirect(url_for("tenant_qr_order_page", slug=slug, masa=masa_name, sent="1", stype="hesap"))
+        else:
+            parts = []
+            if order_summary:
+                parts.append(order_summary)
+            if raw_message:
+                parts.append(f"Not: {raw_message}")
+            full_msg = " | ".join(parts)
+            if full_msg:
+                add_ticket(tenant["id"], masa_name, "", "🍽️ QR Masa Siparişi", full_msg)
+            return redirect(url_for("tenant_qr_order_page", slug=slug, masa=masa_name, sent="1", stype="siparis"))
+
+    sent = request.args.get("sent") == "1"
+    stype = request.args.get("stype", "")
+    sent_msg = ""
+    if sent:
+        m_label = preselected_masa or "Masanız"
+        if stype == "garson":
+            sent_msg = f"🔔 {m_label} için garson çağrısı iletildi, hemen ilgileniyoruz!"
+        elif stype == "hesap":
+            sent_msg = f"💳 {m_label} için hesap isteği iletildi!"
+        else:
+            sent_msg = f"🍽️ {m_label} için siparişiniz alındı ve hazırlanmaya başlandı!"
+
+    return render_template_string(
+        TENANT_QR_ORDER_HTML,
+        tenant=tenant,
+        menu_items=menu_items,
+        preselected_masa=preselected_masa,
+        sent=sent,
+        sent_msg=sent_msg,
+    )
+
+
 @app.route("/i/<slug>", methods=["GET", "POST"])
 def tenant_public(slug):
     tenant = get_tenant_by_slug(slug)
@@ -2300,10 +2412,13 @@ def tenant_public(slug):
             wa_number=WHATSAPP_NUMBER,
         )
 
-    preselected_masa = request.args.get("masa", "").strip()
+    # Eger isletme dogrudan masa-qr modulu ise /i/<slug> da direkt QR ekranina yonlenir
+    if mod_type == "masa-qr":
+        masa_param = request.args.get("masa", "").strip()
+        return redirect(url_for("tenant_qr_order_page", slug=slug, masa=masa_param) if masa_param else url_for("tenant_qr_order_page", slug=slug))
+
     selected_date = request.args.get("date") or datetime.now().strftime("%Y-%m-%d")
-    has_qr_menu = mod_type in {"kafe-randevu", "masa-qr"}
-    menu_items = get_menu_items(tenant["id"]) if has_qr_menu else []
+    menu_items = get_menu_items(tenant["id"]) if mod_type == "kafe-randevu" else []
     table_cap = max(1, int(tenant.get("table_count") or 8))
     booked_map = get_booked_tables_by_slot(tenant["id"], selected_date) if mod_type == "kafe-randevu" else {}
     slot_options = []
@@ -2317,29 +2432,6 @@ def tenant_public(slug):
         })
 
     if request.method == "POST":
-        if mod_type == "masa-qr":
-            action_type = request.form.get("action_type", "siparis").strip()
-            masa_name = request.form.get("masa_name", "").strip() or preselected_masa or "Masa 1"
-            raw_message = request.form.get("message", "").strip()
-            order_summary = request.form.get("order_summary", "").strip()
-
-            if action_type == "garson":
-                add_ticket(tenant["id"], masa_name, "", "🔔 Garson Çağır", f"{masa_name} garson çağırıyor.")
-                return redirect(url_for("tenant_public", slug=slug, masa=masa_name, sent="1", stype="garson"))
-            elif action_type == "hesap":
-                add_ticket(tenant["id"], masa_name, "", "💳 Hesap İste", f"{masa_name} hesap istiyor.")
-                return redirect(url_for("tenant_public", slug=slug, masa=masa_name, sent="1", stype="hesap"))
-            else:
-                parts = []
-                if order_summary:
-                    parts.append(order_summary)
-                if raw_message:
-                    parts.append(f"Not: {raw_message}")
-                full_msg = " | ".join(parts)
-                if full_msg:
-                    add_ticket(tenant["id"], masa_name, "", "🍽️ QR Masa Siparişi", full_msg)
-                return redirect(url_for("tenant_public", slug=slug, masa=masa_name, sent="1", stype="siparis"))
-
         name = request.form.get("name", "").strip()
         phone = request.form.get("phone", "").strip()
         raw_service = request.form.get("service", "").strip()
@@ -2382,16 +2474,6 @@ def tenant_public(slug):
         return redirect(url_for("tenant_public", slug=slug, date=res_date, sent="1"))
 
     sent = request.args.get("sent") == "1"
-    stype = request.args.get("stype", "")
-    sent_msg = None
-    if sent and mod_type == "masa-qr":
-        if stype == "garson":
-            sent_msg = f"🔔 {preselected_masa or 'Masanız'} için garson çağrısı iletildi, hemen ilgileniyoruz!"
-        elif stype == "hesap":
-            sent_msg = f"💳 {preselected_masa or 'Masanız'} için hesap isteği iletildi!"
-        elif stype == "siparis":
-            sent_msg = f"🍽️ {preselected_masa or 'Masanız'} için siparişiniz alındı ve hazırlanmaya başlandı!"
-
     return render_template_string(
         TENANT_PUBLIC_HTML,
         tenant=tenant,
@@ -2400,9 +2482,7 @@ def tenant_public(slug):
         selected_date=selected_date,
         slot_options=slot_options,
         menu_items=menu_items,
-        preselected_masa=preselected_masa,
         sent=sent,
-        sent_msg=sent_msg,
     )
 
 
@@ -2436,11 +2516,12 @@ def tenant_logout(slug):
 
 def build_tenant_qr_list(tenant):
     table_cap = max(1, int(tenant.get("table_count") or 8))
-    base_url = url_for("tenant_public", slug=tenant["slug"], _external=True)
+    # QR kodlar artik dogrudan /i/<slug>/qr rotasina gider (randevu sayfasina gitmez)
+    base_qr_url = url_for("tenant_qr_order_page", slug=tenant["slug"], _external=True)
     qr_list = []
     for idx in range(1, table_cap + 1):
         label = f"Masa {idx}"
-        target_url = f"{base_url}?masa={quote(label)}"
+        target_url = f"{base_qr_url}?masa={quote(label)}"
         qr_img_url = f"https://api.qrserver.com/v1/create-qr-code/?size=280x280&margin=6&data={quote(target_url, safe='')}"
         qr_list.append({
             "num": idx,
