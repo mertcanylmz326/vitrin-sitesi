@@ -1,9 +1,10 @@
 import functools
 import json
+import mimetypes
 import os
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
@@ -13,6 +14,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 from flask import (
     Flask,
+    Response,
     abort,
     redirect,
     render_template_string,
@@ -165,19 +167,6 @@ def normalize_phone(raw_phone):
     return digits
 
 
-def save_uploaded_image(subdir, tenant_id, file_storage):
-    if not file_storage or not file_storage.filename:
-        return ""
-    ext = Path(secure_filename(file_storage.filename)).suffix.lower()
-    if ext not in ALLOWED_IMG_EXTS:
-        return ""
-    target_dir = subdir / str(tenant_id)
-    target_dir.mkdir(parents=True, exist_ok=True)
-    fname = f"{uuid.uuid4().hex[:12]}{ext}"
-    file_storage.save(str(target_dir / fname))
-    return fname
-
-
 def get_db():
     parsed = urlparse(DATABASE_URL)
     sslmode = (
@@ -186,6 +175,61 @@ def get_db():
         else "prefer"
     )
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor, sslmode=sslmode)
+
+
+def save_uploaded_image(subdir, tenant_id, file_storage):
+    """Render disk sifirlanmasina karsi gorseli hem diske hem Supabase PostgreSQL stored_images tablosuna kaydeder."""
+    if not file_storage or not file_storage.filename:
+        return ""
+    ext = Path(secure_filename(file_storage.filename)).suffix.lower()
+    if ext not in ALLOWED_IMG_EXTS:
+        return ""
+
+    raw_bytes = file_storage.read()
+    if not raw_bytes:
+        return ""
+
+    fname = f"{uuid.uuid4().hex[:12]}{ext}"
+    category = subdir.name  # 'logos' veya 'menu'
+    mime_type = file_storage.mimetype or mimetypes.guess_type(fname)[0] or "image/jpeg"
+
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO stored_images (tenant_id, category, filename, content_type, data)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (tenant_id, category, filename)
+                    DO UPDATE SET content_type = EXCLUDED.content_type, data = EXCLUDED.data
+                    """,
+                    (tenant_id, category, fname, mime_type, psycopg2.Binary(raw_bytes)),
+                )
+    except Exception as exc:
+        app.logger.error("Veritabani gorsel kayit hatasi: %s", exc)
+
+    try:
+        target_dir = subdir / str(tenant_id)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        (target_dir / fname).write_bytes(raw_bytes)
+    except Exception:
+        pass
+
+    return fname
+
+
+def get_stored_image_from_db(tenant_id, category, filename):
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT content_type, data
+                FROM stored_images
+                WHERE tenant_id = %s AND category = %s AND filename = %s
+                """,
+                (tenant_id, category, filename),
+            )
+            return cur.fetchone()
 
 
 def init_db():
@@ -221,7 +265,30 @@ def init_db():
                 cur.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS payment_note TEXT DEFAULT '';")
                 cur.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS payment_requested BOOLEAN NOT NULL DEFAULT FALSE;")
                 cur.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS activated_at TIMESTAMP;")
+                cur.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP;")
                 cur.execute("UPDATE tenants SET plan = 'starter' WHERE plan = 'free';")
+                cur.execute(
+                    """
+                    UPDATE tenants
+                    SET expires_at = activated_at + INTERVAL '30 days'
+                    WHERE is_active = TRUE AND activated_at IS NOT NULL AND expires_at IS NULL;
+                    """
+                )
+
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS stored_images (
+                        id SERIAL PRIMARY KEY,
+                        tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                        category TEXT NOT NULL,
+                        filename TEXT NOT NULL,
+                        content_type TEXT NOT NULL DEFAULT 'image/jpeg',
+                        data BYTEA NOT NULL,
+                        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                        UNIQUE(tenant_id, category, filename)
+                    );
+                    """
+                )
 
                 cur.execute(
                     """
@@ -262,9 +329,9 @@ def init_db():
                         """
                         INSERT INTO tenants (
                             slug, business_name, owner_email, password_hash, plan, module_type,
-                            table_count, whatsapp_number, payment_note, payment_requested, is_active, activated_at
+                            table_count, whatsapp_number, payment_note, payment_requested, is_active, activated_at, expires_at
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s, 8, %s, %s, FALSE, TRUE, NOW())
+                        VALUES (%s, %s, %s, %s, %s, %s, 8, %s, %s, FALSE, TRUE, NOW(), NOW() + INTERVAL '365 days')
                         RETURNING id
                         """,
                         (
@@ -333,7 +400,25 @@ def get_all_tenants():
                 ORDER BY t.is_active ASC, t.payment_requested DESC, t.id DESC
                 """
             )
-            return cur.fetchall()
+            rows = cur.fetchall()
+            now = datetime.now()
+            enriched = []
+            for r in rows:
+                d = dict(r)
+                exp = d.get("expires_at")
+                if exp is None and d.get("activated_at"):
+                    exp = d["activated_at"] + timedelta(days=30)
+                if exp:
+                    delta_days = (exp.date() - now.date()).days
+                    d["days_left"] = delta_days
+                    d["expires_str"] = exp.strftime("%d.%m.%Y")
+                    d["is_expired"] = bool(d.get("is_active")) and delta_days < 0
+                else:
+                    d["days_left"] = None
+                    d["expires_str"] = "-"
+                    d["is_expired"] = False
+                enriched.append(d)
+            return enriched
 
 
 def create_tenant(business_name, owner_email, password, raw_slug="", plan="starter", module_type="genel", whatsapp_number=""):
@@ -341,7 +426,7 @@ def create_tenant(business_name, owner_email, password, raw_slug="", plan="start
     valid_modules = {"genel", "kafe-randevu", "berber-randevu", "masa-qr"}
     mod = module_type if module_type in valid_modules else "genel"
     chosen_plan = plan if plan in {"starter", "pro"} else "starter"
-    default_tables = 8 if mod == "kafe-randevu" else 4
+    default_tables = 8 if mod in {"kafe-randevu", "masa-qr"} else 4
     with get_db() as conn:
         with conn.cursor() as cur:
             candidate = base_slug
@@ -884,11 +969,11 @@ TENANT_PENDING_HTML = """
 <body>
   <div class="wrap">
     <div class="card">
-      <div style="font-size:0.78rem;color:#fbbf24;font-weight:800;">HESAP DURUMU: ÖDEME ONAYI BEKLENİYOR</div>
+      <div style="font-size:0.78rem;color:#fbbf24;font-weight:800;">HESAP DURUMU: ÖDEME ONAYI / YENİLEME BEKLENİYOR</div>
       <h1 style="font-size:1.28rem;">{{ tenant.business_name }}</h1>
       <p style="color:#9ca3af;font-size:0.88rem;">
-        Hesabın açıldı ve modülün <strong>{{ mod_label }}</strong> olarak kilitlendi.
-        IBAN ödemesi onaylandığında müşteri randevu linkin aktif olur.
+        Hesabın modülü <strong>{{ mod_label }}</strong> olarak tanımlı.
+        IBAN ödemesi onaylandığında müşteri linkin ve panelin aktif olur.
       </p>
 
       {% if notified %}
@@ -1057,6 +1142,7 @@ TENANT_PUBLIC_HTML = """
 
     <script>
       const SLOT_DATA = {{ slot_options | tojson }};
+      const PRESELECTED_TABLE = {{ preselected_masa | tojson }};
       let lastDate = document.getElementById("resDateInput").value;
 
       function updateTableOptions() {
@@ -1089,6 +1175,9 @@ TENANT_PUBLIC_HTML = """
           const opt = document.createElement("option");
           opt.value = `Masa ${tNo}`;
           opt.textContent = `Masa ${tNo} (Müsait)`;
+          if (PRESELECTED_TABLE && PRESELECTED_TABLE.toLowerCase() === `masa ${tNo}`) {
+            opt.selected = true;
+          }
           tableSel.appendChild(opt);
         });
       }
@@ -1121,9 +1210,17 @@ TENANT_PUBLIC_HTML = """
 
     {% elif tenant.module_type == 'masa-qr' %}
     <form class="card" method="POST">
-      <h2 style="font-size:1.1rem;">Masa Sipariş &amp; Garson İsteği</h2>
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">
+        <h2 style="font-size:1.1rem;">Masa Sipariş &amp; Garson İsteği</h2>
+        {% if preselected_masa %}
+        <span class="badge" style="margin-bottom:0;">QR Masası: {{ preselected_masa }}</span>
+        {% endif %}
+      </div>
       <div class="row-2">
-        <div><label>Masa Numarası / Adı</label><input type="text" name="name" placeholder="Örn: Masa 4 veya Bahçe 2" required /></div>
+        <div>
+          <label>Masa Numarası / Adı</label>
+          <input type="text" name="name" value="{{ preselected_masa }}" placeholder="Örn: Masa 4" required />
+        </div>
         <div><label>İletişim / Not Kodu (Opsiyonel)</label><input type="text" name="phone" placeholder="Opsiyonel" /></div>
       </div>
       <div>
@@ -1219,6 +1316,9 @@ TENANT_PANEL_HTML = """
     input, select { padding:10px 11px; border-radius:10px; border:1px solid var(--border); background:var(--soft); color:var(--text); font-size:0.9rem; }
     .locked-pill { padding:8px 12px; border-radius:10px; background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.35); color:#fcd34d; font-size:0.8rem; font-weight:700; }
     .menu-admin-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px; }
+    .qr-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; }
+    .qr-card { background:var(--soft); border:1px solid var(--border); border-radius:14px; padding:14px; display:grid; gap:9px; text-align:center; justify-items:center; }
+    .qr-card img { width:150px; height:150px; border-radius:10px; background:#fff; padding:8px; }
     .menu-box { background:var(--soft); border:1px solid var(--border); border-radius:12px; padding:12px; display:grid; gap:8px; }
     .menu-thumb { width:100%; aspect-ratio:16/10; object-fit:cover; border-radius:8px; }
     .logo-preview { width:52px; height:52px; border-radius:12px; object-fit:cover; border:1px solid var(--border); }
@@ -1228,7 +1328,7 @@ TENANT_PANEL_HTML = """
     .pills::-webkit-scrollbar { display:none; }
     .pill-tab { background:var(--card); color:var(--muted); border:1px solid var(--border); padding:7px 13px; border-radius:999px; font-size:0.8rem; font-weight:700; white-space:nowrap; cursor:pointer; }
     .pill-tab.active { background:var(--accent); color:#04130d; border-color:var(--accent); }
-    .bottom-nav { position:fixed; bottom:0; left:0; right:0; height:64px; background:rgba(8,13,11,0.96); backdrop-filter:blur(14px); border-top:1px solid var(--border); display:grid; grid-template-columns:repeat({{ 3 if tenant.module_type == 'kafe-randevu' else 2 }},1fr); z-index:45; }
+    .bottom-nav { position:fixed; bottom:0; left:0; right:0; height:64px; background:rgba(8,13,11,0.96); backdrop-filter:blur(14px); border-top:1px solid var(--border); display:grid; grid-template-columns:repeat({{ nav_count }},1fr); z-index:45; }
     .bnav-btn { background:none; border:none; color:var(--muted); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; font-size:0.74rem; font-weight:700; cursor:pointer; }
     .bnav-btn.active { color:var(--bright); }
     .tab-pane { display:none; gap:14px; }
@@ -1305,7 +1405,7 @@ TENANT_PANEL_HTML = """
     <!-- SEKME 2: MENÜ YÖNETİMİ -->
     <section id="pane-menu" class="tab-pane">
       <div class="card">
-        <div style="font-size:0.86rem;font-weight:800;color:var(--bright);">YENİ MENÜ ÜRÜNÜ EKLE</div>
+        <div style="font-size:0.86rem;font-weight:800;color:var(--bright);">YENİ MENÜ ÜRÜNÜ EKLE (VERİTABANINDA KALICI SAKLANIR)</div>
         <form method="POST" action="{{ url_for('tenant_add_menu_item', slug=tenant.slug) }}" enctype="multipart/form-data" class="row-flex">
           <div style="flex:1;min-width:160px;">
             <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Ürün Adı</label>
@@ -1353,10 +1453,35 @@ TENANT_PANEL_HTML = """
     </section>
     {% endif %}
 
-    <!-- SEKME 3: İŞLETME AYARLARI -->
+    {% if tenant.module_type in ['masa-qr', 'kafe-randevu'] %}
+    <!-- SEKME QR: OTOMATİK MASA QR KOD ÜRETİCİ -->
+    <section id="pane-qr" class="tab-pane">
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+          <div>
+            <div style="font-size:0.88rem;font-weight:800;color:var(--bright);">MASA QR KODLARI ({{ tenant.table_count or 8 }} MASA)</div>
+            <p style="font-size:0.8rem;color:var(--muted);margin-top:2px;">Müşteri masadaki QR'ı okuttuğunda masa numarası otomatik dolu açılır.</p>
+          </div>
+          <a href="{{ url_for('tenant_qr_print', slug=tenant.slug) }}" target="_blank" class="btn btn-ok">🖨️ Yazdırılabilir A4 QR Sayfası</a>
+        </div>
+
+        <div class="qr-grid">
+          {% for qr in qr_list %}
+          <div class="qr-card">
+            <strong style="font-size:0.95rem;color:var(--bright);">{{ qr.label }}</strong>
+            <img src="{{ qr.qr_img_url }}" alt="{{ qr.label }} QR" loading="lazy" />
+            <a href="{{ qr.target_url }}" target="_blank" class="btn" style="width:100%;font-size:0.78rem;">Linki Test Et</a>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </section>
+    {% endif %}
+
+    <!-- SEKME AYARLAR -->
     <section id="pane-settings" class="tab-pane">
       <form class="card" method="POST" action="{{ url_for('tenant_update_settings', slug=tenant.slug) }}" enctype="multipart/form-data">
-        <div style="font-size:0.86rem;font-weight:800;color:var(--bright);">İŞLETME AYARLARI &amp; LOGO</div>
+        <div style="font-size:0.86rem;font-weight:800;color:var(--bright);">İŞLETME AYARLARI &amp; LOGO (KALICI VERİTABANI DEPOLAMA)</div>
         <div class="row-flex">
           {% if tenant.logo_filename %}
             <img src="/images/logos/{{ tenant.id }}/{{ tenant.logo_filename }}" alt="Logo" class="logo-preview" onerror="this.style.display='none'" />
@@ -1369,7 +1494,7 @@ TENANT_PANEL_HTML = """
             <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">WhatsApp Numarası</label>
             <input type="text" name="whatsapp_number" value="{{ tenant.whatsapp_number or '' }}" placeholder="05xx xxx xx xx" style="width:100%;" />
           </div>
-          {% if tenant.module_type == 'kafe-randevu' %}
+          {% if tenant.module_type in ['kafe-randevu', 'masa-qr'] %}
           <div style="width:130px;">
             <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Masa Sayısı</label>
             <input type="number" name="table_count" min="1" max="200" value="{{ tenant.table_count or 8 }}" style="width:100%;" required />
@@ -1391,6 +1516,12 @@ TENANT_PANEL_HTML = """
     <button type="button" class="bnav-btn" onclick="openPane('pane-menu', this)">
       <span style="font-size:1.15rem;">🍽️</span>
       <span>Menü</span>
+    </button>
+    {% endif %}
+    {% if tenant.module_type in ['masa-qr', 'kafe-randevu'] %}
+    <button type="button" class="bnav-btn" onclick="openPane('pane-qr', this)">
+      <span style="font-size:1.15rem;">📱</span>
+      <span>QR Kodlar</span>
     </button>
     {% endif %}
     <button type="button" class="bnav-btn" onclick="openPane('pane-settings', this)">
@@ -1421,6 +1552,71 @@ TENANT_PANEL_HTML = """
       setTimeout(() => b.textContent = "Kopyala", 1800);
     }
   </script>
+</body>
+</html>
+"""
+
+QR_PRINT_HTML = """
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ tenant.business_name }} — Masa QR Kodları Yazdır</title>
+  <style>
+    * { box-sizing:border-box; margin:0; padding:0; font-family:Inter,system-ui,sans-serif; }
+    body { background:#f1f5f9; color:#0f172a; padding:20px; }
+    .toolbar {
+      max-width:1020px; margin:0 auto 20px; background:#0f172a; color:#fff;
+      padding:14px 18px; border-radius:14px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;
+    }
+    .print-btn {
+      background:#10b981; color:#04130d; border:none; padding:10px 18px;
+      border-radius:10px; font-weight:800; font-size:0.9rem; cursor:pointer;
+    }
+    .sheet {
+      max-width:1020px; margin:0 auto;
+      display:grid; grid-template-columns:repeat(3, 1fr); gap:16px;
+    }
+    .sticker {
+      background:#ffffff; border:2px dashed #94a3b8; border-radius:16px;
+      padding:18px 14px; text-align:center; display:grid; gap:8px; justify-items:center;
+      page-break-inside:avoid;
+    }
+    .biz-name { font-size:0.85rem; font-weight:800; color:#475569; text-transform:uppercase; letter-spacing:0.04em; }
+    .table-title { font-size:1.35rem; font-weight:900; color:#0f172a; }
+    .sticker img { width:170px; height:170px; display:block; }
+    .scan-note { font-size:0.82rem; font-weight:700; color:#059669; }
+    @media print {
+      body { background:#fff; padding:0; }
+      .toolbar { display:none !important; }
+      .sheet { gap:12px; }
+      .sticker { border:1.5px solid #cbd5e1; }
+    }
+    @media (max-width:680px) {
+      .sheet { grid-template-columns:repeat(2, 1fr); }
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <div>
+      <strong>{{ tenant.business_name }} — Masa QR Etiketleri</strong>
+      <div style="font-size:0.8rem;color:#94a3b8;">Toplam {{ qr_list|length }} masa için hazır baskı şablonu</div>
+    </div>
+    <button type="button" class="print-btn" onclick="window.print()">🖨️ Yazdır / PDF Kaydet</button>
+  </div>
+
+  <div class="sheet">
+    {% for qr in qr_list %}
+    <div class="sticker">
+      <div class="biz-name">{{ tenant.business_name }}</div>
+      <div class="table-title">{{ qr.label }}</div>
+      <img src="{{ qr.qr_img_url }}" alt="{{ qr.label }}" />
+      <div class="scan-note">Menü &amp; Sipariş İçin QR Kodu Okutun</div>
+    </div>
+    {% endfor %}
+  </div>
 </body>
 </html>
 """
@@ -1473,7 +1669,7 @@ SUPERADMIN_LOGIN_HTML = """
     <div style="text-align:center;">
       <div class="badge-icon">K</div>
       <h1 style="font-size:1.22rem;margin-top:6px;">KOLAY Süper Admin</h1>
-      <p style="font-size:0.82rem;color:#9ca3af;margin-top:3px;">IBAN Onay &amp; İşletme Kontrol Merkezi</p>
+      <p style="font-size:0.82rem;color:#9ca3af;margin-top:3px;">IBAN Onay, Süre Takibi &amp; İşletme Kontrolü</p>
     </div>
     {% if error %}<div class="err">{{ error }}</div>{% endif %}
     <div><label>Kullanıcı Adı</label><input type="text" name="username" autocomplete="username" required /></div>
@@ -1508,15 +1704,14 @@ SUPERADMIN_HTML = """
 
     .wrap { max-width:1140px; margin:0 auto; padding:16px; display:grid; gap:14px; }
 
-    /* KPI Kartları */
     .kpi-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
     .kpi { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:12px; }
     .kpi span { font-size:0.74rem; color:var(--muted); display:block; margin-bottom:3px; }
     .kpi strong { font-size:1.3rem; font-weight:800; }
     .kpi strong.green { color:var(--bright); }
     .kpi strong.amber { color:#fcd34d; }
+    .kpi strong.red { color:#fca5a5; }
 
-    /* IBAN Hızlı Kopyala Barı */
     .iban-bar {
       background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.34);
       border-radius:14px; padding:11px 14px;
@@ -1524,7 +1719,6 @@ SUPERADMIN_HTML = """
     }
     .iban-bar code { font-size:0.84rem; color:#fcd34d; font-weight:800; word-break:break-all; }
 
-    /* Arama ve Filtre Hapları */
     .search-wrap { position:relative; }
     .search-wrap input {
       width:100%; padding:11px 14px 11px 38px; border-radius:12px;
@@ -1541,20 +1735,28 @@ SUPERADMIN_HTML = """
     }
     .f-pill.active { background:var(--accent); color:#04130d; border-color:var(--accent); }
 
-    /* İşletme Kartları */
-    .btn { text-decoration:none; padding:9px 13px; border-radius:10px; font-weight:700; font-size:0.83rem; border:1px solid var(--border); background:var(--soft); color:var(--bright); cursor:pointer; display:inline-flex; align-items:center; justify-content:center; gap:5px; }
+    .btn { text-decoration:none; padding:9px 12px; border-radius:10px; font-weight:700; font-size:0.82rem; border:1px solid var(--border); background:var(--soft); color:var(--bright); cursor:pointer; display:inline-flex; align-items:center; justify-content:center; gap:5px; }
     .btn-approve { background:linear-gradient(135deg,#34d399,#10b981); color:#04130d; border:none; font-weight:800; }
+    .btn-extend { background:rgba(59,130,246,0.18); border-color:rgba(59,130,246,0.42); color:#93c5fd; }
+    .btn-edit { background:rgba(245,158,11,0.14); border-color:rgba(245,158,11,0.38); color:#fcd34d; }
     .btn-suspend { background:rgba(239,68,68,0.14); border-color:rgba(239,68,68,0.38); color:#fca5a5; }
     .card { background:var(--card); border:1px solid var(--border); border-radius:16px; padding:16px; display:grid; gap:12px; }
-    .card.pending { border-color:rgba(245,158,11,0.52); box-shadow:0 0 0 1px rgba(245,158,11,0.12); }
+    .card.pending { border-color:rgba(245,158,11,0.52); }
+    .card.expired { border-color:rgba(239,68,68,0.58); }
     .badge-on { padding:3px 9px; border-radius:999px; font-size:0.72rem; font-weight:800; background:rgba(16,185,129,0.16); color:#6ee7b7; }
     .badge-off { padding:3px 9px; border-radius:999px; font-size:0.72rem; font-weight:800; background:rgba(245,158,11,0.18); color:#fcd34d; }
+    .badge-exp { padding:3px 9px; border-radius:999px; font-size:0.72rem; font-weight:800; background:rgba(239,68,68,0.2); color:#fca5a5; }
     .badge-notify { padding:3px 9px; border-radius:999px; font-size:0.72rem; font-weight:800; background:rgba(59,130,246,0.2); color:#93c5fd; }
-    select { padding:8px 10px; border-radius:9px; border:1px solid var(--border); background:var(--soft); color:var(--text); font-size:0.84rem; }
+    select, .modal-input { padding:9px 11px; border-radius:9px; border:1px solid var(--border); background:var(--soft); color:var(--text); font-size:0.86rem; width:100%; }
 
     .actions-bar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding-top:10px; border-top:1px solid rgba(16,185,129,0.12); }
 
-    /* Alt Navigasyon */
+    /* Düzenleme Modalı */
+    .modal-bg { position:fixed; inset:0; background:rgba(2,6,4,0.8); backdrop-filter:blur(5px); z-index:70; display:none; align-items:center; justify-content:center; padding:16px; }
+    .modal-bg.open { display:flex; }
+    .modal-card { width:100%; max-width:440px; background:var(--card); border:1px solid var(--border); border-radius:18px; padding:20px; display:grid; gap:12px; }
+    .modal-card label { display:block; font-size:0.78rem; color:var(--muted); margin-bottom:4px; font-weight:600; }
+
     .bottom-nav {
       position:fixed; bottom:0; left:0; right:0; height:64px;
       background:rgba(8,13,11,0.96); backdrop-filter:blur(14px);
@@ -1565,7 +1767,7 @@ SUPERADMIN_HTML = """
 
     @media (max-width:768px) {
       .kpi-grid { grid-template-columns:repeat(2,1fr); }
-      .actions-bar > a, .actions-bar > form { flex:1 1 calc(50% - 4px); }
+      .actions-bar > a, .actions-bar > form, .actions-bar > button { flex:1 1 calc(50% - 4px); }
       .actions-bar > form button { width:100%; }
     }
   </style>
@@ -1573,6 +1775,7 @@ SUPERADMIN_HTML = """
 <body>
   {% set active_count = tenants|selectattr('is_active')|list|length %}
   {% set pending_count = (tenants|length) - active_count %}
+  {% set expired_count = tenants|selectattr('is_expired')|list|length %}
   {% set notify_count = tenants|rejectattr('is_active')|selectattr('payment_requested')|list|length %}
 
   <header class="topbar">
@@ -1586,15 +1789,13 @@ SUPERADMIN_HTML = """
   </header>
 
   <div class="wrap">
-    <!-- Özet Kartlar -->
     <div class="kpi-grid">
       <div class="kpi"><span>Toplam İşletme</span><strong>{{ tenants|length }}</strong></div>
-      <div class="kpi"><span>Aktif İşletme</span><strong class="green">{{ active_count }}</strong></div>
+      <div class="kpi"><span>Aktif</span><strong class="green">{{ active_count }}</strong></div>
       <div class="kpi"><span>Onay Bekleyen</span><strong class="amber">{{ pending_count }}</strong></div>
-      <div class="kpi"><span>Ödeme Bildirimi</span><strong style="color:#93c5fd;">{{ notify_count }}</strong></div>
+      <div class="kpi"><span>Süresi Dolan</span><strong class="red">{{ expired_count }}</strong></div>
     </div>
 
-    <!-- IBAN Kopyala -->
     <div class="iban-bar">
       <div>
         <div style="font-size:0.72rem;color:var(--muted);font-weight:700;">AKTİF TAHSİLAT IBAN</div>
@@ -1603,32 +1804,32 @@ SUPERADMIN_HTML = """
       <button type="button" class="btn" id="ibanCopyBtn" onclick="copyAdminIban()">IBAN Kopyala</button>
     </div>
 
-    <!-- Canlı Arama -->
     <div class="search-wrap">
       <span class="search-ico">🔍</span>
       <input type="text" id="tenantSearch" placeholder="İşletme adı, slug veya e-posta ara..." onkeyup="filterTenants()" />
     </div>
 
-    <!-- Hızlı Filtre Hapları -->
     <div class="filter-row">
       <button type="button" class="f-pill active" onclick="setTenantFilter('all', this)">Tümü ({{ tenants|length }})</button>
       <button type="button" class="f-pill" onclick="setTenantFilter('notify', this)">Ödeme Bildirimi ({{ notify_count }})</button>
       <button type="button" class="f-pill" onclick="setTenantFilter('pending', this)">Onay Bekleyen ({{ pending_count }})</button>
+      <button type="button" class="f-pill" onclick="setTenantFilter('expired', this)">Süresi Dolan ({{ expired_count }})</button>
       <button type="button" class="f-pill" onclick="setTenantFilter('active', this)">Aktifler ({{ active_count }})</button>
     </div>
 
-    <!-- İşletme Listesi -->
     {% for tn in tenants %}
-    <div class="card tenant-item {% if not tn.is_active %}pending{% endif %}"
+    <div class="card tenant-item {% if tn.is_expired %}expired{% elif not tn.is_active %}pending{% endif %}"
          data-search="{{ (tn.business_name ~ ' ' ~ tn.slug ~ ' ' ~ tn.owner_email)|lower }}"
-         data-state="{{ 'active' if tn.is_active else ('notify' if tn.payment_requested else 'pending') }}"
+         data-state="{{ 'expired' if tn.is_expired else ('active' if tn.is_active else ('notify' if tn.payment_requested else 'pending')) }}"
          data-pending="{{ '0' if tn.is_active else '1' }}">
       <div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           <strong style="font-size:1.02rem;">{{ tn.business_name }}</strong>
           <code style="font-size:0.82rem;color:var(--bright);">/i/{{ tn.slug }}</code>
-          {% if tn.is_active %}
-            <span class="badge-on">AKTİF</span>
+          {% if tn.is_expired %}
+            <span class="badge-exp">SÜRESİ DOLDU ({{ tn.expires_str }})</span>
+          {% elif tn.is_active %}
+            <span class="badge-on">AKTİF {% if tn.days_left is not none %}({{ tn.days_left }} gün kaldı){% endif %}</span>
           {% else %}
             <span class="badge-off">ONAY BEKLİYOR</span>
           {% endif %}
@@ -1637,7 +1838,7 @@ SUPERADMIN_HTML = """
           {% endif %}
         </div>
         <div style="font-size:0.82rem;color:var(--muted);margin-top:6px;line-height:1.5;">
-          {{ tn.owner_email }} • Paket: <strong style="color:var(--text);">{{ tn.plan|upper }}</strong> • Modül: <code>{{ tn.module_type }}</code> • Masa: {{ tn.table_count or '-' }} • Talep: {{ tn.ticket_count }}
+          {{ tn.owner_email }} • Paket: <strong style="color:var(--text);">{{ tn.plan|upper }}</strong> • Modül: <code>{{ tn.module_type }}</code> • Masa: {{ tn.table_count or '-' }} • Talep: {{ tn.ticket_count }} • Bitiş: <strong>{{ tn.expires_str }}</strong>
           {% if tn.payment_note %}
           <div style="margin-top:5px;padding:7px 10px;border-radius:8px;background:rgba(245,158,11,0.1);color:#fcd34d;">
             Dekont Notu: <strong>{{ tn.payment_note }}</strong>
@@ -1652,27 +1853,78 @@ SUPERADMIN_HTML = """
 
         {% if not tn.is_active %}
         <form method="POST" action="{{ url_for('superadmin_approve_tenant', tenant_id=tn.id) }}">
-          <button type="submit" class="btn btn-approve">Ödeme Alındı &amp; Onayla</button>
+          <button type="submit" class="btn btn-approve">Ödeme Alındı &amp; Onayla (+30 Gün)</button>
         </form>
         {% else %}
+        <form method="POST" action="{{ url_for('superadmin_extend_tenant', tenant_id=tn.id) }}">
+          <button type="submit" class="btn btn-extend">+30 Gün Uzat</button>
+        </form>
         <form method="POST" action="{{ url_for('superadmin_suspend_tenant', tenant_id=tn.id) }}">
           <button type="submit" class="btn btn-suspend">Askıya Al</button>
         </form>
         {% endif %}
 
-        <form method="POST" action="{{ url_for('superadmin_tenant_plan', tenant_id=tn.id) }}" style="display:flex;gap:6px;flex:1 1 100%;">
-          <select name="plan" style="flex:1;">
-            <option value="starter" {% if tn.plan!='pro' %}selected{% endif %}>STARTER</option>
-            <option value="pro" {% if tn.plan=='pro' %}selected{% endif %}>PRO</option>
-          </select>
-          <button type="submit" class="btn">Plan Kaydet</button>
+        <button type="button" class="btn btn-edit"
+          onclick="openEditTenantModal('{{ tn.id }}', '{{ tn.business_name|e }}', '{{ tn.owner_email|e }}', '{{ tn.plan }}', '{{ tn.module_type }}', '{{ tn.table_count or 8 }}')">
+          ✏️ Düzenle
+        </button>
+
+        {% if tn.slug != 'kolay-vitrin' %}
+        <form method="POST" action="{{ url_for('superadmin_delete_tenant', tenant_id=tn.id) }}"
+              onsubmit="return confirm('{{ tn.business_name }} işletmesi ve tüm talepleri/menüleri KALICI OLARAK silinsin mi?');">
+          <button type="submit" class="btn btn-suspend">🗑️ Kalıcı Sil</button>
         </form>
+        {% endif %}
       </div>
     </div>
     {% endfor %}
   </div>
 
-  <!-- Mobil Alt Gezinme Çubuğu -->
+  <!-- İşletme Düzenleme Modalı -->
+  <div class="modal-bg" id="editTenantModal" onclick="if(event.target===this) closeEditTenantModal()">
+    <form class="modal-card" id="editTenantForm" method="POST">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <h3 style="font-size:1.05rem;">İşletmeyi Düzenle</h3>
+        <button type="button" class="btn" onclick="closeEditTenantModal()">✕</button>
+      </div>
+      <div>
+        <label>İşletme Adı</label>
+        <input type="text" name="business_name" id="etName" class="modal-input" required />
+      </div>
+      <div>
+        <label>E-posta</label>
+        <input type="email" name="owner_email" id="etEmail" class="modal-input" required />
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div>
+          <label>Paket</label>
+          <select name="plan" id="etPlan">
+            <option value="starter">STARTER</option>
+            <option value="pro">PRO</option>
+          </select>
+        </div>
+        <div>
+          <label>Masa Sayısı</label>
+          <input type="number" name="table_count" id="etTables" min="1" max="200" class="modal-input" />
+        </div>
+      </div>
+      <div>
+        <label>Modül Türü</label>
+        <select name="module_type" id="etModule">
+          <option value="kafe-randevu">Kafe &amp; Restoran Masa Randevu</option>
+          <option value="berber-randevu">Berber &amp; Kuaför Saat Randevu</option>
+          <option value="masa-qr">Masa QR Sipariş &amp; Garson Çağır</option>
+          <option value="genel">Genel Talep Formu</option>
+        </select>
+      </div>
+      <div>
+        <label>Yeni Panel Şifresi (Değiştirmek istemiyorsan boş bırak)</label>
+        <input type="text" name="new_password" placeholder="Yeni şifre (en az 4 karakter)" class="modal-input" />
+      </div>
+      <button type="submit" class="btn btn-approve" style="width:100%;padding:12px;">Değişiklikleri Kaydet</button>
+    </form>
+  </div>
+
   <nav class="bottom-nav">
     <button type="button" class="bnav active" onclick="setTenantFilter('all', document.querySelector('.f-pill'))">
       <span style="font-size:1.15rem;">🏢</span>
@@ -1680,7 +1932,7 @@ SUPERADMIN_HTML = """
     </button>
     <button type="button" class="bnav" onclick="setTenantFilter('pending', document.querySelectorAll('.f-pill')[2])">
       <span style="font-size:1.15rem;">⏳</span>
-      <span>Onay Bekleyen ({{ pending_count }})</span>
+      <span>Onay ({{ pending_count }})</span>
     </button>
     <a class="bnav" href="{{ url_for('index') }}">
       <span style="font-size:1.15rem;">🌐</span>
@@ -1708,9 +1960,24 @@ SUPERADMIN_HTML = """
         let matchMode = true;
         if (activeFilter === 'notify') matchMode = (st === 'notify');
         else if (activeFilter === 'pending') matchMode = isPending;
+        else if (activeFilter === 'expired') matchMode = (st === 'expired');
         else if (activeFilter === 'active') matchMode = !isPending;
         card.style.display = (matchText && matchMode) ? 'grid' : 'none';
       });
+    }
+
+    function openEditTenantModal(id, name, email, plan, mod, tables) {
+      document.getElementById('editTenantForm').action = '/admin/tenant/' + id + '/edit';
+      document.getElementById('etName').value = name;
+      document.getElementById('etEmail').value = email;
+      document.getElementById('etPlan').value = plan;
+      document.getElementById('etModule').value = mod;
+      document.getElementById('etTables').value = tables;
+      document.getElementById('editTenantModal').classList.add('open');
+    }
+
+    function closeEditTenantModal() {
+      document.getElementById('editTenantModal').classList.remove('open');
     }
 
     function copyAdminIban() {
@@ -1737,6 +2004,9 @@ def serve_root_logo():
 @app.route("/images/logos/<int:tenant_id>/<path:filename>")
 def serve_tenant_logo(tenant_id, filename):
     safe_name = Path(filename).name
+    stored = get_stored_image_from_db(tenant_id, "logos", safe_name)
+    if stored:
+        return Response(bytes(stored["data"]), mimetype=stored["content_type"])
     target_dir = LOGO_IMAGES_DIR / str(tenant_id)
     candidate = target_dir / safe_name
     if candidate.exists() and candidate.is_file():
@@ -1747,6 +2017,9 @@ def serve_tenant_logo(tenant_id, filename):
 @app.route("/images/menu/<int:tenant_id>/<path:filename>")
 def serve_menu_image(tenant_id, filename):
     safe_name = Path(filename).name
+    stored = get_stored_image_from_db(tenant_id, "menu", safe_name)
+    if stored:
+        return Response(bytes(stored["data"]), mimetype=stored["content_type"])
     target_dir = MENU_IMAGES_DIR / str(tenant_id)
     candidate = target_dir / safe_name
     if candidate.exists() and candidate.is_file():
@@ -1871,6 +2144,7 @@ def tenant_public(slug):
             wa_number=WHATSAPP_NUMBER,
         )
 
+    preselected_masa = request.args.get("masa", "").strip()
     selected_date = request.args.get("date") or datetime.now().strftime("%Y-%m-%d")
     menu_items = get_menu_items(tenant["id"]) if mod_type == "kafe-randevu" else []
     table_cap = max(1, int(tenant.get("table_count") or 8))
@@ -1931,7 +2205,7 @@ def tenant_public(slug):
 
         if name and message:
             add_ticket(tenant["id"], name, phone, service, message)
-        return redirect(url_for("tenant_public", slug=slug, date=res_date, sent="1"))
+        return redirect(url_for("tenant_public", slug=slug, date=res_date, masa=preselected_masa, sent="1"))
 
     sent = request.args.get("sent") == "1"
     return render_template_string(
@@ -1942,6 +2216,7 @@ def tenant_public(slug):
         selected_date=selected_date,
         slot_options=slot_options,
         menu_items=menu_items,
+        preselected_masa=preselected_masa,
         sent=sent,
     )
 
@@ -1974,6 +2249,23 @@ def tenant_logout(slug):
     return redirect(url_for("tenant_login", slug=slug))
 
 
+def build_tenant_qr_list(tenant):
+    table_cap = max(1, int(tenant.get("table_count") or 8))
+    base_url = url_for("tenant_public", slug=tenant["slug"], _external=True)
+    qr_list = []
+    for idx in range(1, table_cap + 1):
+        label = f"Masa {idx}"
+        target_url = f"{base_url}?masa={quote(label)}"
+        qr_img_url = f"https://api.qrserver.com/v1/create-qr-code/?size=280x280&margin=6&data={quote(target_url, safe='')}"
+        qr_list.append({
+            "num": idx,
+            "label": label,
+            "target_url": target_url,
+            "qr_img_url": qr_img_url,
+        })
+    return qr_list
+
+
 @app.route("/i/<slug>/panel")
 @tenant_login_required
 def tenant_panel(slug):
@@ -1998,17 +2290,35 @@ def tenant_panel(slug):
 
     tickets = load_tickets(tenant["id"])
     menu_items = get_menu_items(tenant["id"]) if mod_type == "kafe-randevu" else []
+    qr_list = build_tenant_qr_list(tenant) if mod_type in {"masa-qr", "kafe-randevu"} else []
     yeni_count = sum(1 for t in tickets if (t.get("status") or "Yeni") == "Yeni")
     tamam_count = sum(1 for t in tickets if t.get("status") == "Tamamlandı")
+
+    nav_count = 2
+    if mod_type == "kafe-randevu":
+        nav_count += 1
+    if mod_type in {"masa-qr", "kafe-randevu"}:
+        nav_count += 1
+
     return render_template_string(
         TENANT_PANEL_HTML,
         tenant=tenant,
         mod_label=mod_label,
         menu_items=menu_items,
+        qr_list=qr_list,
+        nav_count=nav_count,
         tickets=tickets,
         yeni_count=yeni_count,
         tamam_count=tamam_count,
     )
+
+
+@app.route("/i/<slug>/panel/qr-print")
+@tenant_login_required
+def tenant_qr_print(slug):
+    tenant = get_tenant_by_slug(slug)
+    qr_list = build_tenant_qr_list(tenant)
+    return render_template_string(QR_PRINT_HTML, tenant=tenant, qr_list=qr_list)
 
 
 @app.route("/i/<slug>/panel/settings", methods=["POST"])
@@ -2165,7 +2475,31 @@ def superadmin_approve_tenant(tenant_id):
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "UPDATE tenants SET is_active = TRUE, payment_requested = FALSE, activated_at = NOW() WHERE id = %s",
+                """
+                UPDATE tenants
+                SET is_active = TRUE,
+                    payment_requested = FALSE,
+                    activated_at = NOW(),
+                    expires_at = NOW() + INTERVAL '30 days'
+                WHERE id = %s
+                """,
+                (tenant_id,),
+            )
+    return redirect(url_for("superadmin_panel"))
+
+
+@app.route("/admin/tenant/<int:tenant_id>/extend", methods=["POST"])
+@superadmin_required
+def superadmin_extend_tenant(tenant_id):
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE tenants
+                SET is_active = TRUE,
+                    expires_at = GREATEST(COALESCE(expires_at, NOW()), NOW()) + INTERVAL '30 days'
+                WHERE id = %s
+                """,
                 (tenant_id,),
             )
     return redirect(url_for("superadmin_panel"))
@@ -2177,6 +2511,59 @@ def superadmin_suspend_tenant(tenant_id):
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("UPDATE tenants SET is_active = FALSE WHERE id = %s", (tenant_id,))
+    return redirect(url_for("superadmin_panel"))
+
+
+@app.route("/admin/tenant/<int:tenant_id>/edit", methods=["POST"])
+@superadmin_required
+def superadmin_edit_tenant(tenant_id):
+    business_name = request.form.get("business_name", "").strip()
+    owner_email = request.form.get("owner_email", "").strip().lower()
+    plan = request.form.get("plan", "starter").strip()
+    module_type = request.form.get("module_type", "genel").strip()
+    new_password = request.form.get("new_password", "").strip()
+    try:
+        table_count = max(1, min(200, int(request.form.get("table_count", 8))))
+    except ValueError:
+        table_count = 8
+
+    if plan not in {"starter", "pro"}:
+        plan = "starter"
+    if module_type not in {"genel", "kafe-randevu", "berber-randevu", "masa-qr"}:
+        module_type = "genel"
+
+    if business_name and owner_email:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                if len(new_password) >= 4:
+                    cur.execute(
+                        """
+                        UPDATE tenants
+                        SET business_name = %s, owner_email = %s, plan = %s,
+                            module_type = %s, table_count = %s, password_hash = %s
+                        WHERE id = %s
+                        """,
+                        (business_name, owner_email, plan, module_type, table_count, generate_password_hash(new_password), tenant_id),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        UPDATE tenants
+                        SET business_name = %s, owner_email = %s, plan = %s,
+                            module_type = %s, table_count = %s
+                        WHERE id = %s
+                        """,
+                        (business_name, owner_email, plan, module_type, table_count, tenant_id),
+                    )
+    return redirect(url_for("superadmin_panel"))
+
+
+@app.route("/admin/tenant/<int:tenant_id>/delete", methods=["POST"])
+@superadmin_required
+def superadmin_delete_tenant(tenant_id):
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM tenants WHERE id = %s AND slug != 'kolay-vitrin'", (tenant_id,))
     return redirect(url_for("superadmin_panel"))
 
 
