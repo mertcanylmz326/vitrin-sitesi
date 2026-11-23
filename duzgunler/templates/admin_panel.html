@@ -9,7 +9,6 @@
 </head>
 <body class="dzg-panel-body min-h-screen flex flex-col lg:flex-row">
 
-  <!-- Sol Menü (16 Modül) -->
   <aside class="dzg-sidebar w-full lg:w-72 border-b lg:border-b-0 lg:border-r flex-shrink-0 flex flex-col justify-between">
     <div>
       <div class="p-5 border-b border-slate-800 flex items-center justify-between lg:block">
@@ -81,7 +80,6 @@
     </div>
   </aside>
 
-  <!-- Ana İçerik -->
   <main class="flex-1 p-4 lg:p-8 max-w-7xl w-full mx-auto space-y-6">
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
@@ -98,7 +96,6 @@
       {% endif %}
     {% endwith %}
 
-    <!-- 1. GÖSTERGE PANELİ -->
     {% if sekme == 'gosterge' %}
       <div class="space-y-6">
         <div>
@@ -158,10 +155,14 @@
         </div>
       </div>
 
-    <!-- 2. KATALOG -->
     {% elif sekme == 'katalog' %}
       <div class="space-y-6">
-        <h2 class="text-2xl font-bold text-white">Ürün Kataloğu & Stok Yönetimi</h2>
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <h2 class="text-2xl font-bold text-white">Ürün Kataloğu & Stok Yönetimi</h2>
+          <a href="{{ url_for('duzgunler.admin_export_csv', tur='katalog') }}" class="px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-amber-300 border border-slate-700">
+            CSV İndir
+          </a>
+        </div>
 
         <form method="POST" action="{{ url_for('duzgunler.admin_urun_ekle') }}"
               class="dzg-card grid grid-cols-1 md:grid-cols-4 gap-3 p-5">
@@ -215,10 +216,14 @@
         </div>
       </div>
 
-    <!-- 3. SİPARİŞLER (KALEM DETAYLI) -->
     {% elif sekme == 'siparisler' %}
       <div class="space-y-6">
-        <h2 class="text-2xl font-bold text-white">B2B Sipariş Yönetimi & Kalem Detayları</h2>
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <h2 class="text-2xl font-bold text-white">B2B Sipariş Yönetimi & Kalem Detayları</h2>
+          <a href="{{ url_for('duzgunler.admin_export_csv', tur='siparisler') }}" class="px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-amber-300 border border-slate-700">
+            CSV İndir
+          </a>
+        </div>
         <div class="dzg-card p-5 overflow-x-auto">
           <table class="dzg-table w-full text-sm text-left">
             <thead>
@@ -275,7 +280,6 @@
         </div>
       </div>
 
-    <!-- 4. MÜŞTERİLER & 5. BAYİLİK BAŞVURULARI -->
     {% elif sekme in ['musteriler', 'bayilik-basvurulari'] %}
       {% set gosterilecek_bayiler = bekleyen_basvurular if sekme == 'bayilik-basvurulari' else bayiler %}
       <div class="space-y-6">
@@ -337,10 +341,14 @@
         </div>
       </div>
 
-    <!-- 6. ÖDEME ONAY, CARİ MUTABAKAT & ÖDEME YÖNTEMLERİ -->
     {% elif sekme == 'odemeler' %}
       <div class="space-y-6">
-        <h2 class="text-2xl font-bold text-white">Ödeme Onay & Cari Mutabakat</h2>
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <h2 class="text-2xl font-bold text-white">Ödeme Onay & Cari Mutabakat</h2>
+          <a href="{{ url_for('duzgunler.admin_export_csv', tur='cari') }}" class="px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-amber-300 border border-slate-700">
+            Cari CSV İndir
+          </a>
+        </div>
 
         <div class="dzg-card p-5 space-y-3">
           <h3 class="text-base font-semibold text-amber-400">Gelen Bayi Ödeme Bildirimleri</h3>
@@ -453,7 +461,6 @@
         </div>
       </div>
 
-    <!-- 7-11. İÇERİK YÖNETİMİ / SÖZLEŞMELER / SAYFALAR / İLETİŞİM BİLGİLERİ / HAKKIMIZDA -->
     {% elif sekme in ['icerik', 'sozlesmeler', 'sayfalar', 'iletisim-bilgileri', 'hakkimizda'] %}
       {% set bolum_map = {
         'sozlesmeler': ('sozlesme', 'Sözleşmeler'),
@@ -504,7 +511,6 @@
         </div>
       </div>
 
-    <!-- 12-13. FORMLAR & İLETİŞİM FORMLARI -->
     {% elif sekme in ['formlar', 'iletisim-formlari'] %}
       <div class="space-y-6">
         <h2 class="text-2xl font-bold text-white">
@@ -561,7 +567,6 @@
         </div>
       </div>
 
-    <!-- 14. SATIŞ TEMSİLCİLERİ -->
     {% elif sekme == 'satis-temsilcileri' %}
       <div class="space-y-6">
         <h2 class="text-2xl font-bold text-white">Satış Temsilcileri (Saha Plasiyerleri)</h2>
@@ -611,7 +616,6 @@
         </div>
       </div>
 
-    <!-- 15. YÖNETİCİLER -->
     {% elif sekme == 'yoneticiler' %}
       <div class="space-y-6">
         <h2 class="text-2xl font-bold text-white">Yöneticiler</h2>
@@ -662,7 +666,6 @@
         </div>
       </div>
 
-    <!-- 16. YÖNETİCİ ARAÇLARI -->
     {% elif sekme == 'araclar' %}
       <div class="space-y-6">
         <h2 class="text-2xl font-bold text-white">Yönetici Araçları & Sistem Durumu</h2>
@@ -682,6 +685,12 @@
 
           <div class="dzg-card p-5 space-y-2 text-xs">
             <h3 class="text-base font-semibold text-white">Sistem & Güvenlik Özeti</h3>
+            <div class="flex justify-between py-1.5 border-b border-slate-800">
+              <span class="text-slate-400">DATABASE_URL Ortam Değişkeni:</span>
+              <span class="{{ 'text-emerald-400 font-semibold' if db_tanimli else 'text-rose-400' }}">
+                {{ 'Tanımlı' if db_tanimli else 'Eksik' }}
+              </span>
+            </div>
             <div class="flex justify-between py-1.5 border-b border-slate-800">
               <span class="text-slate-400">Render Env Admin Hesabı:</span>
               <span class="{{ 'text-emerald-400 font-semibold' if env_admin_aktif else 'text-amber-400' }}">
