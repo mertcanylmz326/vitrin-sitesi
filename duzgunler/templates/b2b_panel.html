@@ -1,203 +1,397 @@
 <!DOCTYPE html>
 <html lang="tr">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>B2B Bayi Portalı | Düzgünler Elektrik</title>
-    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
-    <link rel="stylesheet" href="{{ url_for('duzgunler.static', filename='css/style.css') }}">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Düzgünler Elektrik | Bayi B2B Paneli</title>
+  <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="dashboard-body">
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col lg:flex-row">
 
-    <header class="dash-header">
-        <div class="container dash-header-inner">
-            <a href="{{ url_for('duzgunler.index') }}" class="brand-logo">
-                <div class="logo-emblem"><i class="fa-solid fa-bolt"></i></div>
-                <div class="logo-text">
-                    <span class="brand-main" style="color:#fff;">DÜZGÜNLER B2B</span>
-                    <span class="brand-sub">BAYİ SİPARİŞ PORTALI</span>
-                </div>
-            </a>
-            <div class="dash-user-info">
-                <span class="discount-pill"><i class="fa-solid fa-percent"></i> Bayi İskontonuz: <strong>%{{ session.get('dzg_iskonto', 15) }}</strong></span>
-                <span class="user-name"><i class="fa-solid fa-building"></i> {{ session.get('dzg_firma_unvani') }}</span>
-                <a href="{{ url_for('duzgunler.index') }}" class="top-btn btn-outline-light">Vitrine Dön</a>
-                <a href="{{ url_for('duzgunler.cikis') }}" class="top-btn btn-gold">Çıkış</a>
-            </div>
-        </div>
-    </header>
+  {% set iskonto = (session.get('dzg_iskonto', 15.0) | float) %}
+  {% set carpan = (100.0 - iskonto) / 100.0 %}
 
-    <div class="container dash-container">
-        {% with messages = get_flashed_messages(with_categories=true) %}
-          {% if messages %}
-            {% for category, message in messages %}
-              <div class="flash-alert flash-{{ category }}" style="position:static; margin-bottom:20px;">
-                <span>{{ message }}</span>
-              </div>
-            {% endfor %}
-          {% endif %}
-        {% endwith %}
-
-        <div class="dash-grid">
-            <div class="dash-card">
-                <div class="dash-card-header">
-                    <h2><i class="fa-solid fa-boxes-stacked"></i> B2B Toptan Fiyat Listesi & Hızlı Sipariş</h2>
-                    <span class="badge-gold">Net Bayi Fiyatları Aktif</span>
-                </div>
-                <div class="table-responsive">
-                    <table class="b2b-table">
-                        <thead>
-                            <tr>
-                                <th>Stok Kodu</th>
-                                <th>Ürün Adı</th>
-                                <th>Kategori</th>
-                                <th>Stok</th>
-                                <th>Liste Fiyatı</th>
-                                <th>Net Bayi Fiyatı</th>
-                                <th>Adet</th>
-                                <th>İşlem</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% set iskonto = session.get('dzg_iskonto', 15) %}
-                            {% for u in urunler %}
-                            {% set net_fiyat = (u.liste_fiyati|float) * (1 - (iskonto|float / 100.0)) %}
-                            <tr>
-                                <td><strong>{{ u.stok_kodu }}</strong></td>
-                                <td>{{ u.urun_adi }}</td>
-                                <td><span class="cat-pill">{{ u.kategori }}</span></td>
-                                <td>{{ u.stok_adedi }} {{ u.birim }}</td>
-                                <td class="old-price">{{ "%.2f"|format(u.liste_fiyati|float) }} ₺</td>
-                                <td class="net-price">{{ "%.2f"|format(net_fiyat) }} ₺</td>
-                                <td>
-                                    <input type="number" id="qty-{{ u.id }}" value="1" min="1" max="{{ u.stok_adedi }}" class="qty-input">
-                                </td>
-                                <td>
-                                    <button onclick="sepeteEkle('{{ u.stok_kodu }}', '{{ u.urun_adi }}', {{ '%.2f'|format(net_fiyat) }}, 'qty-{{ u.id }}')" class="btn-add-cart">
-                                        <i class="fa-solid fa-cart-plus"></i> Ekle
-                                    </button>
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-
-            <div class="dash-sidebar">
-                <div class="dash-card">
-                    <div class="dash-card-header">
-                        <h3><i class="fa-solid fa-cart-shopping"></i> Aktif Sipariş Sepeti</h3>
-                    </div>
-                    <div id="cartItems" class="cart-list">
-                        <p class="empty-cart">Sepetinizde henüz ürün bulunmuyor.</p>
-                    </div>
-                    <div class="cart-summary">
-                        <div class="summary-row">
-                            <span>Genel Toplam (KDV Hariç):</span>
-                            <strong id="cartTotal">0.00 ₺</strong>
-                        </div>
-                        <textarea id="orderNote" rows="2" placeholder="Sevkiyat veya sipariş notunuz..." class="note-box"></textarea>
-                        <button onclick="siparisiTamamla()" class="btn-submit-gold">
-                            <i class="fa-solid fa-check-double"></i> B2B Siparişi Onayla
-                        </button>
-                    </div>
-                </div>
-
-                <div class="dash-card" style="margin-top:24px;">
-                    <div class="dash-card-header">
-                        <h3><i class="fa-solid fa-clock-rotate-left"></i> Son Siparişleriniz</h3>
-                    </div>
-                    {% if siparisler %}
-                        <ul class="order-history-list">
-                            {% for s in siparisler %}
-                            <li>
-                                <div>
-                                    <strong>{{ s.siparis_no }}</strong>
-                                    <small>{{ s.durum }}</small>
-                                </div>
-                                <span class="order-amount">{{ "%.2f"|format(s.toplam_tutar|float) }} ₺</span>
-                            </li>
-                            {% endfor %}
-                        </ul>
-                    {% else %}
-                        <p class="empty-cart">Henüz kayıtlı siparişiniz yok.</p>
-                    {% endif %}
-                </div>
-            </div>
-        </div>
+  <!-- Sol Menü (7 Sekme) -->
+  <aside class="w-full lg:w-64 bg-slate-900 border-b lg:border-b-0 lg:border-r border-slate-800 flex-shrink-0">
+    <div class="p-5 border-b border-slate-800">
+      <div class="text-xs font-semibold uppercase tracking-wider text-amber-400">Düzgünler B2B Bayi</div>
+      <h1 class="text-base font-bold text-white mt-1 truncate">{{ session.get('dzg_firma_unvani', 'Bayi Paneli') }}</h1>
+      <p class="text-xs text-slate-400 mt-0.5">{{ session.get('dzg_yetkili', '') }} • %{{ "%.1f"|format(iskonto) }} İskonto</p>
     </div>
 
-    <script>
-        let sepet = [];
+    {% set b2b_tabs = [
+      ('ozet', 'Özet'),
+      ('urunler', 'Ürünler'),
+      ('siparislerim', 'Siparişlerim (' ~ (siparisler|length) ~ ')'),
+      ('gecmis-odemelerim', 'Geçmiş Ödemelerim (' ~ (odemeler|length) ~ ')'),
+      ('ekstre', 'Ekstre'),
+      ('guncel-katalog', 'Güncel Katalog'),
+      ('odeme-yap', 'Ödeme Yap')
+    ] %}
 
-        function sepeteEkle(kod, ad, fiyat, qtyId) {
-            const adet = parseInt(document.getElementById(qtyId).value) || 1;
-            const mevcut = sepet.find(item => item.kod === kod);
-            if (mevcut) {
-                mevcut.adet += adet;
-            } else {
-                sepet.push({ kod, ad, fiyat, adet });
-            }
-            sepetiCiz();
-        }
+    <nav class="p-3 flex lg:flex-col gap-1 overflow-x-auto">
+      {% for key, label in b2b_tabs %}
+        <a href="{{ url_for('duzgunler.b2b_panel', sekme=key) }}"
+           class="whitespace-nowrap px-3.5 py-2.5 rounded-lg text-sm transition
+           {% if sekme == key %}
+             bg-amber-500 text-slate-950 font-semibold
+           {% else %}
+             text-slate-300 hover:bg-slate-800 hover:text-white
+           {% endif %}">
+          {{ label }}
+        </a>
+      {% endfor %}
+    </nav>
 
-        function sepetiCiz() {
-            const container = document.getElementById("cartItems");
-            const totalEl = document.getElementById("cartTotal");
-            if (sepet.length === 0) {
-                container.innerHTML = '<p class="empty-cart">Sepetinizde henüz ürün bulunmuyor.</p>';
-                totalEl.textContent = "0.00 ₺";
-                return;
-            }
-            let toplam = 0;
-            container.innerHTML = sepet.map((item, idx) => {
-                const ara = item.fiyat * item.adet;
-                toplam += ara;
-                return `
-                    <div class="cart-item-row">
-                        <div>
-                            <strong>${item.ad}</strong>
-                            <small>${item.adet} x ${item.fiyat.toFixed(2)} ₺</small>
-                        </div>
-                        <div style="text-align:right;">
-                            <span>${ara.toFixed(2)} ₺</span>
-                            <button onclick="sepetSil(${idx})" class="del-btn">&times;</button>
-                        </div>
-                    </div>
-                `;
-            }).join("");
-            totalEl.textContent = toplam.toFixed(2) + " ₺";
-        }
+    <div class="p-4 border-t border-slate-800 flex items-center justify-between gap-2">
+      <a href="{{ url_for('duzgunler.index') }}" class="text-xs text-slate-400 hover:text-white">Vitrin</a>
+      <a href="{{ url_for('duzgunler.cikis') }}" class="px-3 py-1.5 rounded-lg bg-red-500/15 text-red-300 border border-red-500/30 text-xs">Çıkış</a>
+    </div>
+  </aside>
 
-        function sepetSil(idx) {
-            sepet.splice(idx, 1);
-            sepetiCiz();
-        }
+  <!-- Ana İçerik -->
+  <main class="flex-1 p-4 lg:p-8 max-w-7xl w-full mx-auto space-y-6">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="space-y-2">
+          {% for cat, msg in messages %}
+            <div class="p-3.5 rounded-xl text-sm border
+              {% if cat == 'success' %}bg-emerald-500/10 border-emerald-500/30 text-emerald-300
+              {% elif cat == 'danger' %}bg-red-500/10 border-red-500/30 text-red-300
+              {% else %}bg-amber-500/10 border-amber-500/30 text-amber-300{% endif %}">
+              {{ msg }}
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
 
-        async function siparisiTamamla() {
-            if (sepet.length === 0) {
-                alert("Lütfen önce sepete ürün ekleyiniz.");
-                return;
-            }
-            const toplam = sepet.reduce((acc, i) => acc + (i.fiyat * i.adet), 0);
-            const kalemler = sepet.map(i => `${i.kod} (${i.adet} adet)`).join(", ");
-            const not = document.getElementById("orderNote").value + " | Kalemler: " + kalemler;
+    <!-- 1. ÖZET -->
+    {% if sekme == 'ozet' %}
+      <div class="space-y-6">
+        <h2 class="text-2xl font-bold text-white">Bayi Özet Ekranı</h2>
 
-            const res = await fetch("{{ url_for('duzgunler.siparis_ver') }}", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ toplam_tutar: toplam.toFixed(2), notlar: not })
-            });
-            const data = await res.json();
-            if (data.ok) {
-                alert(data.mesaj);
-                location.reload();
-            } else {
-                alert("Hata: " + data.mesaj);
-            }
-        }
-    </script>
+        <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+          <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+            <div class="text-xs text-slate-400">Tanımlı Bayi İskontosu</div>
+            <div class="text-2xl font-bold text-amber-400 mt-1">%{{ "%.1f"|format(iskonto) }}</div>
+          </div>
+          <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+            <div class="text-xs text-slate-400">Toplam Sipariş Hacmi</div>
+            <div class="text-2xl font-bold text-white mt-1">{{ "%.2f"|format(toplam_siparis) }} ₺</div>
+          </div>
+          <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+            <div class="text-xs text-slate-400">Toplam Yapılan Ödeme</div>
+            <div class="text-2xl font-bold text-emerald-400 mt-1">{{ "%.2f"|format(toplam_odenen) }} ₺</div>
+          </div>
+          <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+            <div class="text-xs text-slate-400">Güncel Bakiye (Ekstre)</div>
+            <div class="text-2xl font-bold {{ 'text-rose-400' if acik_bakiye > 0 else 'text-emerald-400' }} mt-1">
+              {{ "%.2f"|format(acik_bakiye) }} ₺
+            </div>
+          </div>
+        </div>
+
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-base font-semibold text-white">Son Siparişlerim</h3>
+            <a href="{{ url_for('duzgunler.b2b_panel', sekme='siparislerim') }}" class="text-xs text-amber-400 hover:underline">Tümünü gör →</a>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm text-left">
+              <thead class="text-xs uppercase text-slate-400 border-b border-slate-800">
+                <tr>
+                  <th class="py-2.5 px-3">Sipariş No</th>
+                  <th class="py-2.5 px-3">Tutar</th>
+                  <th class="py-2.5 px-3">Durum</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-800">
+                {% for s in siparisler[:5] %}
+                  <tr>
+                    <td class="py-2.5 px-3 font-mono text-amber-400">{{ s.siparis_no }}</td>
+                    <td class="py-2.5 px-3 font-semibold text-emerald-400">{{ "%.2f"|format(s.toplam_tutar) }} ₺</td>
+                    <td class="py-2.5 px-3 text-xs">{{ s.durum }}</td>
+                  </tr>
+                {% else %}
+                  <tr><td colspan="3" class="py-4 text-center text-slate-500">Henüz siparişiniz bulunmuyor.</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+    <!-- 2. ÜRÜNLER -->
+    {% elif sekme == 'urunler' %}
+      <div class="space-y-6">
+        <div class="flex flex-wrap items-center justify-between gap-4">
+          <h2 class="text-2xl font-bold text-white">Bayi Ürünleri & Hızlı Sipariş</h2>
+          <div class="bg-slate-900 border border-amber-500/30 rounded-xl px-4 py-2.5 flex flex-wrap items-center gap-3">
+            <div>
+              <div class="text-xs text-slate-400">Sepet Tutarı</div>
+              <div id="sepetTutarText" class="text-lg font-bold text-amber-400">0.00 ₺</div>
+            </div>
+            <input id="siparisNotInput" type="text" placeholder="Sipariş notu..." class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs">
+            <button onclick="siparisGonder()" class="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold text-xs">
+              Siparişi Tamamla
+            </button>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {% for u in urunler %}
+            {% set net_fiyat = (u.liste_fiyati | float) * carpan %}
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 flex flex-col justify-between space-y-4">
+              <div>
+                <div class="flex items-center justify-between text-xs text-slate-400">
+                  <span class="font-mono text-amber-400">{{ u.stok_kodu }}</span>
+                  <span>Stok: {{ u.stok_adedi }} {{ u.birim }}</span>
+                </div>
+                <h3 class="text-base font-semibold text-white mt-1">{{ u.urun_adi }}</h3>
+                <p class="text-xs text-slate-400 mt-1">{{ u.aciklama or u.kategori }}</p>
+              </div>
+              <div class="pt-3 border-t border-slate-800 flex items-center justify-between">
+                <div>
+                  <div class="text-xs text-slate-500 line-through">{{ "%.2f"|format(u.liste_fiyati) }} ₺</div>
+                  <div class="text-lg font-bold text-emerald-400">{{ "%.2f"|format(net_fiyat) }} ₺</div>
+                </div>
+                <button onclick="sepeteEkle({{ "%.2f"|format(net_fiyat) }})"
+                        class="px-3.5 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold text-xs">
+                  + Sepete Ekle
+                </button>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+
+    <!-- 3. SİPARİŞLERİM -->
+    {% elif sekme == 'siparislerim' %}
+      <div class="space-y-6">
+        <h2 class="text-2xl font-bold text-white">Siparişlerim</h2>
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 overflow-x-auto">
+          <table class="w-full text-sm text-left">
+            <thead class="text-xs uppercase text-slate-400 border-b border-slate-800">
+              <tr>
+                <th class="py-3 px-3">Sipariş No</th>
+                <th class="py-3 px-3">Tutar</th>
+                <th class="py-3 px-3">Durum</th>
+                <th class="py-3 px-3">Notlar</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800">
+              {% for s in siparisler %}
+                <tr>
+                  <td class="py-3 px-3 font-mono text-amber-400">{{ s.siparis_no }}</td>
+                  <td class="py-3 px-3 font-semibold text-emerald-400">{{ "%.2f"|format(s.toplam_tutar) }} ₺</td>
+                  <td class="py-3 px-3 text-xs">{{ s.durum }}</td>
+                  <td class="py-3 px-3 text-xs text-slate-400">{{ s.notlar or '-' }}</td>
+                </tr>
+              {% else %}
+                <tr><td colspan="4" class="py-6 text-center text-slate-500">Kayıtlı siparişiniz bulunmuyor.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    <!-- 4. GEÇMİŞ ÖDEMELERİM -->
+    {% elif sekme == 'gecmis-odemelerim' %}
+      <div class="space-y-6">
+        <div class="flex items-center justify-between">
+          <h2 class="text-2xl font-bold text-white">Geçmiş Ödemelerim</h2>
+          <a href="{{ url_for('duzgunler.b2b_panel', sekme='odeme-yap') }}" class="px-4 py-2 rounded-lg bg-amber-500 text-slate-950 font-semibold text-xs">
+            + Yeni Ödeme Bildir
+          </a>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 overflow-x-auto">
+          <table class="w-full text-sm text-left">
+            <thead class="text-xs uppercase text-slate-400 border-b border-slate-800">
+              <tr>
+                <th class="py-3 px-3">Yöntem</th>
+                <th class="py-3 px-3">Tutar</th>
+                <th class="py-3 px-3">Açıklama</th>
+                <th class="py-3 px-3">Durum</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800">
+              {% for o in odemeler %}
+                <tr>
+                  <td class="py-3 px-3 font-medium text-white">{{ o.odeme_yontemi }}</td>
+                  <td class="py-3 px-3 font-semibold text-emerald-400">{{ "%.2f"|format(o.tutar) }} ₺</td>
+                  <td class="py-3 px-3 text-xs text-slate-400">{{ o.aciklama or '-' }}</td>
+                  <td class="py-3 px-3 text-xs text-amber-300">{{ o.durum }}</td>
+                </tr>
+              {% else %}
+                <tr><td colspan="4" class="py-6 text-center text-slate-500">Henüz ödeme kaydınız yok.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    <!-- 5. EKSTRE -->
+    {% elif sekme == 'ekstre' %}
+      <div class="space-y-6">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <h2 class="text-2xl font-bold text-white">Cari Hesap Ekstresi</h2>
+          <div class="text-sm font-semibold {{ 'text-rose-400' if acik_bakiye > 0 else 'text-emerald-400' }}">
+            Net Bakiye: {{ "%.2f"|format(acik_bakiye) }} ₺
+          </div>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 overflow-x-auto">
+          <table class="w-full text-sm text-left">
+            <thead class="text-xs uppercase text-slate-400 border-b border-slate-800">
+              <tr>
+                <th class="py-3 px-3">İşlem Türü</th>
+                <th class="py-3 px-3">Açıklama</th>
+                <th class="py-3 px-3">Borç</th>
+                <th class="py-3 px-3">Alacak</th>
+                <th class="py-3 px-3">Bakiye</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800">
+              {% for h in ekstre_hareketleri %}
+                <tr>
+                  <td class="py-3 px-3 text-xs font-semibold {{ 'text-amber-400' if h.tur == 'Sipariş' else 'text-emerald-400' }}">{{ h.tur }}</td>
+                  <td class="py-3 px-3 text-xs text-slate-300">{{ h.aciklama }}</td>
+                  <td class="py-3 px-3 text-rose-300">{{ "%.2f"|format(h.borc) if h.borc > 0 else '-' }}</td>
+                  <td class="py-3 px-3 text-emerald-300">{{ "%.2f"|format(h.alacak) if h.alacak > 0 else '-' }}</td>
+                  <td class="py-3 px-3 font-semibold text-white">{{ "%.2f"|format(h.bakiye) }} ₺</td>
+                </tr>
+              {% else %}
+                <tr><td colspan="5" class="py-6 text-center text-slate-500">Ekstre hareketi bulunmuyor.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    <!-- 6. GÜNCEL KATALOG -->
+    {% elif sekme == 'guncel-katalog' %}
+      <div class="space-y-6">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <h2 class="text-2xl font-bold text-white">Güncel Ürün Kataloğu</h2>
+          <input id="katalogArama" type="text" oninput="katalogFiltrele()" placeholder="Stok kodu, ürün veya kategori ara..."
+                 class="w-full sm:w-80 bg-slate-900 border border-slate-700 rounded-xl px-4 py-2 text-sm">
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 overflow-x-auto">
+          <table id="katalogTablo" class="w-full text-sm text-left">
+            <thead class="text-xs uppercase text-slate-400 border-b border-slate-800">
+              <tr>
+                <th class="py-3 px-3">Stok Kodu</th>
+                <th class="py-3 px-3">Ürün Adı</th>
+                <th class="py-3 px-3">Kategori / Seri</th>
+                <th class="py-3 px-3">Stok</th>
+                <th class="py-3 px-3">Liste Fiyatı</th>
+                <th class="py-3 px-3">Net Bayi Fiyatı</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800">
+              {% for u in urunler %}
+                {% set net_fiyat = (u.liste_fiyati | float) * carpan %}
+                <tr class="katalog-satir">
+                  <td class="py-3 px-3 font-mono text-xs text-amber-400">{{ u.stok_kodu }}</td>
+                  <td class="py-3 px-3 font-medium text-white">{{ u.urun_adi }}</td>
+                  <td class="py-3 px-3 text-xs text-slate-400">{{ u.kategori }} {% if u.seri %}• {{ u.seri }}{% endif %}</td>
+                  <td class="py-3 px-3 text-xs">{{ u.stok_adedi }} {{ u.birim }}</td>
+                  <td class="py-3 px-3 text-slate-400">{{ "%.2f"|format(u.liste_fiyati) }} ₺</td>
+                  <td class="py-3 px-3 font-semibold text-emerald-400">{{ "%.2f"|format(net_fiyat) }} ₺</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    <!-- 7. ÖDEME YAP -->
+    {% elif sekme == 'odeme-yap' %}
+      <div class="max-w-2xl space-y-6">
+        <h2 class="text-2xl font-bold text-white">Ödeme Yap / Ödeme Bildirimi</h2>
+
+        {% if odeme_yontemleri %}
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {% for oy in odeme_yontemleri %}
+              <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+                <div class="text-sm font-semibold text-amber-400">{{ oy.baslik }}</div>
+                <div class="text-xs text-slate-400 mt-1">{{ oy.aciklama or '' }}</div>
+                {% if oy.iban_veya_detay %}
+                  <div class="text-xs font-mono text-slate-200 bg-slate-950 border border-slate-800 rounded p-2 mt-2 break-all">
+                    {{ oy.iban_veya_detay }}
+                  </div>
+                {% endif %}
+              </div>
+            {% endfor %}
+          </div>
+        {% endif %}
+
+        <form method="POST" action="{{ url_for('duzgunler.b2b_odeme_yap') }}"
+              class="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4">
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">Ödeme Tutarı (₺)</label>
+            <input type="number" step="0.01" min="0.01" name="tutar" required placeholder="Örn: 5000.00"
+                   class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3.5 py-2.5 text-sm">
+          </div>
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">Ödeme Yöntemi</label>
+            <select name="odeme_yontemi" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3.5 py-2.5 text-sm">
+              {% if odeme_yontemleri %}
+                {% for oy in odeme_yontemleri %}
+                  <option value="{{ oy.baslik }}">{{ oy.baslik }}</option>
+                {% endfor %}
+              {% else %}
+                <option value="Havale / EFT">Havale / EFT</option>
+                <option value="Vadeli Cari / B2B Mutabakat">Vadeli Cari / B2B Mutabakat</option>
+              {% endif %}
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">Açıklama / Dekont veya Fatura No</label>
+            <textarea name="aciklama" rows="3" placeholder="Gönderen adı, banka veya dekont bilgisi..."
+                      class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3.5 py-2.5 text-sm"></textarea>
+          </div>
+          <button type="submit" class="w-full py-2.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold text-sm">
+            Ödeme Bildirimini Gönder
+          </button>
+        </form>
+      </div>
+    {% endif %}
+  </main>
+
+  <script>
+    let sepetToplam = 0;
+    function sepeteEkle(fiyat) {
+      sepetToplam = Number((sepetToplam + Number(fiyat || 0)).toFixed(2));
+      const el = document.getElementById("sepetTutarText");
+      if (el) el.textContent = sepetToplam.toFixed(2) + " ₺";
+    }
+
+    async function siparisGonder() {
+      if (sepetToplam <= 0) {
+        alert("Önce sepete ürün ekleyin.");
+        return;
+      }
+      const notlar = document.getElementById("siparisNotInput")?.value || "";
+      const res = await fetch("{{ url_for('duzgunler.siparis_ver') }}", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ toplam_tutar: sepetToplam, notlar })
+      });
+      const data = await res.json();
+      alert(data.mesaj || "İşlem tamamlandı.");
+      if (data.ok) {
+        sepetToplam = 0;
+        window.location.href = "{{ url_for('duzgunler.b2b_panel', sekme='siparislerim') }}";
+      }
+    }
+
+    function katalogFiltrele() {
+      const q = (document.getElementById("katalogArama")?.value || "").toLowerCase().trim();
+      document.querySelectorAll(".katalog-satir").forEach((row) => {
+        row.style.display = row.textContent.toLowerCase().includes(q) ? "" : "none";
+      });
+    }
+  </script>
 </body>
 </html>
