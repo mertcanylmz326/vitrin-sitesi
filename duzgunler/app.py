@@ -68,13 +68,14 @@ def get_db_connection():
 
 
 def init_db():
-    """Supabase PostgreSQL üzerinde Düzgünler Elektrik B2B tablolarını ve örnek verileri oluşturur."""
+    """Supabase PostgreSQL üzerinde Düzgünler Elektrik B2B tablolarını ve varsayılan verileri oluşturur."""
     conn = None
     cur = None
     try:
         conn = get_db_connection()
         cur = conn.cursor()
 
+        # 1. Mevcut Ana B2B Tabloları
         cur.execute("""
             CREATE TABLE IF NOT EXISTS b2b_bayiler (
                 id SERIAL PRIMARY KEY,
@@ -135,6 +136,57 @@ def init_db():
             );
         """)
 
+        # 2. Yeni Admin Modülleri İçin Tablolar
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS b2b_odeme_yontemleri (
+                id SERIAL PRIMARY KEY,
+                kod VARCHAR(50) UNIQUE NOT NULL,
+                baslik VARCHAR(150) NOT NULL,
+                aciklama TEXT,
+                iban_veya_detay TEXT,
+                aktif BOOLEAN DEFAULT TRUE,
+                sira_no INTEGER DEFAULT 1
+            );
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS b2b_icerikler (
+                id SERIAL PRIMARY KEY,
+                bolum VARCHAR(50) NOT NULL,
+                slug VARCHAR(120) UNIQUE NOT NULL,
+                baslik VARCHAR(200) NOT NULL,
+                icerik TEXT,
+                guncelleme_tarihi TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS b2b_iletisim_formlari (
+                id SERIAL PRIMARY KEY,
+                form_turu VARCHAR(80) DEFAULT 'İletişim Formu',
+                ad_soyad VARCHAR(150) NOT NULL,
+                firma VARCHAR(200),
+                telefon VARCHAR(40),
+                email VARCHAR(150),
+                mesaj TEXT NOT NULL,
+                durum VARCHAR(30) DEFAULT 'yeni',
+                olusturma_tarihi TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS b2b_yoneticiler (
+                id SERIAL PRIMARY KEY,
+                kullanici_adi VARCHAR(100) UNIQUE NOT NULL,
+                ad_soyad VARCHAR(150) NOT NULL,
+                rol VARCHAR(40) DEFAULT 'admin',
+                sifre_hash TEXT NOT NULL,
+                aktif BOOLEAN DEFAULT TRUE,
+                olusturma_tarihi TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        # 3. Varsayılan Plasiyer & Bayi & Ürün Verileri
         cur.execute("SELECT id FROM b2b_plasiyerler WHERE plasiyer_kodu = %s", ("PLS-001",))
         if not cur.fetchone():
             cur.execute("""
@@ -183,6 +235,35 @@ def init_db():
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, sample_products)
 
+        # 4. Varsayılan Ödeme Yöntemleri
+        default_payments = [
+            ("HAVALE_EFT", "Havale / EFT", "Banka transferi ile sipariş onayı.", "TR00 0000 0000 0000 0000 0000 00 — Düzgünler Elektrik", True, 1),
+            ("CARI_VADE", "Vadeli Cari / B2B Mutabakat", "Anlaşmalı bayilere tanımlı vade ve iskonto üzerinden.", "Onaylı bayilik hesabına işlenir.", True, 2),
+            ("KAPIDA_ODEME", "Kapıda Ödeme", "Seçili bölge ve tutarlarda teslimatta ödeme.", "Teslimat bölgesine göre aktif edilir.", False, 3),
+        ]
+        for kod, baslik, aciklama, detay, aktif, sira in default_payments:
+            cur.execute("""
+                INSERT INTO b2b_odeme_yontemleri (kod, baslik, aciklama, iban_veya_detay, aktif, sira_no)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (kod) DO NOTHING
+            """, (kod, baslik, aciklama, detay, aktif, sira))
+
+        # 5. Varsayılan İçerikler (Hakkımızda, İletişim, Sayfalar, Sözleşmeler)
+        default_contents = [
+            ("hakkimizda", "hakkimizda", "Hakkımızda", "Düzgünler Elektrik; anahtar-priz, LED aydınlatma, şalt-pano, kablo grupları ve endüstriyel elektrik ürünlerinde bayi ve saha satış ağına hizmet verir."),
+            ("iletisim", "iletisim-bilgileri", "İletişim Bilgileri", "Merkez: İstanbul | E-posta: info@duzgunlerelektrik.com | Telefon: 0216 000 00 00"),
+            ("sayfa", "bayilik-kosullari", "Bayilik Koşulları Sayfası", "Yetkili bayilerimize özel iskonto tanımları, stok önceliği ve plasiyer destek hattı sunulmaktadır."),
+            ("sayfa", "sss", "Sıkça Sorulan Sorular", "Bayilik başvurusu onaylandıktan sonra B2B panelden iskonto oranınızla sipariş oluşturabilirsiniz."),
+            ("sozlesme", "bayilik-sozlesmesi", "B2B Bayilik Sözleşmesi", "İşbu sözleşme, Düzgünler Elektrik ile yetkili bayi arasındaki ticari şartları, ödeme vadelerini ve teslimat esaslarını düzenler."),
+            ("sozlesme", "kvkk-aydinlatma", "KVKK Aydınlatma Metni", "6698 sayılı Kişisel Verilerin Korunması Kanunu kapsamında bayi ve iletişim verileri yalnızca hizmet süreçleri için işlenir."),
+        ]
+        for bolum, slug, baslik, icerik in default_contents:
+            cur.execute("""
+                INSERT INTO b2b_icerikler (bolum, slug, baslik, icerik)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (slug) DO NOTHING
+            """, (bolum, slug, baslik, icerik))
+
         conn.commit()
     except Exception as e:
         if conn:
@@ -213,10 +294,14 @@ def login_required(role=None):
 def dzg_admin_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        if not DZG_ADMIN_ENABLED or not session.get("dzg_admin_auth"):
+        if not session.get("dzg_admin_auth"):
             return redirect(url_for("duzgunler.admin_login"))
         return f(*args, **kwargs)
     return decorated
+
+
+def _admin_redirect(sekme="gosterge"):
+    return redirect(url_for("duzgunler.admin_panel", sekme=sekme))
 
 
 @duzgunler_bp.route("/")
@@ -498,27 +583,51 @@ def cikis():
 
 
 # ---------------------------------------------------------------------------
-# Düzgünler B2B Yönetim (Admin) Paneli
+# Düzgünler B2B Yönetim (Admin) Paneli — 16 Modüllü Tam Yapı
 # ---------------------------------------------------------------------------
 @duzgunler_bp.route("/admin/login", methods=["GET", "POST"])
 def admin_login():
     error = None
-    if not DZG_ADMIN_ENABLED:
-        error = "Yönetici girişi kapalı: Render'da DZG_ADMIN_USER ve DZG_ADMIN_PASS ortam değişkenlerini tanımlayın."
-        return dzg_render("admin_login.html", error=error)
-
     if session.get("dzg_admin_auth"):
         return redirect(url_for("duzgunler.admin_panel"))
 
     if request.method == "POST":
-        u = request.form.get("username", "").strip().encode("utf-8")
-        p = request.form.get("password", "").strip().encode("utf-8")
-        ok_u = hmac.compare_digest(u, DZG_ADMIN_USER.encode("utf-8"))
-        ok_p = hmac.compare_digest(p, DZG_ADMIN_PASS.encode("utf-8"))
-        if ok_u and ok_p:
-            session["dzg_admin_auth"] = True
-            return redirect(url_for("duzgunler.admin_panel"))
-        error = "Yönetici kullanıcı adı veya şifresi hatalı."
+        u_raw = request.form.get("username", "").strip()
+        p_raw = request.form.get("password", "").strip()
+
+        # 1) Env üzerinden tanımlı yönetici kontrolü
+        if DZG_ADMIN_ENABLED:
+            ok_u = hmac.compare_digest(u_raw.encode("utf-8"), DZG_ADMIN_USER.encode("utf-8"))
+            ok_p = hmac.compare_digest(p_raw.encode("utf-8"), DZG_ADMIN_PASS.encode("utf-8"))
+            if ok_u and ok_p:
+                session["dzg_admin_auth"] = True
+                session["dzg_admin_name"] = u_raw
+                return redirect(url_for("duzgunler.admin_panel"))
+
+        # 2) Veritabanındaki b2b_yoneticiler tablosundan kontrol
+        conn = None
+        cur = None
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM b2b_yoneticiler WHERE kullanici_adi = %s AND aktif = TRUE", (u_raw,))
+            yonetici = cur.fetchone()
+            if yonetici and check_password_hash(yonetici["sifre_hash"], p_raw):
+                session["dzg_admin_auth"] = True
+                session["dzg_admin_name"] = yonetici["ad_soyad"]
+                return redirect(url_for("duzgunler.admin_panel"))
+        except Exception:
+            pass
+        finally:
+            if cur:
+                cur.close()
+            if conn:
+                conn.close()
+
+        if not DZG_ADMIN_ENABLED:
+            error = "Yönetici girişi kapalı: Render'da DZG_ADMIN_USER ve DZG_ADMIN_PASS tanımlayın veya veritabanına yönetici ekleyin."
+        else:
+            error = "Yönetici kullanıcı adı veya şifresi hatalı."
 
     return dzg_render("admin_login.html", error=error)
 
@@ -526,20 +635,26 @@ def admin_login():
 @duzgunler_bp.route("/admin/logout", methods=["POST"])
 def admin_logout():
     session.pop("dzg_admin_auth", None)
+    session.pop("dzg_admin_name", None)
     return redirect(url_for("duzgunler.admin_login"))
 
 
 @duzgunler_bp.route("/admin")
 @dzg_admin_required
 def admin_panel():
+    sekme = request.args.get("sekme", "gosterge").strip()
     conn = get_db_connection()
     cur = conn.cursor()
+
     cur.execute("SELECT * FROM b2b_bayiler ORDER BY olusturma_tarihi DESC")
     bayiler = cur.fetchall()
+
     cur.execute("SELECT * FROM b2b_plasiyerler ORDER BY id DESC")
     plasiyerler = cur.fetchall()
+
     cur.execute("SELECT * FROM b2b_urunler ORDER BY kategori, id DESC")
     urunler = cur.fetchall()
+
     cur.execute("""
         SELECT s.*, b.firma_unvani, p.ad_soyad AS plasiyer_adi
         FROM b2b_siparisler s
@@ -548,26 +663,52 @@ def admin_panel():
         ORDER BY s.olusturma_tarihi DESC
     """)
     siparisler = cur.fetchall()
+
+    cur.execute("SELECT * FROM b2b_odeme_yontemleri ORDER BY sira_no ASC, id ASC")
+    odeme_yontemleri = cur.fetchall()
+
+    cur.execute("SELECT * FROM b2b_icerikler ORDER BY bolum ASC, id ASC")
+    icerikler = cur.fetchall()
+
+    cur.execute("SELECT * FROM b2b_iletisim_formlari ORDER BY olusturma_tarihi DESC")
+    formlar = cur.fetchall()
+
+    cur.execute("SELECT id, kullanici_adi, ad_soyad, rol, aktif, olusturma_tarihi FROM b2b_yoneticiler ORDER BY id ASC")
+    yoneticiler = cur.fetchall()
+
     cur.close()
     conn.close()
 
     toplam_ciro = sum(float(s["toplam_tutar"] or 0) for s in siparisler if s["durum"] != "İptal")
+    bekleyen_basvurular = [b for b in bayiler if b["durum"] == "beklemede"]
+    yeni_formlar = [f for f in formlar if f["durum"] == "yeni"]
+
     return dzg_render(
         "admin_panel.html",
+        sekme=sekme,
         bayiler=bayiler,
+        bekleyen_basvurular=bekleyen_basvurular,
         plasiyerler=plasiyerler,
         urunler=urunler,
         siparisler=siparisler,
+        odeme_yontemleri=odeme_yontemleri,
+        icerikler=icerikler,
+        formlar=formlar,
+        yeni_formlar=yeni_formlar,
+        yoneticiler=yoneticiler,
         toplam_ciro=toplam_ciro,
+        env_admin_aktif=DZG_ADMIN_ENABLED,
     )
 
 
+# --- Müşteriler & Bayilik Başvuruları ---
 @duzgunler_bp.route("/admin/bayi/<int:bayi_id>/guncelle", methods=["POST"])
 @dzg_admin_required
 def admin_bayi_guncelle(bayi_id):
     iskonto = request.form.get("iskonto_orani", 15)
     durum = request.form.get("durum", "aktif")
     yeni_sifre = request.form.get("yeni_sifre", "").strip()
+    sekme = request.form.get("sekme", "musteriler")
     conn = None
     cur = None
     try:
@@ -594,12 +735,13 @@ def admin_bayi_guncelle(bayi_id):
             cur.close()
         if conn:
             conn.close()
-    return redirect(url_for("duzgunler.admin_panel") + "#bayiler")
+    return _admin_redirect(sekme)
 
 
 @duzgunler_bp.route("/admin/bayi/<int:bayi_id>/sil", methods=["POST"])
 @dzg_admin_required
 def admin_bayi_sil(bayi_id):
+    sekme = request.form.get("sekme", "musteriler")
     conn = None
     cur = None
     try:
@@ -617,69 +759,10 @@ def admin_bayi_sil(bayi_id):
             cur.close()
         if conn:
             conn.close()
-    return redirect(url_for("duzgunler.admin_panel") + "#bayiler")
+    return _admin_redirect(sekme)
 
 
-@duzgunler_bp.route("/admin/plasiyer/ekle", methods=["POST"])
-@dzg_admin_required
-def admin_plasiyer_ekle():
-    kod = request.form.get("plasiyer_kodu", "").strip().upper()
-    ad_soyad = request.form.get("ad_soyad", "").strip()
-    bolge = request.form.get("bolge", "").strip()
-    telefon = request.form.get("telefon", "").strip()
-    email = request.form.get("email", "").strip().lower()
-    sifre = request.form.get("sifre", "").strip()
-
-    if not all([kod, ad_soyad, bolge, email, sifre]):
-        flash("Plasiyer eklemek için tüm zorunlu alanları doldurun.", "danger")
-        return redirect(url_for("duzgunler.admin_panel") + "#plasiyerler")
-
-    conn = None
-    cur = None
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO b2b_plasiyerler (plasiyer_kodu, ad_soyad, bolge, telefon, email, sifre_hash, aktif)
-            VALUES (%s, %s, %s, %s, %s, %s, TRUE)
-        """, (kod, ad_soyad, bolge, telefon, email, generate_password_hash(sifre)))
-        conn.commit()
-        flash(f"{ad_soyad} ({kod}) plasiyer olarak eklendi.", "success")
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        flash(f"Plasiyer ekleme hatası: {e}", "danger")
-    finally:
-        if cur:
-            cur.close()
-        if conn:
-            conn.close()
-    return redirect(url_for("duzgunler.admin_panel") + "#plasiyerler")
-
-
-@duzgunler_bp.route("/admin/plasiyer/<int:plasiyer_id>/durum", methods=["POST"])
-@dzg_admin_required
-def admin_plasiyer_durum(plasiyer_id):
-    conn = None
-    cur = None
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("UPDATE b2b_plasiyerler SET aktif = NOT aktif WHERE id = %s", (plasiyer_id,))
-        conn.commit()
-        flash("Plasiyer aktiflik durumu değiştirildi.", "success")
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        flash(f"Hata: {e}", "danger")
-    finally:
-        if cur:
-            cur.close()
-        if conn:
-            conn.close()
-    return redirect(url_for("duzgunler.admin_panel") + "#plasiyerler")
-
-
+# --- Katalog ---
 @duzgunler_bp.route("/admin/urun/ekle", methods=["POST"])
 @dzg_admin_required
 def admin_urun_ekle():
@@ -695,7 +778,7 @@ def admin_urun_ekle():
 
     if not stok_kodu or not urun_adi:
         flash("Stok kodu ve ürün adı zorunludur.", "danger")
-        return redirect(url_for("duzgunler.admin_panel") + "#urunler")
+        return _admin_redirect("katalog")
 
     conn = None
     cur = None
@@ -717,7 +800,7 @@ def admin_urun_ekle():
             cur.close()
         if conn:
             conn.close()
-    return redirect(url_for("duzgunler.admin_panel") + "#urunler")
+    return _admin_redirect("katalog")
 
 
 @duzgunler_bp.route("/admin/urun/<int:urun_id>/guncelle", methods=["POST"])
@@ -745,7 +828,7 @@ def admin_urun_guncelle(urun_id):
             cur.close()
         if conn:
             conn.close()
-    return redirect(url_for("duzgunler.admin_panel") + "#urunler")
+    return _admin_redirect("katalog")
 
 
 @duzgunler_bp.route("/admin/urun/<int:urun_id>/sil", methods=["POST"])
@@ -768,9 +851,10 @@ def admin_urun_sil(urun_id):
             cur.close()
         if conn:
             conn.close()
-    return redirect(url_for("duzgunler.admin_panel") + "#urunler")
+    return _admin_redirect("katalog")
 
 
+# --- Siparişler ---
 @duzgunler_bp.route("/admin/siparis/<int:siparis_id>/durum", methods=["POST"])
 @dzg_admin_required
 def admin_siparis_durum(siparis_id):
@@ -792,4 +876,304 @@ def admin_siparis_durum(siparis_id):
             cur.close()
         if conn:
             conn.close()
-    return redirect(url_for("duzgunler.admin_panel") + "#siparisler")
+    return _admin_redirect("siparisler")
+
+
+# --- Ödeme Yöntemleri ---
+@duzgunler_bp.route("/admin/odeme/ekle", methods=["POST"])
+@dzg_admin_required
+def admin_odeme_ekle():
+    kod = request.form.get("kod", "").strip().upper()
+    baslik = request.form.get("baslik", "").strip()
+    aciklama = request.form.get("aciklama", "").strip()
+    detay = request.form.get("iban_veya_detay", "").strip()
+    sira_no = int(request.form.get("sira_no", "1") or "1")
+    if not kod or not baslik:
+        flash("Ödeme kodu ve başlığı zorunludur.", "danger")
+        return _admin_redirect("odemeler")
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO b2b_odeme_yontemleri (kod, baslik, aciklama, iban_veya_detay, aktif, sira_no)
+            VALUES (%s, %s, %s, %s, TRUE, %s)
+        """, (kod, baslik, aciklama, detay, sira_no))
+        conn.commit()
+        flash("Yeni ödeme yöntemi eklendi.", "success")
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        flash(f"Ödeme yöntemi hatası: {e}", "danger")
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+    return _admin_redirect("odemeler")
+
+
+@duzgunler_bp.route("/admin/odeme/<int:odeme_id>/guncelle", methods=["POST"])
+@dzg_admin_required
+def admin_odeme_guncelle(odeme_id):
+    baslik = request.form.get("baslik", "").strip()
+    aciklama = request.form.get("aciklama", "").strip()
+    detay = request.form.get("iban_veya_detay", "").strip()
+    aktif = request.form.get("aktif") == "1"
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE b2b_odeme_yontemleri
+            SET baslik = %s, aciklama = %s, iban_veya_detay = %s, aktif = %s
+            WHERE id = %s
+        """, (baslik, aciklama, detay, aktif, odeme_id))
+        conn.commit()
+        flash("Ödeme yöntemi güncellendi.", "success")
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        flash(f"Güncelleme hatası: {e}", "danger")
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+    return _admin_redirect("odemeler")
+
+
+# --- İçerik Yönetimi / Sayfalar / Sözleşmeler / İletişim / Hakkımızda ---
+@duzgunler_bp.route("/admin/icerik/kaydet", methods=["POST"])
+@dzg_admin_required
+def admin_icerik_kaydet():
+    bolum = request.form.get("bolum", "sayfa").strip()
+    slug = request.form.get("slug", "").strip().lower()
+    baslik = request.form.get("baslik", "").strip()
+    icerik = request.form.get("icerik", "").strip()
+    sekme = request.form.get("sekme", "icerik").strip()
+
+    if not slug or not baslik:
+        flash("İçerik slug ve başlığı zorunludur.", "danger")
+        return _admin_redirect(sekme)
+
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO b2b_icerikler (bolum, slug, baslik, icerik, guncelleme_tarihi)
+            VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (slug) DO UPDATE
+            SET bolum = EXCLUDED.bolum,
+                baslik = EXCLUDED.baslik,
+                icerik = EXCLUDED.icerik,
+                guncelleme_tarihi = CURRENT_TIMESTAMP
+        """, (bolum, slug, baslik, icerik))
+        conn.commit()
+        flash("İçerik başarıyla kaydedildi.", "success")
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        flash(f"İçerik kayıt hatası: {e}", "danger")
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+    return _admin_redirect(sekme)
+
+
+# --- Formlar & İletişim Formları ---
+@duzgunler_bp.route("/admin/form/ekle", methods=["POST"])
+@dzg_admin_required
+def admin_form_ekle():
+    form_turu = request.form.get("form_turu", "İletişim Formu").strip()
+    ad_soyad = request.form.get("ad_soyad", "").strip()
+    firma = request.form.get("firma", "").strip()
+    telefon = request.form.get("telefon", "").strip()
+    email = request.form.get("email", "").strip()
+    mesaj = request.form.get("mesaj", "").strip()
+    sekme = request.form.get("sekme", "iletisim-formlari").strip()
+
+    if not ad_soyad or not mesaj:
+        flash("Ad soyad ve mesaj zorunludur.", "danger")
+        return _admin_redirect(sekme)
+
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO b2b_iletisim_formlari (form_turu, ad_soyad, firma, telefon, email, mesaj, durum)
+            VALUES (%s, %s, %s, %s, %s, %s, 'yeni')
+        """, (form_turu, ad_soyad, firma, telefon, email, mesaj))
+        conn.commit()
+        flash("Form kaydı eklendi.", "success")
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        flash(f"Kayıt hatası: {e}", "danger")
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+    return _admin_redirect(sekme)
+
+
+@duzgunler_bp.route("/admin/form/<int:form_id>/durum", methods=["POST"])
+@dzg_admin_required
+def admin_form_durum(form_id):
+    durum = request.form.get("durum", "incelendi").strip()
+    sekme = request.form.get("sekme", "iletisim-formlari").strip()
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("UPDATE b2b_iletisim_formlari SET durum = %s WHERE id = %s", (durum, form_id))
+        conn.commit()
+        flash("Form durumu güncellendi.", "success")
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        flash(f"Güncelleme hatası: {e}", "danger")
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+    return _admin_redirect(sekme)
+
+
+# --- Satış Temsilcileri & Yöneticiler ---
+@duzgunler_bp.route("/admin/plasiyer/ekle", methods=["POST"])
+@dzg_admin_required
+def admin_plasiyer_ekle():
+    kod = request.form.get("plasiyer_kodu", "").strip().upper()
+    ad_soyad = request.form.get("ad_soyad", "").strip()
+    bolge = request.form.get("bolge", "").strip()
+    telefon = request.form.get("telefon", "").strip()
+    email = request.form.get("email", "").strip().lower()
+    sifre = request.form.get("sifre", "").strip()
+
+    if not all([kod, ad_soyad, bolge, email, sifre]):
+        flash("Satış temsilcisi eklemek için tüm zorunlu alanları doldurun.", "danger")
+        return _admin_redirect("satis-temsilcileri")
+
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO b2b_plasiyerler (plasiyer_kodu, ad_soyad, bolge, telefon, email, sifre_hash, aktif)
+            VALUES (%s, %s, %s, %s, %s, %s, TRUE)
+        """, (kod, ad_soyad, bolge, telefon, email, generate_password_hash(sifre)))
+        conn.commit()
+        flash(f"{ad_soyad} ({kod}) satış temsilcisi olarak eklendi.", "success")
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        flash(f"Ekleme hatası: {e}", "danger")
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+    return _admin_redirect("satis-temsilcileri")
+
+
+@duzgunler_bp.route("/admin/plasiyer/<int:plasiyer_id>/durum", methods=["POST"])
+@dzg_admin_required
+def admin_plasiyer_durum(plasiyer_id):
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("UPDATE b2b_plasiyerler SET aktif = NOT aktif WHERE id = %s", (plasiyer_id,))
+        conn.commit()
+        flash("Satış temsilcisi durumu değiştirildi.", "success")
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        flash(f"Hata: {e}", "danger")
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+    return _admin_redirect("satis-temsilcileri")
+
+
+@duzgunler_bp.route("/admin/yonetici/ekle", methods=["POST"])
+@dzg_admin_required
+def admin_yonetici_ekle():
+    kullanici_adi = request.form.get("kullanici_adi", "").strip()
+    ad_soyad = request.form.get("ad_soyad", "").strip()
+    rol = request.form.get("rol", "admin").strip()
+    sifre = request.form.get("sifre", "").strip()
+
+    if not all([kullanici_adi, ad_soyad, sifre]):
+        flash("Yönetici kullanıcı adı, ad soyad ve şifre zorunludur.", "danger")
+        return _admin_redirect("yoneticiler")
+
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO b2b_yoneticiler (kullanici_adi, ad_soyad, rol, sifre_hash, aktif)
+            VALUES (%s, %s, %s, %s, TRUE)
+        """, (kullanici_adi, ad_soyad, rol, generate_password_hash(sifre)))
+        conn.commit()
+        flash(f"{ad_soyad} yönetici olarak eklendi.", "success")
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        flash(f"Yönetici ekleme hatası: {e}", "danger")
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+    return _admin_redirect("yoneticiler")
+
+
+@duzgunler_bp.route("/admin/yonetici/<int:yonetici_id>/durum", methods=["POST"])
+@dzg_admin_required
+def admin_yonetici_durum(yonetici_id):
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("UPDATE b2b_yoneticiler SET aktif = NOT aktif WHERE id = %s", (yonetici_id,))
+        conn.commit()
+        flash("Yönetici aktiflik durumu güncellendi.", "success")
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        flash(f"Hata: {e}", "danger")
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+    return _admin_redirect("yoneticiler")
+
+
+# --- Yönetici Araçları ---
+@duzgunler_bp.route("/admin/araclar/db-yenile", methods=["POST"])
+@dzg_admin_required
+def admin_araclar_db_yenile():
+    init_db()
+    flash("Veritabanı tabloları ve varsayılan kayıtlar kontrol edildi / güncellendi.", "success")
+    return _admin_redirect("araclar")
