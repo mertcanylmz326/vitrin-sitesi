@@ -1,0 +1,119 @@
+:root {
+  --dzg-bg: #050811;
+  --dzg-surface: #0f172a;
+  --dzg-surface-2: #020617;
+  --dzg-border: #1e293b;
+  --dzg-accent: #f59e0b;
+  --dzg-accent-hover: #fbbf24;
+  --dzg-text: #f8fafc;
+  --dzg-muted: #94a3b8;
+}
+
+body.dzg-panel-body {
+  background:
+    radial-gradient(circle at 12% 0%, rgba(245, 158, 11, 0.08), transparent 36%),
+    radial-gradient(circle at 88% 12%, rgba(14, 165, 233, 0.07), transparent 34%),
+    var(--dzg-bg);
+  color: var(--dzg-text);
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.dzg-sidebar {
+  background: rgba(15, 23, 42, 0.94);
+  backdrop-filter: blur(10px);
+  border-color: var(--dzg-border);
+}
+
+.dzg-nav-link {
+  display: block;
+  padding: 0.58rem 0.85rem;
+  border-radius: 0.6rem;
+  font-size: 0.875rem;
+  color: #cbd5e1;
+  transition: background-color 0.16s ease, color 0.16s ease, transform 0.16s ease;
+}
+
+.dzg-nav-link:hover {
+  background-color: rgba(30, 41, 59, 0.85);
+  color: #ffffff;
+  transform: translateX(2px);
+}
+
+.dzg-nav-link.is-active {
+  background: linear-gradient(135deg, var(--dzg-accent), var(--dzg-accent-hover));
+  color: #020617;
+  font-weight: 700;
+  box-shadow: 0 6px 18px rgba(245, 158, 11, 0.22);
+}
+
+.dzg-card {
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid var(--dzg-border);
+  border-radius: 1rem;
+  box-shadow: 0 12px 28px rgba(2, 6, 23, 0.45);
+  transition: border-color 0.18s ease, transform 0.18s ease;
+}
+
+.dzg-card:hover {
+  border-color: rgba(245, 158, 11, 0.35);
+}
+
+.dzg-stat-card {
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(2, 6, 23, 0.92));
+  border: 1px solid var(--dzg-border);
+  border-radius: 1rem;
+  padding: 1.25rem;
+}
+
+.dzg-input,
+.dzg-select,
+.dzg-textarea {
+  background-color: var(--dzg-surface-2);
+  border: 1px solid #334155;
+  color: var(--dzg-text);
+  border-radius: 0.6rem;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.dzg-input:focus,
+.dzg-select:focus,
+.dzg-textarea:focus {
+  outline: none;
+  border-color: var(--dzg-accent);
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.16);
+}
+
+.dzg-table th {
+  color: var(--dzg-muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--dzg-border);
+  padding: 0.75rem;
+}
+
+.dzg-table td {
+  padding: 0.8rem 0.75rem;
+  border-bottom: 1px solid rgba(30, 41, 59, 0.65);
+  vertical-align: middle;
+}
+
+.dzg-table tbody tr:hover {
+  background-color: rgba(30, 41, 59, 0.38);
+}
+
+.dzg-btn-primary {
+  background: linear-gradient(135deg, var(--dzg-accent), var(--dzg-accent-hover));
+  color: #020617;
+  font-weight: 700;
+  border-radius: 0.6rem;
+  transition: filter 0.15s ease, transform 0.12s ease;
+}
+
+.dzg-btn-primary:hover {
+  filter: brightness(1.06);
+}
+
+.dzg-btn-primary:active {
+  transform: scale(0.99);
+}
