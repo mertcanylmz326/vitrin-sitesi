@@ -215,19 +215,18 @@
         </div>
       </div>
 
-    <!-- 3. SİPARİŞLER -->
+    <!-- 3. SİPARİŞLER (KALEM DETAYLI) -->
     {% elif sekme == 'siparisler' %}
       <div class="space-y-6">
-        <h2 class="text-2xl font-bold text-white">B2B Sipariş Yönetimi</h2>
+        <h2 class="text-2xl font-bold text-white">B2B Sipariş Yönetimi & Kalem Detayları</h2>
         <div class="dzg-card p-5 overflow-x-auto">
           <table class="dzg-table w-full text-sm text-left">
             <thead>
               <tr>
                 <th>Sipariş No</th>
-                <th>Bayi</th>
-                <th>Plasiyer</th>
+                <th>Bayi / Plasiyer</th>
+                <th>Sipariş Kalemleri</th>
                 <th>Tutar</th>
-                <th>Notlar</th>
                 <th>Durum</th>
               </tr>
             </thead>
@@ -235,10 +234,28 @@
               {% for s in siparisler %}
                 <tr>
                   <td class="font-mono font-semibold text-amber-400">{{ s.siparis_no }}</td>
-                  <td>{{ s.firma_unvani or 'Silinmiş Bayi' }}</td>
-                  <td class="text-slate-400">{{ s.plasiyer_adi or 'Doğrudan Bayi' }}</td>
+                  <td>
+                    <div class="font-medium text-white">{{ s.firma_unvani or 'Silinmiş Bayi' }}</div>
+                    <div class="text-xs text-slate-400">{{ s.plasiyer_adi or 'Doğrudan Bayi' }}</div>
+                  </td>
+                  <td class="text-xs max-w-md">
+                    {% if s.kalemler %}
+                      <div class="space-y-1">
+                        {% for k in s.kalemler %}
+                          <div class="text-slate-200">
+                            <span class="font-mono text-amber-300">{{ k.stok_kodu }}</span> {{ k.urun_adi }}
+                            <span class="text-slate-400">({{ k.adet }} × {{ "%.2f"|format(k.birim_fiyat) }} ₺ = {{ "%.2f"|format(k.satir_tutari) }} ₺)</span>
+                          </div>
+                        {% endfor %}
+                      </div>
+                    {% else %}
+                      <span class="text-slate-500">{{ s.notlar or 'Kalem detayı yok' }}</span>
+                    {% endif %}
+                    {% if s.notlar %}
+                      <div class="text-[11px] text-slate-400 mt-1">Not: {{ s.notlar }}</div>
+                    {% endif %}
+                  </td>
                   <td class="font-semibold text-emerald-400">{{ "%.2f"|format(s.toplam_tutar) }} ₺</td>
-                  <td class="text-xs text-slate-400 max-w-xs">{{ s.notlar or '-' }}</td>
                   <td>
                     <form method="POST" action="{{ url_for('duzgunler.admin_siparis_durum', siparis_id=s.id) }}" class="flex items-center gap-2">
                       <select name="durum" class="dzg-select px-2 py-1 text-xs">
@@ -251,7 +268,7 @@
                   </td>
                 </tr>
               {% else %}
-                <tr><td colspan="6" class="py-6 text-center text-slate-500">Henüz sipariş bulunmuyor.</td></tr>
+                <tr><td colspan="5" class="py-6 text-center text-slate-500">Henüz sipariş bulunmuyor.</td></tr>
               {% endfor %}
             </tbody>
           </table>
@@ -325,7 +342,6 @@
       <div class="space-y-6">
         <h2 class="text-2xl font-bold text-white">Ödeme Onay & Cari Mutabakat</h2>
 
-        <!-- Bayi Ödeme Bildirimleri Onayı -->
         <div class="dzg-card p-5 space-y-3">
           <h3 class="text-base font-semibold text-amber-400">Gelen Bayi Ödeme Bildirimleri</h3>
           <div class="overflow-x-auto">
@@ -368,7 +384,6 @@
           </div>
         </div>
 
-        <!-- Cari Mutabakat Özeti -->
         <div class="dzg-card p-5 space-y-3">
           <h3 class="text-base font-semibold text-sky-400">Bayi Cari Mutabakat Tablosu</h3>
           <div class="overflow-x-auto">
@@ -404,7 +419,6 @@
           </div>
         </div>
 
-        <!-- Ödeme Yöntemi Tanımları -->
         <div class="space-y-4">
           <h3 class="text-base font-semibold text-white">Ödeme Yöntemi Tanımları</h3>
 
@@ -680,7 +694,7 @@
             </div>
             <div class="flex justify-between py-1.5">
               <span class="text-slate-400">Kayıtlı Tablo Sayısı (Düzgünler B2B):</span>
-              <span class="text-sky-400 font-mono">9 Tablo</span>
+              <span class="text-sky-400 font-mono">10 Tablo</span>
             </div>
           </div>
         </div>
