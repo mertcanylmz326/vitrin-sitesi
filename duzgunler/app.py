@@ -67,6 +67,61 @@ def get_db_connection():
     )
 
 
+def hesapla_cari_ozet(siparisler, odemeler):
+    toplam_siparis = sum(
+        float(s["toplam_tutar"] or 0)
+        for s in siparisler
+        if (s.get("durum") or "") != "İptal"
+    )
+    onaylanan_odeme = sum(
+        float(o["tutar"] or 0)
+        for o in odemeler
+        if (o.get("durum") or "") == "Onaylandı"
+    )
+    bekleyen_odeme = sum(
+        float(o["tutar"] or 0)
+        for o in odemeler
+        if (o.get("durum") or "") == "Onay Bekliyor"
+    )
+    net_bakiye = toplam_siparis - onaylanan_odeme
+
+    hareketler = []
+    for s in siparisler:
+        if (s.get("durum") or "") != "İptal":
+            hareketler.append({
+                "tarih": s.get("olusturma_tarihi"),
+                "tur": "Sipariş",
+                "aciklama": f"Sipariş No: {s.get('siparis_no')} ({s.get('durum')})",
+                "borc": float(s["toplam_tutar"] or 0),
+                "alacak": 0.0,
+            })
+
+    for o in odemeler:
+        if (o.get("durum") or "") == "Onaylandı":
+            hareketler.append({
+                "tarih": o.get("olusturma_tarihi"),
+                "tur": "Ödeme (Onaylı)",
+                "aciklama": f"{o.get('odeme_yontemi')} - {o.get('aciklama') or 'Onaylanan Ödeme'}",
+                "borc": 0.0,
+                "alacak": float(o["tutar"] or 0),
+            })
+
+    hareketler.sort(key=lambda x: str(x["tarih"] or ""))
+    kosu = 0.0
+    for h in hareketler:
+        kosu += (h["borc"] - h["alacak"])
+        h["bakiye"] = kosu
+    hareketler.reverse()
+
+    return {
+        "toplam_siparis": toplam_siparis,
+        "toplam_odenen": onaylanan_odeme,
+        "bekleyen_odeme": bekleyen_odeme,
+        "acik_bakiye": net_bakiye,
+        "ekstre_hareketleri": hareketler,
+    }
+
+
 def init_db():
     """Supabase PostgreSQL üzerinde Düzgünler Elektrik B2B tablolarını ve varsayılan verileri oluşturur."""
     conn = None
@@ -75,7 +130,6 @@ def init_db():
         conn = get_db_connection()
         cur = conn.cursor()
 
-        # 1. Ana B2B Tabloları
         cur.execute("""
             CREATE TABLE IF NOT EXISTS b2b_bayiler (
                 id SERIAL PRIMARY KEY,
@@ -136,7 +190,6 @@ def init_db():
             );
         """)
 
-        # 2. Bayi Ödemeleri Tablosu
         cur.execute("""
             CREATE TABLE IF NOT EXISTS b2b_odemeler (
                 id SERIAL PRIMARY KEY,
@@ -149,7 +202,6 @@ def init_db():
             );
         """)
 
-        # 3. Admin Modülleri İçin Tablolar
         cur.execute("""
             CREATE TABLE IF NOT EXISTS b2b_odeme_yontemleri (
                 id SERIAL PRIMARY KEY,
@@ -199,7 +251,6 @@ def init_db():
             );
         """)
 
-        # 4. Varsayılan Plasiyer, Bayi ve Ürün Verileri
         cur.execute("SELECT id FROM b2b_plasiyerler WHERE plasiyer_kodu = %s", ("PLS-001",))
         if not cur.fetchone():
             cur.execute("""
@@ -248,7 +299,6 @@ def init_db():
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, sample_products)
 
-        # 5. Varsayılan Ödeme Yöntemleri
         default_payments = [
             ("HAVALE_EFT", "Havale / EFT", "Banka transferi ile sipariş onayı.", "TR00 0000 0000 0000 0000 0000 00 — Düzgünler Elektrik", True, 1),
             ("CARI_VADE", "Vadeli Cari / B2B Mutabakat", "Anlaşmalı bayilere tanımlı vade ve iskonto üzerinden.", "Onaylı bayilik hesabına işlenir.", True, 2),
@@ -261,7 +311,6 @@ def init_db():
                 ON CONFLICT (kod) DO NOTHING
             """, (kod, baslik, aciklama, detay, aktif, sira))
 
-        # 6. Varsayılan İçerikler
         default_contents = [
             ("hakkimizda", "hakkimizda", "Hakkımızda", "Düzgünler Elektrik; anahtar-priz, LED aydınlatma, şalt-pano, kablo grupları ve endüstriyel elektrik ürünlerinde bayi ve saha satış ağına hizmet verir."),
             ("iletisim", "iletisim-bilgileri", "İletişim Bilgileri", "Merkez: İstanbul | E-posta: info@duzgunlerelektrik.com | Telefon: 0216 000 00 00"),
@@ -512,36 +561,7 @@ def b2b_panel():
     cur.close()
     conn.close()
 
-    toplam_siparis = sum(float(s["toplam_tutar"] or 0) for s in siparisler if s["durum"] != "İptal")
-    toplam_odenen = sum(float(o["tutar"] or 0) for o in odemeler if o["durum"] != "İptal")
-    acik_bakiye = toplam_siparis - toplam_odenen
-
-    ekstre_hareketleri = []
-    for s in siparisler:
-        if s["durum"] != "İptal":
-            ekstre_hareketleri.append({
-                "tarih": s["olusturma_tarihi"],
-                "tur": "Sipariş",
-                "aciklama": f"Sipariş No: {s['siparis_no']} ({s['durum']})",
-                "borc": float(s["toplam_tutar"] or 0),
-                "alacak": 0.0,
-            })
-    for o in odemeler:
-        if o["durum"] != "İptal":
-            ekstre_hareketleri.append({
-                "tarih": o["olusturma_tarihi"],
-                "tur": "Ödeme",
-                "aciklama": f"{o['odeme_yontemi']} - {o['aciklama'] or 'Ödeme Bildirimi'} ({o['durum']})",
-                "borc": 0.0,
-                "alacak": float(o["tutar"] or 0),
-            })
-    ekstre_hareketleri.sort(key=lambda x: str(x["tarih"] or ""))
-
-    bakiye_kosu = 0.0
-    for h in ekstre_hareketleri:
-        bakiye_kosu += (h["borc"] - h["alacak"])
-        h["bakiye"] = bakiye_kosu
-    ekstre_hareketleri.reverse()
+    cari = hesapla_cari_ozet(siparisler, odemeler)
 
     return dzg_render(
         "b2b_panel.html",
@@ -551,10 +571,11 @@ def b2b_panel():
         siparisler=siparisler,
         odemeler=odemeler,
         odeme_yontemleri=odeme_yontemleri,
-        ekstre_hareketleri=ekstre_hareketleri,
-        toplam_siparis=toplam_siparis,
-        toplam_odenen=toplam_odenen,
-        acik_bakiye=acik_bakiye,
+        ekstre_hareketleri=cari["ekstre_hareketleri"],
+        toplam_siparis=cari["toplam_siparis"],
+        toplam_odenen=cari["toplam_odenen"],
+        bekleyen_odeme=cari["bekleyen_odeme"],
+        acik_bakiye=cari["acik_bakiye"],
     )
 
 
@@ -774,6 +795,14 @@ def admin_panel():
     """)
     siparisler = cur.fetchall()
 
+    cur.execute("""
+        SELECT o.*, b.firma_unvani, b.vergi_no
+        FROM b2b_odemeler o
+        LEFT JOIN b2b_bayiler b ON o.bayi_id = b.id
+        ORDER BY o.olusturma_tarihi DESC
+    """)
+    bayi_odemeleri = cur.fetchall()
+
     cur.execute("SELECT * FROM b2b_odeme_yontemleri ORDER BY sira_no ASC, id ASC")
     odeme_yontemleri = cur.fetchall()
 
@@ -793,6 +822,21 @@ def admin_panel():
     bekleyen_basvurular = [b for b in bayiler if b["durum"] == "beklemede"]
     yeni_formlar = [f for f in formlar if f["durum"] == "yeni"]
 
+    cari_mutabakat = []
+    for b in bayiler:
+        b_sip = [s for s in siparisler if s["bayi_id"] == b["id"]]
+        b_odm = [o for o in bayi_odemeleri if o["bayi_id"] == b["id"]]
+        ozet = hesapla_cari_ozet(b_sip, b_odm)
+        cari_mutabakat.append({
+            "bayi_id": b["id"],
+            "firma_unvani": b["firma_unvani"],
+            "vergi_no": b["vergi_no"],
+            "toplam_siparis": ozet["toplam_siparis"],
+            "onaylanan_odeme": ozet["toplam_odenen"],
+            "bekleyen_odeme": ozet["bekleyen_odeme"],
+            "net_bakiye": ozet["acik_bakiye"],
+        })
+
     return dzg_render(
         "admin_panel.html",
         sekme=sekme,
@@ -801,6 +845,8 @@ def admin_panel():
         plasiyerler=plasiyerler,
         urunler=urunler,
         siparisler=siparisler,
+        bayi_odemeleri=bayi_odemeleri,
+        cari_mutabakat=cari_mutabakat,
         odeme_yontemleri=odeme_yontemleri,
         icerikler=icerikler,
         formlar=formlar,
@@ -809,6 +855,33 @@ def admin_panel():
         toplam_ciro=toplam_ciro,
         env_admin_aktif=DZG_ADMIN_ENABLED,
     )
+
+
+@duzgunler_bp.route("/admin/bayi-odeme/<int:odeme_id>/durum", methods=["POST"])
+@dzg_admin_required
+def admin_bayi_odeme_durum(odeme_id):
+    durum = request.form.get("durum", "Onaylandı").strip()
+    if durum not in ["Onay Bekliyor", "Onaylandı", "İptal"]:
+        durum = "Onay Bekliyor"
+
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("UPDATE b2b_odemeler SET durum = %s WHERE id = %s", (durum, odeme_id))
+        conn.commit()
+        flash(f"Bayi ödemesi '{durum}' olarak güncellendi ve cari bakiye yenilendi.", "success")
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        flash(f"Ödeme durumu güncellenemedi: {e}", "danger")
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+    return _admin_redirect("odemeler")
 
 
 @duzgunler_bp.route("/admin/bayi/<int:bayi_id>/guncelle", methods=["POST"])
