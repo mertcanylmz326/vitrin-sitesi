@@ -5,46 +5,44 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Düzgünler Elektrik | Bayi B2B Paneli</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="{{ url_for('duzgunler.static', filename='panel.css') }}">
 </head>
-<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col lg:flex-row">
+<body class="dzg-panel-body min-h-screen flex flex-col lg:flex-row">
 
   {% set iskonto = (session.get('dzg_iskonto', 15.0) | float) %}
   {% set carpan = (100.0 - iskonto) / 100.0 %}
 
   <!-- Sol Menü (7 Sekme) -->
-  <aside class="w-full lg:w-64 bg-slate-900 border-b lg:border-b-0 lg:border-r border-slate-800 flex-shrink-0">
-    <div class="p-5 border-b border-slate-800">
-      <div class="text-xs font-semibold uppercase tracking-wider text-amber-400">Düzgünler B2B Bayi</div>
-      <h1 class="text-base font-bold text-white mt-1 truncate">{{ session.get('dzg_firma_unvani', 'Bayi Paneli') }}</h1>
-      <p class="text-xs text-slate-400 mt-0.5">{{ session.get('dzg_yetkili', '') }} • %{{ "%.1f"|format(iskonto) }} İskonto</p>
+  <aside class="dzg-sidebar w-full lg:w-64 border-b lg:border-b-0 lg:border-r flex-shrink-0 flex flex-col justify-between">
+    <div>
+      <div class="p-5 border-b border-slate-800">
+        <div class="text-xs font-semibold uppercase tracking-wider text-amber-400">Düzgünler B2B Bayi</div>
+        <h1 class="text-base font-bold text-white mt-1 truncate">{{ session.get('dzg_firma_unvani', 'Bayi Paneli') }}</h1>
+        <p class="text-xs text-slate-400 mt-0.5">{{ session.get('dzg_yetkili', '') }} • %{{ "%.1f"|format(iskonto) }} İskonto</p>
+      </div>
+
+      {% set b2b_tabs = [
+        ('ozet', 'Özet'),
+        ('urunler', 'Ürünler'),
+        ('siparislerim', 'Siparişlerim (' ~ (siparisler|length) ~ ')'),
+        ('gecmis-odemelerim', 'Geçmiş Ödemelerim (' ~ (odemeler|length) ~ ')'),
+        ('ekstre', 'Ekstre'),
+        ('guncel-katalog', 'Güncel Katalog'),
+        ('odeme-yap', 'Ödeme Yap')
+      ] %}
+
+      <nav class="p-3 flex lg:flex-col gap-1 overflow-x-auto">
+        {% for key, label in b2b_tabs %}
+          <a href="{{ url_for('duzgunler.b2b_panel', sekme=key) }}"
+             class="dzg-nav-link whitespace-nowrap {% if sekme == key %}is-active{% endif %}">
+            {{ label }}
+          </a>
+        {% endfor %}
+      </nav>
     </div>
 
-    {% set b2b_tabs = [
-      ('ozet', 'Özet'),
-      ('urunler', 'Ürünler'),
-      ('siparislerim', 'Siparişlerim (' ~ (siparisler|length) ~ ')'),
-      ('gecmis-odemelerim', 'Geçmiş Ödemelerim (' ~ (odemeler|length) ~ ')'),
-      ('ekstre', 'Ekstre'),
-      ('guncel-katalog', 'Güncel Katalog'),
-      ('odeme-yap', 'Ödeme Yap')
-    ] %}
-
-    <nav class="p-3 flex lg:flex-col gap-1 overflow-x-auto">
-      {% for key, label in b2b_tabs %}
-        <a href="{{ url_for('duzgunler.b2b_panel', sekme=key) }}"
-           class="whitespace-nowrap px-3.5 py-2.5 rounded-lg text-sm transition
-           {% if sekme == key %}
-             bg-amber-500 text-slate-950 font-semibold
-           {% else %}
-             text-slate-300 hover:bg-slate-800 hover:text-white
-           {% endif %}">
-          {{ label }}
-        </a>
-      {% endfor %}
-    </nav>
-
     <div class="p-4 border-t border-slate-800 flex items-center justify-between gap-2">
-      <a href="{{ url_for('duzgunler.index') }}" class="text-xs text-slate-400 hover:text-white">Vitrin</a>
+      <a href="{{ url_for('duzgunler.index') }}" class="text-xs text-slate-400 hover:text-white">Vitrin ↗</a>
       <a href="{{ url_for('duzgunler.cikis') }}" class="px-3 py-1.5 rounded-lg bg-red-500/15 text-red-300 border border-red-500/30 text-xs">Çıkış</a>
     </div>
   </aside>
@@ -72,19 +70,19 @@
         <h2 class="text-2xl font-bold text-white">Bayi Özet Ekranı</h2>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-          <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+          <div class="dzg-stat-card">
             <div class="text-xs text-slate-400">Tanımlı Bayi İskontosu</div>
             <div class="text-2xl font-bold text-amber-400 mt-1">%{{ "%.1f"|format(iskonto) }}</div>
           </div>
-          <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+          <div class="dzg-stat-card">
             <div class="text-xs text-slate-400">Toplam Sipariş Hacmi</div>
             <div class="text-2xl font-bold text-white mt-1">{{ "%.2f"|format(toplam_siparis) }} ₺</div>
           </div>
-          <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+          <div class="dzg-stat-card">
             <div class="text-xs text-slate-400">Toplam Yapılan Ödeme</div>
             <div class="text-2xl font-bold text-emerald-400 mt-1">{{ "%.2f"|format(toplam_odenen) }} ₺</div>
           </div>
-          <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+          <div class="dzg-stat-card">
             <div class="text-xs text-slate-400">Güncel Bakiye (Ekstre)</div>
             <div class="text-2xl font-bold {{ 'text-rose-400' if acik_bakiye > 0 else 'text-emerald-400' }} mt-1">
               {{ "%.2f"|format(acik_bakiye) }} ₺
@@ -92,26 +90,26 @@
           </div>
         </div>
 
-        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+        <div class="dzg-card p-5">
           <div class="flex items-center justify-between mb-4">
             <h3 class="text-base font-semibold text-white">Son Siparişlerim</h3>
             <a href="{{ url_for('duzgunler.b2b_panel', sekme='siparislerim') }}" class="text-xs text-amber-400 hover:underline">Tümünü gör →</a>
           </div>
           <div class="overflow-x-auto">
-            <table class="w-full text-sm text-left">
-              <thead class="text-xs uppercase text-slate-400 border-b border-slate-800">
+            <table class="dzg-table w-full text-sm text-left">
+              <thead>
                 <tr>
-                  <th class="py-2.5 px-3">Sipariş No</th>
-                  <th class="py-2.5 px-3">Tutar</th>
-                  <th class="py-2.5 px-3">Durum</th>
+                  <th>Sipariş No</th>
+                  <th>Tutar</th>
+                  <th>Durum</th>
                 </tr>
               </thead>
-              <tbody class="divide-y divide-slate-800">
+              <tbody>
                 {% for s in siparisler[:5] %}
                   <tr>
-                    <td class="py-2.5 px-3 font-mono text-amber-400">{{ s.siparis_no }}</td>
-                    <td class="py-2.5 px-3 font-semibold text-emerald-400">{{ "%.2f"|format(s.toplam_tutar) }} ₺</td>
-                    <td class="py-2.5 px-3 text-xs">{{ s.durum }}</td>
+                    <td class="font-mono text-amber-400">{{ s.siparis_no }}</td>
+                    <td class="font-semibold text-emerald-400">{{ "%.2f"|format(s.toplam_tutar) }} ₺</td>
+                    <td class="text-xs">{{ s.durum }}</td>
                   </tr>
                 {% else %}
                   <tr><td colspan="3" class="py-4 text-center text-slate-500">Henüz siparişiniz bulunmuyor.</td></tr>
@@ -127,13 +125,13 @@
       <div class="space-y-6">
         <div class="flex flex-wrap items-center justify-between gap-4">
           <h2 class="text-2xl font-bold text-white">Bayi Ürünleri & Hızlı Sipariş</h2>
-          <div class="bg-slate-900 border border-amber-500/30 rounded-xl px-4 py-2.5 flex flex-wrap items-center gap-3">
+          <div class="dzg-card px-4 py-2.5 flex flex-wrap items-center gap-3">
             <div>
               <div class="text-xs text-slate-400">Sepet Tutarı</div>
               <div id="sepetTutarText" class="text-lg font-bold text-amber-400">0.00 ₺</div>
             </div>
-            <input id="siparisNotInput" type="text" placeholder="Sipariş notu..." class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs">
-            <button onclick="siparisGonder()" class="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold text-xs">
+            <input id="siparisNotInput" type="text" placeholder="Sipariş notu..." class="dzg-input px-3 py-1.5 text-xs">
+            <button onclick="siparisGonder()" class="dzg-btn-primary px-4 py-2 text-xs">
               Siparişi Tamamla
             </button>
           </div>
@@ -142,7 +140,7 @@
         <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {% for u in urunler %}
             {% set net_fiyat = (u.liste_fiyati | float) * carpan %}
-            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 flex flex-col justify-between space-y-4">
+            <div class="dzg-card p-5 flex flex-col justify-between space-y-4">
               <div>
                 <div class="flex items-center justify-between text-xs text-slate-400">
                   <span class="font-mono text-amber-400">{{ u.stok_kodu }}</span>
@@ -156,8 +154,7 @@
                   <div class="text-xs text-slate-500 line-through">{{ "%.2f"|format(u.liste_fiyati) }} ₺</div>
                   <div class="text-lg font-bold text-emerald-400">{{ "%.2f"|format(net_fiyat) }} ₺</div>
                 </div>
-                <button onclick="sepeteEkle({{ "%.2f"|format(net_fiyat) }})"
-                        class="px-3.5 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold text-xs">
+                <button onclick="sepeteEkle({{ "%.2f"|format(net_fiyat) }})" class="dzg-btn-primary px-3.5 py-2 text-xs">
                   + Sepete Ekle
                 </button>
               </div>
@@ -170,23 +167,23 @@
     {% elif sekme == 'siparislerim' %}
       <div class="space-y-6">
         <h2 class="text-2xl font-bold text-white">Siparişlerim</h2>
-        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 overflow-x-auto">
-          <table class="w-full text-sm text-left">
-            <thead class="text-xs uppercase text-slate-400 border-b border-slate-800">
+        <div class="dzg-card p-5 overflow-x-auto">
+          <table class="dzg-table w-full text-sm text-left">
+            <thead>
               <tr>
-                <th class="py-3 px-3">Sipariş No</th>
-                <th class="py-3 px-3">Tutar</th>
-                <th class="py-3 px-3">Durum</th>
-                <th class="py-3 px-3">Notlar</th>
+                <th>Sipariş No</th>
+                <th>Tutar</th>
+                <th>Durum</th>
+                <th>Notlar</th>
               </tr>
             </thead>
-            <tbody class="divide-y divide-slate-800">
+            <tbody>
               {% for s in siparisler %}
                 <tr>
-                  <td class="py-3 px-3 font-mono text-amber-400">{{ s.siparis_no }}</td>
-                  <td class="py-3 px-3 font-semibold text-emerald-400">{{ "%.2f"|format(s.toplam_tutar) }} ₺</td>
-                  <td class="py-3 px-3 text-xs">{{ s.durum }}</td>
-                  <td class="py-3 px-3 text-xs text-slate-400">{{ s.notlar or '-' }}</td>
+                  <td class="font-mono text-amber-400">{{ s.siparis_no }}</td>
+                  <td class="font-semibold text-emerald-400">{{ "%.2f"|format(s.toplam_tutar) }} ₺</td>
+                  <td class="text-xs">{{ s.durum }}</td>
+                  <td class="text-xs text-slate-400">{{ s.notlar or '-' }}</td>
                 </tr>
               {% else %}
                 <tr><td colspan="4" class="py-6 text-center text-slate-500">Kayıtlı siparişiniz bulunmuyor.</td></tr>
@@ -201,27 +198,27 @@
       <div class="space-y-6">
         <div class="flex items-center justify-between">
           <h2 class="text-2xl font-bold text-white">Geçmiş Ödemelerim</h2>
-          <a href="{{ url_for('duzgunler.b2b_panel', sekme='odeme-yap') }}" class="px-4 py-2 rounded-lg bg-amber-500 text-slate-950 font-semibold text-xs">
+          <a href="{{ url_for('duzgunler.b2b_panel', sekme='odeme-yap') }}" class="dzg-btn-primary px-4 py-2 text-xs">
             + Yeni Ödeme Bildir
           </a>
         </div>
-        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 overflow-x-auto">
-          <table class="w-full text-sm text-left">
-            <thead class="text-xs uppercase text-slate-400 border-b border-slate-800">
+        <div class="dzg-card p-5 overflow-x-auto">
+          <table class="dzg-table w-full text-sm text-left">
+            <thead>
               <tr>
-                <th class="py-3 px-3">Yöntem</th>
-                <th class="py-3 px-3">Tutar</th>
-                <th class="py-3 px-3">Açıklama</th>
-                <th class="py-3 px-3">Durum</th>
+                <th>Yöntem</th>
+                <th>Tutar</th>
+                <th>Açıklama</th>
+                <th>Durum</th>
               </tr>
             </thead>
-            <tbody class="divide-y divide-slate-800">
+            <tbody>
               {% for o in odemeler %}
                 <tr>
-                  <td class="py-3 px-3 font-medium text-white">{{ o.odeme_yontemi }}</td>
-                  <td class="py-3 px-3 font-semibold text-emerald-400">{{ "%.2f"|format(o.tutar) }} ₺</td>
-                  <td class="py-3 px-3 text-xs text-slate-400">{{ o.aciklama or '-' }}</td>
-                  <td class="py-3 px-3 text-xs text-amber-300">{{ o.durum }}</td>
+                  <td class="font-medium text-white">{{ o.odeme_yontemi }}</td>
+                  <td class="font-semibold text-emerald-400">{{ "%.2f"|format(o.tutar) }} ₺</td>
+                  <td class="text-xs text-slate-400">{{ o.aciklama or '-' }}</td>
+                  <td class="text-xs text-amber-300">{{ o.durum }}</td>
                 </tr>
               {% else %}
                 <tr><td colspan="4" class="py-6 text-center text-slate-500">Henüz ödeme kaydınız yok.</td></tr>
@@ -240,25 +237,25 @@
             Net Bakiye: {{ "%.2f"|format(acik_bakiye) }} ₺
           </div>
         </div>
-        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 overflow-x-auto">
-          <table class="w-full text-sm text-left">
-            <thead class="text-xs uppercase text-slate-400 border-b border-slate-800">
+        <div class="dzg-card p-5 overflow-x-auto">
+          <table class="dzg-table w-full text-sm text-left">
+            <thead>
               <tr>
-                <th class="py-3 px-3">İşlem Türü</th>
-                <th class="py-3 px-3">Açıklama</th>
-                <th class="py-3 px-3">Borç</th>
-                <th class="py-3 px-3">Alacak</th>
-                <th class="py-3 px-3">Bakiye</th>
+                <th>İşlem Türü</th>
+                <th>Açıklama</th>
+                <th>Borç</th>
+                <th>Alacak</th>
+                <th>Bakiye</th>
               </tr>
             </thead>
-            <tbody class="divide-y divide-slate-800">
+            <tbody>
               {% for h in ekstre_hareketleri %}
                 <tr>
-                  <td class="py-3 px-3 text-xs font-semibold {{ 'text-amber-400' if h.tur == 'Sipariş' else 'text-emerald-400' }}">{{ h.tur }}</td>
-                  <td class="py-3 px-3 text-xs text-slate-300">{{ h.aciklama }}</td>
-                  <td class="py-3 px-3 text-rose-300">{{ "%.2f"|format(h.borc) if h.borc > 0 else '-' }}</td>
-                  <td class="py-3 px-3 text-emerald-300">{{ "%.2f"|format(h.alacak) if h.alacak > 0 else '-' }}</td>
-                  <td class="py-3 px-3 font-semibold text-white">{{ "%.2f"|format(h.bakiye) }} ₺</td>
+                  <td class="text-xs font-semibold {{ 'text-amber-400' if h.tur == 'Sipariş' else 'text-emerald-400' }}">{{ h.tur }}</td>
+                  <td class="text-xs text-slate-300">{{ h.aciklama }}</td>
+                  <td class="text-rose-300">{{ "%.2f"|format(h.borc) if h.borc > 0 else '-' }}</td>
+                  <td class="text-emerald-300">{{ "%.2f"|format(h.alacak) if h.alacak > 0 else '-' }}</td>
+                  <td class="font-semibold text-white">{{ "%.2f"|format(h.bakiye) }} ₺</td>
                 </tr>
               {% else %}
                 <tr><td colspan="5" class="py-6 text-center text-slate-500">Ekstre hareketi bulunmuyor.</td></tr>
@@ -274,30 +271,30 @@
         <div class="flex flex-wrap items-center justify-between gap-3">
           <h2 class="text-2xl font-bold text-white">Güncel Ürün Kataloğu</h2>
           <input id="katalogArama" type="text" oninput="katalogFiltrele()" placeholder="Stok kodu, ürün veya kategori ara..."
-                 class="w-full sm:w-80 bg-slate-900 border border-slate-700 rounded-xl px-4 py-2 text-sm">
+                 class="dzg-input w-full sm:w-80 px-4 py-2 text-sm">
         </div>
-        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 overflow-x-auto">
-          <table id="katalogTablo" class="w-full text-sm text-left">
-            <thead class="text-xs uppercase text-slate-400 border-b border-slate-800">
+        <div class="dzg-card p-5 overflow-x-auto">
+          <table id="katalogTablo" class="dzg-table w-full text-sm text-left">
+            <thead>
               <tr>
-                <th class="py-3 px-3">Stok Kodu</th>
-                <th class="py-3 px-3">Ürün Adı</th>
-                <th class="py-3 px-3">Kategori / Seri</th>
-                <th class="py-3 px-3">Stok</th>
-                <th class="py-3 px-3">Liste Fiyatı</th>
-                <th class="py-3 px-3">Net Bayi Fiyatı</th>
+                <th>Stok Kodu</th>
+                <th>Ürün Adı</th>
+                <th>Kategori / Seri</th>
+                <th>Stok</th>
+                <th>Liste Fiyatı</th>
+                <th>Net Bayi Fiyatı</th>
               </tr>
             </thead>
-            <tbody class="divide-y divide-slate-800">
+            <tbody>
               {% for u in urunler %}
                 {% set net_fiyat = (u.liste_fiyati | float) * carpan %}
                 <tr class="katalog-satir">
-                  <td class="py-3 px-3 font-mono text-xs text-amber-400">{{ u.stok_kodu }}</td>
-                  <td class="py-3 px-3 font-medium text-white">{{ u.urun_adi }}</td>
-                  <td class="py-3 px-3 text-xs text-slate-400">{{ u.kategori }} {% if u.seri %}• {{ u.seri }}{% endif %}</td>
-                  <td class="py-3 px-3 text-xs">{{ u.stok_adedi }} {{ u.birim }}</td>
-                  <td class="py-3 px-3 text-slate-400">{{ "%.2f"|format(u.liste_fiyati) }} ₺</td>
-                  <td class="py-3 px-3 font-semibold text-emerald-400">{{ "%.2f"|format(net_fiyat) }} ₺</td>
+                  <td class="font-mono text-xs text-amber-400">{{ u.stok_kodu }}</td>
+                  <td class="font-medium text-white">{{ u.urun_adi }}</td>
+                  <td class="text-xs text-slate-400">{{ u.kategori }} {% if u.seri %}• {{ u.seri }}{% endif %}</td>
+                  <td class="text-xs">{{ u.stok_adedi }} {{ u.birim }}</td>
+                  <td class="text-slate-400">{{ "%.2f"|format(u.liste_fiyati) }} ₺</td>
+                  <td class="font-semibold text-emerald-400">{{ "%.2f"|format(net_fiyat) }} ₺</td>
                 </tr>
               {% endfor %}
             </tbody>
@@ -313,11 +310,11 @@
         {% if odeme_yontemleri %}
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {% for oy in odeme_yontemleri %}
-              <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+              <div class="dzg-card p-4">
                 <div class="text-sm font-semibold text-amber-400">{{ oy.baslik }}</div>
                 <div class="text-xs text-slate-400 mt-1">{{ oy.aciklama or '' }}</div>
                 {% if oy.iban_veya_detay %}
-                  <div class="text-xs font-mono text-slate-200 bg-slate-950 border border-slate-800 rounded p-2 mt-2 break-all">
+                  <div class="dzg-input text-xs font-mono text-slate-200 p-2 mt-2 break-all">
                     {{ oy.iban_veya_detay }}
                   </div>
                 {% endif %}
@@ -326,16 +323,15 @@
           </div>
         {% endif %}
 
-        <form method="POST" action="{{ url_for('duzgunler.b2b_odeme_yap') }}"
-              class="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4">
+        <form method="POST" action="{{ url_for('duzgunler.b2b_odeme_yap') }}" class="dzg-card p-6 space-y-4">
           <div>
             <label class="block text-xs text-slate-400 mb-1">Ödeme Tutarı (₺)</label>
             <input type="number" step="0.01" min="0.01" name="tutar" required placeholder="Örn: 5000.00"
-                   class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3.5 py-2.5 text-sm">
+                   class="dzg-input w-full px-3.5 py-2.5 text-sm">
           </div>
           <div>
             <label class="block text-xs text-slate-400 mb-1">Ödeme Yöntemi</label>
-            <select name="odeme_yontemi" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3.5 py-2.5 text-sm">
+            <select name="odeme_yontemi" class="dzg-select w-full px-3.5 py-2.5 text-sm">
               {% if odeme_yontemleri %}
                 {% for oy in odeme_yontemleri %}
                   <option value="{{ oy.baslik }}">{{ oy.baslik }}</option>
@@ -349,9 +345,9 @@
           <div>
             <label class="block text-xs text-slate-400 mb-1">Açıklama / Dekont veya Fatura No</label>
             <textarea name="aciklama" rows="3" placeholder="Gönderen adı, banka veya dekont bilgisi..."
-                      class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3.5 py-2.5 text-sm"></textarea>
+                      class="dzg-textarea w-full px-3.5 py-2.5 text-sm"></textarea>
           </div>
-          <button type="submit" class="w-full py-2.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold text-sm">
+          <button type="submit" class="dzg-btn-primary w-full py-2.5 text-sm">
             Ödeme Bildirimini Gönder
           </button>
         </form>
