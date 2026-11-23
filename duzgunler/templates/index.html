@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Düzgünler Elektrik | Aydınlatma, Şalt Malzemeleri & B2B Toptan Portalı</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+
+    <!-- FLASH BİLDİRİMLER -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="flash-container">
+          {% for category, message in messages %}
+            <div class="flash-alert flash-{{ category }}">
+              <span>{{ message }}</span>
+              <button onclick="this.parentElement.remove()">&times;</button>
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+
+    <!-- ÜST KURUMSAL BAR (Hira Kapı Kolları Stilinde Top Header + B2B/Plasiyer Erişimi) -->
+    <div class="top-bar">
+        <div class="container top-bar-inner">
+            <div class="top-contact">
+                <span><i class="fa-solid fa-phone"></i> 0 (216) 444 0 394</span>
+                <span><i class="fa-solid fa-envelope"></i> info@duzgunlerelektrik.com.tr</span>
+                <span class="hide-mobile"><i class="fa-solid fa-location-dot"></i> İstanbul / Türkiye</span>
+            </div>
+            <div class="top-b2b-actions">
+                {% if session.get('user_id') %}
+                    {% if session.get('role') == 'bayi' %}
+                        <a href="{{ url_for('b2b_panel') }}" class="top-btn btn-gold"><i class="fa-solid fa-gauge"></i> B2B Bayi Paneli ({{ session.get('firma_unvani')[:18] }}...)</a>
+                    {% else %}
+                        <a href="{{ url_for('plasiyer_panel') }}" class="top-btn btn-gold"><i class="fa-solid fa-user-tie"></i> Plasiyer Paneli ({{ session.get('plasiyer_kodu') }})</a>
+                    {% endif %}
+                    <a href="{{ url_for('cikis') }}" class="top-btn btn-outline-light"><i class="fa-solid fa-right-from-bracket"></i> Çıkış</a>
+                {% else %}
+                    <button type="button" onclick="openModal('b2bLoginModal')" class="top-btn btn-gold">
+                        <i class="fa-solid fa-building-lock"></i> B2B Bayi Girişi
+                    </button>
+                    <button type="button" onclick="openModal('plasiyerLoginModal')" class="top-btn btn-dark-accent">
+                        <i class="fa-solid fa-id-badge"></i> Plasiyer Girişi
+                    </button>
+                    <button type="button" onclick="openModal('b2bRegisterModal')" class="top-btn btn-outline-light">
+                        <i class="fa-solid fa-file-signature"></i> B2B Kayıt Ol
+                    </button>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- ANA NAVİGASYON BAR -->
+    <header class="main-header" id="navbar">
+        <div class="container header-inner">
+            <a href="{{ url_for('index') }}" class="brand-logo">
+                <div class="logo-emblem">
+                    <i class="fa-solid fa-bolt"></i>
+                </div>
+                <div class="logo-text">
+                    <span class="brand-main">DÜZGÜNLER</span>
+                    <span class="brand-sub">ELEKTRİK & AYDINLATMA</span>
+                </div>
+            </a>
+
+            <nav class="main-nav" id="mainNav">
+                <a href="#anasayfa" class="active">ANASAYFA</a>
+                <a href="#kurumsal">KURUMSAL</a>
+                <a href="#urun-gruplari">ÜRÜN GRUPLARI</a>
+                <a href="#vitrin">ÖNE ÇIKANLAR</a>
+                <a href="#b2b-avantaj">B2B BAYİLİK</a>
+                <a href="#iletisim">İLETİŞİM</a>
+            </nav>
+
+            <div class="header-right-tools">
+                <a href="#b2b-avantaj" class="catalog-btn">
+                    <i class="fa-solid fa-book-open"></i> 2026 E-KATALOG
+                </a>
+                <button class="mobile-toggle" onclick="toggleMobileMenu()">
+                    <i class="fa-solid fa-bars"></i>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- HERO SLIDER (Hira Kapı Kolları Tam Ekran Zarif Mimari & Endüstriyel Vitrin Konsepti) -->
+    <section class="hero-slider" id="anasayfa">
+        <div class="slide active" style="background-image: linear-gradient(95deg, rgba(15, 20, 28, 0.90) 0%, rgba(15, 20, 28, 0.65) 55%, rgba(15, 20, 28, 0.30) 100%), url('https://images.unsplash.com/photo-1558002038-1055907df827?auto=format&fit=crop&w=1920&q=80');">
+            <div class="container hero-content">
+                <span class="hero-badge">YENİ SEZON MİMARİ & ENDÜSTRİYEL SERİ</span>
+                <h1>Mekanlara Değer Katan<br><span>Güvenli Enerji & Aydınlatma</span></h1>
+                <p>Düzgünler Elektrik; anahtar-priz serileri, profesyonel LED aydınlatma sistemleri, şalt ürünleri ve yüksek stok gücüyle Türkiye genelindeki bayilerine kesintisiz tedarik sağlar.</p>
+                <div class="hero-cta-group">
+                    <button onclick="openModal('b2bLoginModal')" class="btn-primary-gold">
+                        <i class="fa-solid fa-right-to-bracket"></i> B2B Bayi Portalına Gir
+                    </button>
+                    <button onclick="openModal('b2bRegisterModal')" class="btn-secondary-glass">
+                        <i class="fa-solid fa-handshake"></i> Bayilik Başvurusu Yap
+                    </button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- KURUMSAL İSTATİSTİK & GÜVEN ŞERİDİ -->
+    <section class="stats-strip">
+        <div class="container stats-grid">
+            <div class="stat-item">
+                <i class="fa-solid fa-award"></i>
+                <div>
+                    <strong>25+ Yıl</strong>
+                    <span>Sektörel Tecrübe & Güven</span>
+                </div>
+            </div>
+            <div class="stat-item">
+                <i class="fa-solid fa-boxes-stacked"></i>
+                <div>
+                    <strong>12.000+ Çeşit</strong>
+                    <span>Anlık Hazır Stok Kapasitesi</span>
+                </div>
+            </div>
+            <div class="stat-item">
+                <i class="fa-solid fa-truck-fast"></i>
+                <div>
+                    <strong>81 İle Sevkiyat</strong>
+                    <span>Aynı Gün Kargo & Lojistik</span>
+                </div>
+            </div>
+            <div class="stat-item">
+                <i class="fa-solid fa-certificate"></i>
+                <div>
+                    <strong>TSE & CE Belgeli</strong>
+                    <span>Uluslararası Kalite Standartları</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ÜRÜN GRUPLARI (Hira Kapı Kolları 6'lı Kategorik Vitrin Grid Yapısı) -->
+    <section class="section-padding bg-light" id="urun-gruplari">
+        <div class="container">
+            <div class="section-header">
+                <span class="sub-title">ÜRÜN KOLEKSİYONUMUZ</span>
+                <h2>Profesyonel Elektrik & Aydınlatma Grupları</h2>
+                <div class="title-line"></div>
+            </div>
+
+            <div class="category-grid">
+                <div class="category-card">
+                    <div class="cat-img" style="background-image: url('https://images.unsplash.com/photo-1558211583-d26f610c1eb1?auto=format&fit=crop&w=800&q=80');">
+                        <span class="cat-tag">MODÜLER SERİ</span>
+                    </div>
+                    <div class="cat-body">
+                        <h3>Anahtar & Priz Grupları</h3>
+                        <p>Modern mimariye uyumlu metalik, antrasit, beyaz ve çerçeveli anahtar priz koleksiyonları.</p>
+                        <button onclick="openModal('b2bLoginModal')" class="cat-link">B2B Fiyatlarını Gör <i class="fa-solid fa-arrow-right"></i></button>
+                    </div>
+                </div>
+
+                <div class="category-card">
+                    <div class="cat-img" style="background-image: url('https://images.unsplash.com/photo-1565814329452-e1efa11c5b89?auto=format&fit=crop&w=800&q=80');">
+                        <span class="cat-tag">YÜKSEK VERİM</span>
+                    </div>
+                    <div class="cat-body">
+                        <h3>LED & Mimari Aydınlatma</h3>
+                        <p>Sıva altı/üstü LED paneller, ray spotlar, lineer armatürler ve dış cephe projektörleri.</p>
+                        <button onclick="openModal('b2bLoginModal')" class="cat-link">B2B Fiyatlarını Gör <i class="fa-solid fa-arrow-right"></i></button>
+                    </div>
+                </div>
+
+                <div class="category-card">
+                    <div class="cat-img" style="background-image: url('https://images.unsplash.com/photo-1544724569-5f546fd6f2b5?auto=format&fit=crop&w=800&q=80');">
+                        <span class="cat-tag">ENDÜSTRİYEL</span>
+                    </div>
+                    <div class="cat-body">
+                        <h3>Şalt & Pano Malzemeleri</h3>
+                        <p>Otomatik sigortalar, kaçak akım röleleri, kontaktörler ve kompakt şalter çözümleri.</p>
+                        <button onclick="openModal('b2bLoginModal')" class="cat-link">B2B Fiyatlarını Gör <i class="fa-solid fa-arrow-right"></i></button>
+                    </div>
+                </div>
+
+                <div class="category-card">
+                    <div class="cat-img" style="background-image: url('https://images.unsplash.com/photo-1558346490-a72e53ae2d4f?auto=format&fit=crop&w=800&q=80');">
+                        <span class="cat-tag">TAM BAKIR</span>
+                    </div>
+                    <div class="cat-body">
+                        <h3>Kablo & Tesisat Grupları</h3>
+                        <p>NYM, NYAF, TTR, zayıf akım, data kabloları ve halojen-free yanmaz kablo çeşitleri.</p>
+                        <button onclick="openModal('b2bLoginModal')" class="cat-link">B2B Fiyatlarını Gör <i class="fa-solid fa-arrow-right"></i></button>
+                    </div>
+                </div>
+
+                <div class="category-card">
+                    <div class="cat-img" style="background-image: url('https://images.unsplash.com/photo-1581092160562-40aa08e78837?auto=format&fit=crop&w=800&q=80');">
+                        <span class="cat-tag">IP67 KORUMA</span>
+                    </div>
+                    <div class="cat-body">
+                        <h3>Endüstriyel Fiş & Prizler</h3>
+                        <p>Fabrika ve şantiyeler için ağır hizmet tipi kauçuk fişler, kombinasyon kutuları.</p>
+                        <button onclick="openModal('b2bLoginModal')" class="cat-link">B2B Fiyatlarını Gör <i class="fa-solid fa-arrow-right"></i></button>
+                    </div>
+                </div>
+
+                <div class="category-card">
+                    <div class="cat-img" style="background-image: url('https://images.unsplash.com/photo-1558002038-1055907df827?auto=format&fit=crop&w=800&q=80');">
+                        <span class="cat-tag">AKILLI BİNA</span>
+                    </div>
+                    <div class="cat-body">
+                        <h3>Diafon & Otomasyon</h3>
+                        <p>Görüntülü diafon sistemleri, hareket sensörleri ve akıllı bina kontrol üniteleri.</p>
+                        <button onclick="openModal('b2bLoginModal')" class="cat-link">B2B Fiyatlarını Gör <i class="fa-solid fa-arrow-right"></i></button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- KURUMSAL HAKKIMIZDA BÖLÜMÜ -->
+    <section class="section-padding" id="kurumsal">
+        <div class="container about-grid">
+            <div class="about-image-wrap">
+                <img src="https://images.unsplash.com/photo-1581092918056-0c4c3acd3789?auto=format&fit=crop&w=900&q=80" alt="Düzgünler Elektrik Lojistik ve Kalite">
+                <div class="experience-badge">
+                    <span class="num">%100</span>
+                    <span class="txt">Müşteri & Bayi<br>Memnuniyeti</span>
+                </div>
+            </div>
+            <div class="about-content">
+                <span class="sub-title">KURUMSAL YAKLAŞIMIMIZ</span>
+                <h2>Düzgünler Elektrik ile Güçlü İş Ortaklığı</h2>
+                <div class="title-line left"></div>
+                <p>Düzgünler Elektrik, elektrik malzemeleri toptan satışı ve proje tedariği alanında Türkiye'nin önde gelen çözüm ortaklarından biridir. Geniş lojistik ağımız, güçlü stok yapımız ve uzman saha plasiyer kadromuzla bayilerimizin tüm ihtiyaçlarına tek noktadan çözüm sunuyoruz.</p>
+                <p>Geliştirdiğimiz yeni nesil <strong>B2B Bayi ve Plasiyer Portalı</strong> sayesinde iş ortaklarımız anlık stok durumlarını görüntüleyebilir, özel bayi iskontolarıyla 7/24 sipariş oluşturabilir ve cari hesaplarını şeffaf biçimde yönetebilir.</p>
+                <ul class="about-list">
+                    <li><i class="fa-solid fa-circle-check"></i> Bayiye özel tanımlanan kademeli iskonto oranları</li>
+                    <li><i class="fa-solid fa-circle-check"></i> Saha plasiyerleri ile yerinde teknik ve ticari destek</li>
+                    <li><i class="fa-solid fa-circle-check"></i> Proje bazlı özel teklif ve hızlı sevkiyat garantisi</li>
+                </ul>
+            </div>
+        </div>
+    </section>
+
+    <!-- SUPABASE VERİTABANINDAN ÇEKİLEN VİTRİN ÜRÜNLERİ -->
+    <section class="section-padding bg-dark-section" id="vitrin">
+        <div class="container">
+            <div class="section-header light">
+                <span class="sub-title">B2B KATALOG VİTRİNİ</span>
+                <h2>Öne Çıkan Toptan Ürünlerimiz</h2>
+                <div class="title-line"></div>
+                <p>Net bayi fiyatlarını ve size özel iskontolu tutarları görmek için B2B Bayi Girişi yapınız.</p>
+            </div>
+
+            <div class="product-showcase-grid">
+                {% for u in urunler %}
+                <div class="showcase-card">
+                    <div class="sc-top">
+                        <span class="sc-code">{{ u.stok_kodu }}</span>
+                        <span class="sc-cat">{{ u.kategori }}</span>
+                    </div>
+                    <div class="sc-icon">
+                        <i class="fa-solid fa-{{ u.gorsel_ikon }}"></i>
+                    </div>
+                    <h3>{{ u.urun_adi }}</h3>
+                    <p class="sc-desc">{{ u.aciklama }}</p>
+                    <div class="sc-footer">
+                        <div class="sc-stock">
+                            <i class="fa-solid fa-box"></i> Stok: <strong>{{ u.stok_adedi }} {{ u.birim }}</strong>
+                        </div>
+                        <button onclick="openModal('b2bLoginModal')" class="sc-price-btn">
+                            <i class="fa-solid fa-lock"></i> Bayi Fiyatı Gör
+                        </button>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </section>
+
+    <!-- B2B & PLASİYER ERİŞİM CALL-TO-ACTION BANNER -->
+    <section class="b2b-cta-banner" id="b2b-avantaj">
+        <div class="container b2b-cta-inner">
+            <div class="b2b-cta-text">
+                <span class="badge-gold">DİJİTAL B2B SİSTEMİ</span>
+                <h2>Düzgünler Elektrik B2B Ağına Katılın</h2>
+                <p>Mevcut bayimizseniz hemen giriş yapın; henüz bayimiz değilseniz dakikalar içinde online B2B bayilik kaydınızı oluşturun.</p>
+            </div>
+            <div class="b2b-cta-buttons">
+                <button onclick="openModal('b2bLoginModal')" class="btn-primary-gold">
+                    <i class="fa-solid fa-building-user"></i> B2B Bayi Girişi
+                </button>
+                <button onclick="openModal('plasiyerLoginModal')" class="btn-dark-solid">
+                    <i class="fa-solid fa-user-tie"></i> Plasiyer Girişi
+                </button>
+                <button onclick="openModal('b2bRegisterModal')" class="btn-outline-dark">
+                    <i class="fa-solid fa-user-plus"></i> Yeni Bayi Kaydı
+                </button>
+            </div>
+        </div>
+    </section>
+
+    <!-- KURUMSAL FOOTER -->
+    <footer class="main-footer" id="iletisim">
+        <div class="container footer-grid">
+            <div class="footer-col">
+                <div class="brand-logo footer-logo">
+                    <div class="logo-emblem"><i class="fa-solid fa-bolt"></i></div>
+                    <div class="logo-text">
+                        <span class="brand-main">DÜZGÜNLER</span>
+                        <span class="brand-sub">ELEKTRİK & AYDINLATMA</span>
+                    </div>
+                </div>
+                <p class="footer-about">Aydınlatma, anahtar-priz, kablo ve endüstriyel şalt malzemelerinde güvenilir toptan tedarik ve B2B çözüm merkeziniz.</p>
+            </div>
+
+            <div class="footer-col">
+                <h4>Hızlı Erişim</h4>
+                <ul>
+                    <li><a href="#anasayfa">Anasayfa</a></li>
+                    <li><a href="#kurumsal">Kurumsal</a></li>
+                    <li><a href="#urun-gruplari">Ürün Grupları</a></li>
+                    <li><a href="#vitrin">Katalog Vitrini</a></li>
+                </ul>
+            </div>
+
+            <div class="footer-col">
+                <h4>B2B Portal İşlemleri</h4>
+                <ul>
+                    <li><a href="javascript:void(0)" onclick="openModal('b2bLoginModal')">B2B Bayi Girişi</a></li>
+                    <li><a href="javascript:void(0)" onclick="openModal('plasiyerLoginModal')">Plasiyer Girişi</a></li>
+                    <li><a href="javascript:void(0)" onclick="openModal('b2bRegisterModal')">B2B Bayilik Başvurusu</a></li>
+                </ul>
+            </div>
+
+            <div class="footer-col">
+                <h4>İletişim Bilgileri</h4>
+                <ul class="contact-list">
+                    <li><i class="fa-solid fa-location-dot"></i> Merkez Mah. Elektrikçiler Sanayi Sitesi No:42 İstanbul</li>
+                    <li><i class="fa-solid fa-phone"></i> 0 (216) 444 0 394</li>
+                    <li><i class="fa-solid fa-envelope"></i> info@duzgunlerelektrik.com.tr</li>
+                </ul>
+            </div>
+        </div>
+        <div class="footer-bottom">
+            <div class="container">
+                <p>&copy; 2026 Düzgünler Elektrik San. ve Tic. Ltd. Şti. Tüm Hakları Saklıdır.</p>
+            </div>
+        </div>
+    </footer>
+
+    <!-- ========================================================= -->
+    <!-- MODAL 1: B2B BAYİ GİRİŞİ -->
+    <!-- ========================================================= -->
+    <div class="modal-backdrop" id="b2bLoginModal">
+        <div class="modal-box">
+            <div class="modal-header">
+                <div>
+                    <span class="modal-tag">KURUMSAL MÜŞTERİ PORTALI</span>
+                    <h3><i class="fa-solid fa-building-lock"></i> B2B Bayi Girişi</h3>
+                </div>
+                <button class="modal-close" onclick="closeModal('b2bLoginModal')">&times;</button>
+            </div>
+            <form action="{{ url_for('b2b_giris') }}" method="POST" class="modal-form">
+                <div class="form-group">
+                    <label>E-Posta Adresi veya Vergi Numarası</label>
+                    <input type="text" name="kullanici" placeholder="Örn: bayi@ornek.com veya 1234567890" required>
+                </div>
+                <div class="form-group">
+                    <label>Bayi Şifresi</label>
+                    <input type="password" name="sifre" placeholder="••••••••" required>
+                </div>
+                <div class="demo-hint">
+                    <i class="fa-solid fa-circle-info"></i> Demo Bayi: <strong>bayi@ornek.com</strong> / Şifre: <strong>123456</strong>
+                </div>
+                <button type="submit" class="btn-submit-gold">B2B Paneline Giriş Yap</button>
+                <div class="modal-switch">
+                    Henüz B2B hesabınız yok mu? <a href="javascript:void(0)" onclick="switchModal('b2bLoginModal', 'b2bRegisterModal')">Hemen Bayi Kaydı Oluşturun</a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ========================================================= -->
+    <!-- MODAL 2: PLASİYER GİRİŞİ -->
+    <!-- ========================================================= -->
+    <div class="modal-backdrop" id="plasiyerLoginModal">
+        <div class="modal-box">
+            <div class="modal-header dark-header">
+                <div>
+                    <span class="modal-tag">SAHA SATIŞ & TEMSİLCİ SİSTEMİ</span>
+                    <h3><i class="fa-solid fa-user-tie"></i> Plasiyer Girişi</h3>
+                </div>
+                <button class="modal-close" onclick="closeModal('plasiyerLoginModal')">&times;</button>
+            </div>
+            <form action="{{ url_for('plasiyer_giris') }}" method="POST" class="modal-form">
+                <div class="form-group">
+                    <label>Plasiyer Kodu veya Kurumsal E-Posta</label>
+                    <input type="text" name="plasiyer_kodu" placeholder="Örn: PLS-001 veya plasiyer@duzgunlerelektrik.com" required>
+                </div>
+                <div class="form-group">
+                    <label>Plasiyer Şifresi</label>
+                    <input type="password" name="sifre" placeholder="••••••••" required>
+                </div>
+                <div class="demo-hint">
+                    <i class="fa-solid fa-circle-info"></i> Demo Plasiyer: <strong>PLS-001</strong> / Şifre: <strong>123456</strong>
+                </div>
+                <button type="submit" class="btn-submit-dark">Plasiyer Paneline Giriş Yap</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- ========================================================= -->
+    <!-- MODAL 3: B2B BAYİ KAYIT FORMU -->
+    <!-- ========================================================= -->
+    <div class="modal-backdrop" id="b2bRegisterModal">
+        <div class="modal-box modal-lg">
+            <div class="modal-header">
+                <div>
+                    <span class="modal-tag">YENİ BAYİLİK BAŞVURUSU</span>
+                    <h3><i class="fa-solid fa-file-signature"></i> Düzgünler Elektrik B2B Kayıt</h3>
+                </div>
+                <button class="modal-close" onclick="closeModal('b2bRegisterModal')">&times;</button>
+            </div>
+            <form action="{{ url_for('b2b_kayit') }}" method="POST" class="modal-form">
+                <div class="form-grid-2">
+                    <div class="form-group">
+                        <label>Firma Ticari Ünvanı *</label>
+                        <input type="text" name="firma_unvani" placeholder="Örn: Yıldız Elektrik Malz. Ltd. Şti." required>
+                    </div>
+                    <div class="form-group">
+                        <label>Yetkili Adı Soyadı *</label>
+                        <input type="text" name="yetkili_ad_soyad" placeholder="Adınız ve Soyadınız" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Vergi Dairesi *</label>
+                        <input type="text" name="vergi_dairesi" placeholder="Örn: Ümraniye VD" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Vergi Numarası / TCKN *</label>
+                        <input type="text" name="vergi_no" placeholder="10 veya 11 haneli numara" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Telefon Numarası *</label>
+                        <input type="tel" name="telefon" placeholder="05XX XXX XX XX" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Kurumsal E-Posta *</label>
+                        <input type="email" name="email" placeholder="satinalma@firmaniz.com" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Şehir *</label>
+                        <input type="text" name="sehir" placeholder="Örn: İstanbul" required>
+                    </div>
+                    <div class="form-group">
+                        <label>B2B Portal Şifresi Belirleyin *</label>
+                        <input type="password" name="sifre" placeholder="En az 6 karakter" minlength="6" required>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Açık Firma / Sevkiyat Adresi</label>
+                    <textarea name="adres" rows="2" placeholder="Mahalle, Cadde, No, İlçe / İl"></textarea>
+                </div>
+                <button type="submit" class="btn-submit-gold">Kaydı Tamamla ve B2B Paneline Geç</button>
+                <div class="modal-switch">
+                    Zaten kayıtlı bayimiz misiniz? <a href="javascript:void(0)" onclick="switchModal('b2bRegisterModal', 'b2bLoginModal')">B2B Girişi Yapın</a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>

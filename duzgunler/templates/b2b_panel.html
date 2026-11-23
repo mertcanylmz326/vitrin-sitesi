@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>B2B Bayi Portalı | Düzgünler Elektrik</title>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="dashboard-body">
+
+    <header class="dash-header">
+        <div class="container dash-header-inner">
+            <a href="{{ url_for('index') }}" class="brand-logo">
+                <div class="logo-emblem"><i class="fa-solid fa-bolt"></i></div>
+                <div class="logo-text">
+                    <span class="brand-main" style="color:#fff;">DÜZGÜNLER B2B</span>
+                    <span class="brand-sub">BAYİ SİPARİŞ PORTALI</span>
+                </div>
+            </a>
+            <div class="dash-user-info">
+                <span class="discount-pill"><i class="fa-solid fa-percent"></i> Bayi İskontonuz: <strong>%{{ session.get('iskonto', 15) }}</strong></span>
+                <span class="user-name"><i class="fa-solid fa-building"></i> {{ session.get('firma_unvani') }}</span>
+                <a href="{{ url_for('index') }}" class="top-btn btn-outline-light">Vitrine Dön</a>
+                <a href="{{ url_for('cikis') }}" class="top-btn btn-gold">Çıkış</a>
+            </div>
+        </div>
+    </header>
+
+    <div class="container dash-container">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for category, message in messages %}
+              <div class="flash-alert flash-{{ category }}" style="position:static; margin-bottom:20px;">
+                <span>{{ message }}</span>
+              </div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
+
+        <div class="dash-grid">
+            <!-- SOL: İSKONTOLU ÜRÜN KATALOĞU -->
+            <div class="dash-card">
+                <div class="dash-card-header">
+                    <h2><i class="fa-solid fa-boxes-stacked"></i> B2B Toptan Fiyat Listesi & Hızlı Sipariş</h2>
+                    <span class="badge-gold">Net Bayi Fiyatları Aktif</span>
+                </div>
+                <div class="table-responsive">
+                    <table class="b2b-table">
+                        <thead>
+                            <tr>
+                                <th>Stok Kodu</th>
+                                <th>Ürün Adı</th>
+                                <th>Kategori</th>
+                                <th>Stok</th>
+                                <th>Liste Fiyatı</th>
+                                <th>Net Bayi Fiyatı</th>
+                                <th>Adet</th>
+                                <th>İşlem</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% set iskonto = session.get('iskonto', 15) %}
+                            {% for u in urunler %}
+                            {% set net_fiyat = (u.liste_fiyati|float) * (1 - (iskonto|float / 100.0)) %}
+                            <tr>
+                                <td><strong>{{ u.stok_kodu }}</strong></td>
+                                <td>{{ u.urun_adi }}</td>
+                                <td><span class="cat-pill">{{ u.kategori }}</span></td>
+                                <td>{{ u.stok_adedi }} {{ u.birim }}</td>
+                                <td class="old-price">{{ "%.2f"|format(u.liste_fiyati|float) }} ₺</td>
+                                <td class="net-price">{{ "%.2f"|format(net_fiyat) }} ₺</td>
+                                <td>
+                                    <input type="number" id="qty-{{ u.id }}" value="1" min="1" max="{{ u.stok_adedi }}" class="qty-input">
+                                </td>
+                                <td>
+                                    <button onclick="sepeteEkle('{{ u.stok_kodu }}', '{{ u.urun_adi }}', {{ '%.2f'|format(net_fiyat) }}, 'qty-{{ u.id }}')" class="btn-add-cart">
+                                        <i class="fa-solid fa-cart-plus"></i> Ekle
+                                    </button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- SAĞ: SİPARİŞ SEPETİ & GEÇMİŞ SİPARİŞLER -->
+            <div class="dash-sidebar">
+                <div class="dash-card">
+                    <div class="dash-card-header">
+                        <h3><i class="fa-solid fa-cart-shopping"></i> Aktif Sipariş Sepeti</h3>
+                    </div>
+                    <div id="cartItems" class="cart-list">
+                        <p class="empty-cart">Sepetinizde henüz ürün bulunmuyor.</p>
+                    </div>
+                    <div class="cart-summary">
+                        <div class="summary-row">
+                            <span>Genel Toplam (KDV Hariç):</span>
+                            <strong id="cartTotal">0.00 ₺</strong>
+                        </div>
+                        <textarea id="orderNote" rows="2" placeholder="Sevkiyat veya sipariş notunuz..." class="note-box"></textarea>
+                        <button onclick="siparisiTamamla()" class="btn-submit-gold">
+                            <i class="fa-solid fa-check-double"></i> B2B Siparişi Onayla
+                        </button>
+                    </div>
+                </div>
+
+                <div class="dash-card" style="margin-top:24px;">
+                    <div class="dash-card-header">
+                        <h3><i class="fa-solid fa-clock-rotate-left"></i> Son Siparişleriniz</h3>
+                    </div>
+                    {% if siparisler %}
+                        <ul class="order-history-list">
+                            {% for s in siparisler %}
+                            <li>
+                                <div>
+                                    <strong>{{ s.siparis_no }}</strong>
+                                    <small>{{ s.durum }}</small>
+                                </div>
+                                <span class="order-amount">{{ "%.2f"|format(s.toplam_tutar|float) }} ₺</span>
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    {% else %}
+                        <p class="empty-cart">Henüz kayıtlı siparişiniz yok.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let sepet = [];
+
+        function sepeteEkle(kod, ad, fiyat, qtyId) {
+            const adet = parseInt(document.getElementById(qtyId).value) || 1;
+            const mevcut = sepet.find(item => item.kod === kod);
+            if (mevcut) {
+                mevcut.adet += adet;
+            } else {
+                sepet.push({ kod, ad, fiyat, adet });
+            }
+            sepetiCiz();
+        }
+
+        function sepetiCiz() {
+            const container = document.getElementById("cartItems");
+            const totalEl = document.getElementById("cartTotal");
+            if (sepet.length === 0) {
+                container.innerHTML = '<p class="empty-cart">Sepetinizde henüz ürün bulunmuyor.</p>';
+                totalEl.textContent = "0.00 ₺";
+                return;
+            }
+            let toplam = 0;
+            container.innerHTML = sepet.map((item, idx) => {
+                const ara = item.fiyat * item.adet;
+                toplam += ara;
+                return `
+                    <div class="cart-item-row">
+                        <div>
+                            <strong>${item.ad}</strong>
+                            <small>${item.adet} x ${item.fiyat.toFixed(2)} ₺</small>
+                        </div>
+                        <div style="text-align:right;">
+                            <span>${ara.toFixed(2)} ₺</span>
+                            <button onclick="sepetSil(${idx})" class="del-btn">&times;</button>
+                        </div>
+                    </div>
+                `;
+            }).join("");
+            totalEl.textContent = toplam.toFixed(2) + " ₺";
+        }
+
+        function sepetSil(idx) {
+            sepet.splice(idx, 1);
+            sepetiCiz();
+        }
+
+        async function siparisiTamamla() {
+            if (sepet.length === 0) {
+                alert("Lütfen önce sepete ürün ekleyiniz.");
+                return;
+            }
+            const toplam = sepet.reduce((acc, i) => acc + (i.fiyat * i.adet), 0);
+            const kalemler = sepet.map(i => `${i.kod} (${i.adet} adet)`).join(", ");
+            const not = document.getElementById("orderNote").value + " | Kalemler: " + kalemler;
+
+            const res = await fetch("{{ url_for('siparis_ver') }}", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ toplam_tutar: toplam.toFixed(2), notlar: not })
+            });
+            const data = await res.json();
+            if (data.ok) {
+                alert(data.mesaj);
+                location.reload();
+            } else {
+                alert("Hata: " + data.mesaj);
+            }
+        }
+    </script>
+</body>
+</html>
