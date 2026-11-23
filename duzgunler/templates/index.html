@@ -12,6 +12,9 @@
 </head>
 <body>
 
+    {% set hakkimizda_kaydi = icerik_map.get('hakkimizda') if icerik_map else None %}
+    {% set iletisim_kaydi = icerik_map.get('iletisim-bilgileri') if icerik_map else None %}
+
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
         <div class="flash-container">
@@ -35,7 +38,7 @@
             <div class="top-b2b-actions">
                 {% if session.get('dzg_user_id') %}
                     {% if session.get('dzg_role') == 'bayi' %}
-                        <a href="{{ url_for('duzgunler.b2b_panel') }}" class="top-btn btn-gold"><i class="fa-solid fa-gauge"></i> B2B Bayi Paneli ({{ session.get('dzg_firma_unvani')[:18] }}...)</a>
+                        <a href="{{ url_for('duzgunler.b2b_panel') }}" class="top-btn btn-gold"><i class="fa-solid fa-gauge"></i> B2B Bayi Paneli ({{ (session.get('dzg_firma_unvani') or '')[:18] }}...)</a>
                     {% else %}
                         <a href="{{ url_for('duzgunler.plasiyer_panel') }}" class="top-btn btn-gold"><i class="fa-solid fa-user-tie"></i> Plasiyer Paneli ({{ session.get('dzg_plasiyer_kodu') }})</a>
                     {% endif %}
@@ -94,12 +97,18 @@
                 <h1>Mekanlara Değer Katan<br><span>Güvenli Enerji & Aydınlatma</span></h1>
                 <p>Düzgünler Elektrik; anahtar-priz serileri, profesyonel LED aydınlatma sistemleri, şalt ürünleri ve yüksek stok gücüyle Türkiye genelindeki bayilerine kesintisiz tedarik sağlar.</p>
                 <div class="hero-cta-group">
-                    <button onclick="openModal('b2bLoginModal')" class="btn-primary-gold">
-                        <i class="fa-solid fa-right-to-bracket"></i> B2B Bayi Portalına Gir
-                    </button>
-                    <button onclick="openModal('b2bRegisterModal')" class="btn-secondary-glass">
-                        <i class="fa-solid fa-handshake"></i> Bayilik Başvurusu Yap
-                    </button>
+                    {% if session.get('dzg_role') == 'bayi' %}
+                        <a href="{{ url_for('duzgunler.b2b_panel', sekme='urunler') }}" class="btn-primary-gold">
+                            <i class="fa-solid fa-cart-plus"></i> Bayi Sipariş Ekranına Git
+                        </a>
+                    {% else %}
+                        <button onclick="openModal('b2bLoginModal')" class="btn-primary-gold">
+                            <i class="fa-solid fa-right-to-bracket"></i> B2B Bayi Portalına Gir
+                        </button>
+                        <button onclick="openModal('b2bRegisterModal')" class="btn-secondary-glass">
+                            <i class="fa-solid fa-handshake"></i> Bayilik Başvurusu Yap
+                        </button>
+                    {% endif %}
                 </div>
             </div>
         </div>
@@ -227,10 +236,14 @@
             </div>
             <div class="about-content">
                 <span class="sub-title">KURUMSAL YAKLAŞIMIMIZ</span>
-                <h2>Düzgünler Elektrik ile Güçlü İş Ortaklığı</h2>
+                <h2>{{ hakkimizda_kaydi.baslik if hakkimizda_kaydi else 'Düzgünler Elektrik ile Güçlü İş Ortaklığı' }}</h2>
                 <div class="title-line left"></div>
-                <p>Düzgünler Elektrik, elektrik malzemeleri toptan satışı ve proje tedariği alanında Türkiye'nin önde gelen çözüm ortaklarından biridir. Geniş lojistik ağımız, güçlü stok yapımız ve uzman saha plasiyer kadromuzla bayilerimizin tüm ihtiyaçlarına tek noktadan çözüm sunuyoruz.</p>
-                <p>Geliştirdiğimiz yeni nesil <strong>B2B Bayi ve Plasiyer Portalı</strong> sayesinde iş ortaklarımız anlık stok durumlarını görüntüleyebilir, özel bayi iskontolarıyla 7/24 sipariş oluşturabilir ve cari hesaplarını şeffaf biçimde yönetebilir.</p>
+                {% if hakkimizda_kaydi and hakkimizda_kaydi.icerik %}
+                    <p style="white-space: pre-line;">{{ hakkimizda_kaydi.icerik }}</p>
+                {% else %}
+                    <p>Düzgünler Elektrik, elektrik malzemeleri toptan satışı ve proje tedariği alanında Türkiye'nin önde gelen çözüm ortaklarından biridir. Geniş lojistik ağımız, güçlü stok yapımız ve uzman saha plasiyer kadromuzla bayilerimizin tüm ihtiyaçlarına tek noktadan çözüm sunuyoruz.</p>
+                    <p>Geliştirdiğimiz yeni nesil <strong>B2B Bayi ve Plasiyer Portalı</strong> sayesinde iş ortaklarımız anlık stok durumlarını görüntüleyebilir, özel bayi iskontolarıyla 7/24 sipariş oluşturabilir ve cari hesaplarını şeffaf biçimde yönetebilir.</p>
+                {% endif %}
                 <ul class="about-list">
                     <li><i class="fa-solid fa-circle-check"></i> Bayiye özel tanımlanan kademeli iskonto oranları</li>
                     <li><i class="fa-solid fa-circle-check"></i> Saha plasiyerleri ile yerinde teknik ve ticari destek</li>
@@ -257,7 +270,7 @@
                         <span class="sc-cat">{{ u.kategori }}</span>
                     </div>
                     <div class="sc-icon">
-                        <i class="fa-solid fa-{{ u.gorsel_ikon }}"></i>
+                        <i class="fa-solid fa-{{ u.gorsel_ikon or 'bolt' }}"></i>
                     </div>
                     <h3>{{ u.urun_adi }}</h3>
                     <p class="sc-desc">{{ u.aciklama }}</p>
@@ -265,9 +278,15 @@
                         <div class="sc-stock">
                             <i class="fa-solid fa-box"></i> Stok: <strong>{{ u.stok_adedi }} {{ u.birim }}</strong>
                         </div>
-                        <button onclick="openModal('b2bLoginModal')" class="sc-price-btn">
-                            <i class="fa-solid fa-lock"></i> Bayi Fiyatı Gör
-                        </button>
+                        {% if session.get('dzg_role') == 'bayi' %}
+                            <a href="{{ url_for('duzgunler.b2b_panel', sekme='urunler') }}" class="sc-price-btn">
+                                <i class="fa-solid fa-cart-shopping"></i> Sipariş Ver
+                            </a>
+                        {% else %}
+                            <button onclick="openModal('b2bLoginModal')" class="sc-price-btn">
+                                <i class="fa-solid fa-lock"></i> Bayi Fiyatı Gör
+                            </button>
+                        {% endif %}
                     </div>
                 </div>
                 {% endfor %}
@@ -296,6 +315,51 @@
         </div>
     </section>
 
+    <section class="section-padding bg-light" id="teklif-formu">
+        <div class="container">
+            <div class="section-header">
+                <span class="sub-title">TEKLİF & İLETİŞİM</span>
+                <h2>Toplu Sipariş & Bilgi Talebi</h2>
+                <div class="title-line"></div>
+                <p>Ürün talepleriniz, proje teklifleri veya bayilik sorularınız için form bırakabilirsiniz.</p>
+            </div>
+
+            <form action="{{ url_for('duzgunler.iletisim_gonder') }}" method="POST" class="modal-form" style="max-width: 780px; margin: 0 auto;">
+                <div class="form-grid-2">
+                    <div class="form-group">
+                        <label>Ad Soyad *</label>
+                        <input type="text" name="ad_soyad" placeholder="Adınız Soyadınız" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Firma Adı</label>
+                        <input type="text" name="firma" placeholder="Firma / İşletme Adı">
+                    </div>
+                    <div class="form-group">
+                        <label>Telefon</label>
+                        <input type="tel" name="telefon" placeholder="05XX XXX XX XX">
+                    </div>
+                    <div class="form-group">
+                        <label>E-Posta</label>
+                        <input type="email" name="email" placeholder="ornek@firma.com">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Talep Türü</label>
+                    <select name="form_turu">
+                        <option value="Teklif Talebi">Teklif Talebi</option>
+                        <option value="Bayilik Bilgisi">Bayilik Bilgisi</option>
+                        <option value="İletişim Formu">Genel İletişim</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Mesajınız *</label>
+                    <textarea name="mesaj" rows="3" placeholder="Stok kodları, adetler veya sorunuzu yazın..." required></textarea>
+                </div>
+                <button type="submit" class="btn-submit-gold">Talebi Gönder</button>
+            </form>
+        </div>
+    </section>
+
     <footer class="main-footer" id="iletisim">
         <div class="container footer-grid">
             <div class="footer-col">
@@ -316,25 +380,38 @@
                     <li><a href="#kurumsal">Kurumsal</a></li>
                     <li><a href="#urun-gruplari">Ürün Grupları</a></li>
                     <li><a href="#vitrin">Katalog Vitrini</a></li>
+                    <li><a href="#teklif-formu">Teklif & İletişim</a></li>
                 </ul>
             </div>
 
             <div class="footer-col">
-                <h4>B2B Portal İşlemleri</h4>
+                <h4>B2B Portal & Bilgilendirme</h4>
                 <ul>
                     <li><a href="javascript:void(0)" onclick="openModal('b2bLoginModal')">B2B Bayi Girişi</a></li>
                     <li><a href="javascript:void(0)" onclick="openModal('plasiyerLoginModal')">Plasiyer Girişi</a></li>
                     <li><a href="javascript:void(0)" onclick="openModal('b2bRegisterModal')">B2B Bayilik Başvurusu</a></li>
+                    {% for sz in sozlesmeler %}
+                        <li><a href="javascript:void(0)" onclick='openIcerikModal({{ sz.baslik|tojson }}, {{ (sz.icerik or "")|tojson }})'>{{ sz.baslik }}</a></li>
+                    {% endfor %}
+                    {% for sf in sayfalar %}
+                        <li><a href="javascript:void(0)" onclick='openIcerikModal({{ sf.baslik|tojson }}, {{ (sf.icerik or "")|tojson }})'>{{ sf.baslik }}</a></li>
+                    {% endfor %}
                 </ul>
             </div>
 
             <div class="footer-col">
-                <h4>İletişim Bilgileri</h4>
-                <ul class="contact-list">
-                    <li><i class="fa-solid fa-location-dot"></i> Merkez Mah. Elektrikçiler Sanayi Sitesi No:42 İstanbul</li>
-                    <li><i class="fa-solid fa-phone"></i> 0 (216) 444 0 394</li>
-                    <li><i class="fa-solid fa-envelope"></i> info@duzgunlerelektrik.com.tr</li>
-                </ul>
+                <h4>{{ iletisim_kaydi.baslik if iletisim_kaydi else 'İletişim Bilgileri' }}</h4>
+                {% if iletisim_kaydi and iletisim_kaydi.icerik %}
+                    <ul class="contact-list">
+                        <li style="white-space: pre-line;">{{ iletisim_kaydi.icerik }}</li>
+                    </ul>
+                {% else %}
+                    <ul class="contact-list">
+                        <li><i class="fa-solid fa-location-dot"></i> Merkez Mah. Elektrikçiler Sanayi Sitesi No:42 İstanbul</li>
+                        <li><i class="fa-solid fa-phone"></i> 0 (216) 444 0 394</li>
+                        <li><i class="fa-solid fa-envelope"></i> info@duzgunlerelektrik.com.tr</li>
+                    </ul>
+                {% endif %}
             </div>
         </div>
         <div class="footer-bottom">
@@ -455,6 +532,49 @@
         </div>
     </div>
 
+    <div class="modal-backdrop" id="icerikBilgiModal">
+        <div class="modal-box modal-lg">
+            <div class="modal-header">
+                <div>
+                    <span class="modal-tag">KURUMSAL BİLGİLENDİRME</span>
+                    <h3 id="icerikBilgiBaslik">Bilgilendirme</h3>
+                </div>
+                <button class="modal-close" onclick="closeModal('icerikBilgiModal')">&times;</button>
+            </div>
+            <div class="modal-form">
+                <div id="icerikBilgiMetin" style="white-space: pre-line; line-height: 1.65; max-height: 60vh; overflow-y: auto;"></div>
+            </div>
+        </div>
+    </div>
+
     <script src="{{ url_for('duzgunler.static', filename='js/main.js') }}"></script>
+    <script>
+        function openIcerikModal(baslik, icerik) {
+            const bEl = document.getElementById("icerikBilgiBaslik");
+            const mEl = document.getElementById("icerikBilgiMetin");
+            if (bEl) bEl.textContent = baslik || "Bilgilendirme";
+            if (mEl) mEl.textContent = icerik || "";
+            if (typeof openModal === "function") {
+                openModal("icerikBilgiModal");
+            } else {
+                const modal = document.getElementById("icerikBilgiModal");
+                if (modal) modal.classList.add("active", "show", "open");
+            }
+        }
+
+        document.addEventListener("DOMContentLoaded", () => {
+            const params = new URLSearchParams(window.location.search);
+            const modalParam = params.get("modal");
+            const map = {
+                "b2b-login": "b2bLoginModal",
+                "plasiyer-login": "plasiyerLoginModal",
+                "b2b-register": "b2bRegisterModal"
+            };
+            const hedef = map[modalParam] || modalParam;
+            if (hedef && typeof openModal === "function") {
+                openModal(hedef);
+            }
+        });
+    </script>
 </body>
 </html>
