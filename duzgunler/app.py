@@ -1,15 +1,19 @@
 import os
+import random
+from functools import wraps
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from functools import wraps
-from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify
+from flask import Blueprint, render_template, request, redirect, url_for, session, flash, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
-from dotenv import load_dotenv
 
-load_dotenv()
-
-app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "duzgunler-elektrik-2026-key")
+duzgunler_bp = Blueprint(
+    "duzgunler",
+    __name__,
+    url_prefix="/duzgunler",
+    template_folder="templates",
+    static_folder="static",
+    static_url_path="/duzgunler/static"
+)
 
 DATABASE_URL = os.environ.get(
     "DATABASE_URL",
@@ -17,16 +21,14 @@ DATABASE_URL = os.environ.get(
 )
 
 def get_db_connection():
-    conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
-    return conn
+    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
 def init_db():
-    """Supabase PostgreSQL üzerinde gerekli tabloları ve örnek verileri oluşturur."""
+    """Supabase PostgreSQL üzerinde Düzgünler Elektrik B2B tablolarını ve örnek verileri oluşturur."""
     try:
         conn = get_db_connection()
         cur = conn.cursor()
 
-        # B2B Bayiler Tablosu
         cur.execute("""
             CREATE TABLE IF NOT EXISTS b2b_bayiler (
                 id SERIAL PRIMARY KEY,
@@ -45,7 +47,6 @@ def init_db():
             );
         """)
 
-        # Plasiyerler Tablosu
         cur.execute("""
             CREATE TABLE IF NOT EXISTS b2b_plasiyerler (
                 id SERIAL PRIMARY KEY,
@@ -60,7 +61,6 @@ def init_db():
             );
         """)
 
-        # Ürün Kataloğu Tablosu (Hira Kapı Kolları kurumsal vitrin + Düzgünler Elektrik ürün gamı)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS b2b_urunler (
                 id SERIAL PRIMARY KEY,
@@ -76,7 +76,6 @@ def init_db():
             );
         """)
 
-        # B2B Siparişler Tablosu
         cur.execute("""
             CREATE TABLE IF NOT EXISTS b2b_siparisler (
                 id SERIAL PRIMARY KEY,
@@ -90,7 +89,6 @@ def init_db():
             );
         """)
 
-        # Varsayılan Demo Plasiyer Hesabı Ekle
         cur.execute("SELECT id FROM b2b_plasiyerler WHERE plasiyer_kodu = %s", ("PLS-001",))
         if not cur.fetchone():
             cur.execute("""
@@ -105,7 +103,6 @@ def init_db():
                 generate_password_hash("123456")
             ))
 
-        # Varsayılan Demo B2B Bayi Hesabı Ekle
         cur.execute("SELECT id FROM b2b_bayiler WHERE vergi_no = %s", ("1234567890",))
         if not cur.fetchone():
             cur.execute("""
@@ -125,7 +122,6 @@ def init_db():
                 "aktif"
             ))
 
-        # Örnek Ürünler Ekle (Boşsa)
         cur.execute("SELECT COUNT(*) AS cnt FROM b2b_urunler")
         if cur.fetchone()["cnt"] == 0:
             sample_products = [
@@ -144,29 +140,24 @@ def init_db():
         conn.commit()
         cur.close()
         conn.close()
-        print("Supabase PostgreSQL tabloları başarıyla doğrulandı/oluşturuldu.")
     except Exception as e:
-        print("Veritabanı başlatma uyarısı:", e)
-
-# Uygulama ayağa kalkarken tabloları hazırla
-with app.app_context():
-    init_db()
+        print("Düzgünler DB başlatma hatası:", e)
 
 def login_required(role=None):
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):
-            if "user_id" not in session:
+            if "dzg_user_id" not in session:
                 flash("Bu alanı görüntülemek için giriş yapmalısınız.", "warning")
-                return redirect(url_for("index"))
-            if role and session.get("role") != role:
+                return redirect(url_for("duzgunler.index"))
+            if role and session.get("dzg_role") != role:
                 flash("Bu panele erişim yetkiniz bulunmamaktadır.", "danger")
-                return redirect(url_for("index"))
+                return redirect(url_for("duzgunler.index"))
             return f(*args, **kwargs)
         return decorated_function
     return decorator
 
-@app.route("/")
+@duzgunler_bp.route("/")
 def index():
     urunler = []
     try:
@@ -180,15 +171,14 @@ def index():
         print("Ürün çekme hatası:", e)
     return render_template("index.html", urunler=urunler)
 
-# --- B2B BAYİ GİRİŞİ ---
-@app.route("/b2b-giris", methods=["POST"])
+@duzgunler_bp.route("/b2b-giris", methods=["POST"])
 def b2b_giris():
     email_or_vkn = request.form.get("kullanici", "").strip()
     sifre = request.form.get("sifre", "")
 
     if not email_or_vkn or not sifre:
         flash("Lütfen E-posta / Vergi No ve şifrenizi giriniz.", "danger")
-        return redirect(url_for("index", modal="b2b-login"))
+        return redirect(url_for("duzgunler.index", modal="b2b-login"))
 
     try:
         conn = get_db_connection()
@@ -203,33 +193,31 @@ def b2b_giris():
 
         if bayi and check_password_hash(bayi["sifre_hash"], sifre):
             if bayi["durum"] != "aktif":
-                flash("Bayilik başvurunuz henüz onay aşamasındadır. Müşteri temsilcinizle iletişime geçebilirsiniz.", "warning")
-                return redirect(url_for("index"))
+                flash("Bayilik başvurunuz henüz onay aşamasındadır.", "warning")
+                return redirect(url_for("duzgunler.index"))
 
-            session.clear()
-            session["user_id"] = bayi["id"]
-            session["role"] = "bayi"
-            session["firma_unvani"] = bayi["firma_unvani"]
-            session["yetkili"] = bayi["yetkili_ad_soyad"]
-            session["iskonto"] = float(bayi["iskonto_orani"])
+            session["dzg_user_id"] = bayi["id"]
+            session["dzg_role"] = "bayi"
+            session["dzg_firma_unvani"] = bayi["firma_unvani"]
+            session["dzg_yetkili"] = bayi["yetkili_ad_soyad"]
+            session["dzg_iskonto"] = float(bayi["iskonto_orani"])
             flash(f"Hoş geldiniz, {bayi['firma_unvani']}!", "success")
-            return redirect(url_for("b2b_panel"))
+            return redirect(url_for("duzgunler.b2b_panel"))
         else:
             flash("Hatalı E-posta/Vergi No veya şifre girdiniz.", "danger")
-            return redirect(url_for("index", modal="b2b-login"))
+            return redirect(url_for("duzgunler.index", modal="b2b-login"))
     except Exception as e:
         flash(f"Veritabanı bağlantı hatası: {str(e)}", "danger")
-        return redirect(url_for("index"))
+        return redirect(url_for("duzgunler.index"))
 
-# --- PLASİYER GİRİŞİ ---
-@app.route("/plasiyer-giris", methods=["POST"])
+@duzgunler_bp.route("/plasiyer-giris", methods=["POST"])
 def plasiyer_giris():
     kod_or_email = request.form.get("plasiyer_kodu", "").strip()
     sifre = request.form.get("sifre", "")
 
     if not kod_or_email or not sifre:
         flash("Lütfen Plasiyer Kodu / E-posta ve şifrenizi giriniz.", "danger")
-        return redirect(url_for("index", modal="plasiyer-login"))
+        return redirect(url_for("duzgunler.index", modal="plasiyer-login"))
 
     try:
         conn = get_db_connection()
@@ -245,25 +233,23 @@ def plasiyer_giris():
         if plasiyer and check_password_hash(plasiyer["sifre_hash"], sifre):
             if not plasiyer["aktif"]:
                 flash("Plasiyer hesabınız pasif durumdadır.", "danger")
-                return redirect(url_for("index"))
+                return redirect(url_for("duzgunler.index"))
 
-            session.clear()
-            session["user_id"] = plasiyer["id"]
-            session["role"] = "plasiyer"
-            session["ad_soyad"] = plasiyer["ad_soyad"]
-            session["plasiyer_kodu"] = plasiyer["plasiyer_kodu"]
-            session["bolge"] = plasiyer["bolge"]
+            session["dzg_user_id"] = plasiyer["id"]
+            session["dzg_role"] = "plasiyer"
+            session["dzg_ad_soyad"] = plasiyer["ad_soyad"]
+            session["dzg_plasiyer_kodu"] = plasiyer["plasiyer_kodu"]
+            session["dzg_bolge"] = plasiyer["bolge"]
             flash(f"Saha Satış Paneline Hoş Geldiniz, {plasiyer['ad_soyad']}.", "success")
-            return redirect(url_for("plasiyer_panel"))
+            return redirect(url_for("duzgunler.plasiyer_panel"))
         else:
             flash("Geçersiz Plasiyer Kodu veya şifre.", "danger")
-            return redirect(url_for("index", modal="plasiyer-login"))
+            return redirect(url_for("duzgunler.index", modal="plasiyer-login"))
     except Exception as e:
         flash(f"Veritabanı bağlantı hatası: {str(e)}", "danger")
-        return redirect(url_for("index"))
+        return redirect(url_for("duzgunler.index"))
 
-# --- B2B BAYİ KAYIT ---
-@app.route("/b2b-kayit", methods=["POST"])
+@duzgunler_bp.route("/b2b-kayit", methods=["POST"])
 def b2b_kayit():
     firma_unvani = request.form.get("firma_unvani", "").strip()
     yetkili_ad_soyad = request.form.get("yetkili_ad_soyad", "").strip()
@@ -277,7 +263,7 @@ def b2b_kayit():
 
     if not all([firma_unvani, yetkili_ad_soyad, vergi_dairesi, vergi_no, telefon, email, sehir, sifre]):
         flash("Lütfen tüm zorunlu bayilik başvuru alanlarını doldurunuz.", "danger")
-        return redirect(url_for("index", modal="b2b-register"))
+        return redirect(url_for("duzgunler.index", modal="b2b-register"))
 
     try:
         conn = get_db_connection()
@@ -288,10 +274,9 @@ def b2b_kayit():
             cur.close()
             conn.close()
             flash("Bu E-posta veya Vergi Numarası ile daha önce kayıt oluşturulmuş.", "warning")
-            return redirect(url_for("index", modal="b2b-login"))
+            return redirect(url_for("duzgunler.index", modal="b2b-login"))
 
         sifre_hash = generate_password_hash(sifre)
-        # Hızlı test/kullanım için durumu 'aktif' olarak kaydediyoruz (isterseniz 'onay_bekliyor' yapabilirsiniz)
         cur.execute("""
             INSERT INTO b2b_bayiler
             (firma_unvani, yetkili_ad_soyad, vergi_dairesi, vergi_no, telefon, email, sehir, adres, sifre_hash, iskonto_orani, durum)
@@ -304,35 +289,32 @@ def b2b_kayit():
         cur.close()
         conn.close()
 
-        session.clear()
-        session["user_id"] = new_id
-        session["role"] = "bayi"
-        session["firma_unvani"] = firma_unvani
-        session["yetkili"] = yetkili_ad_soyad
-        session["iskonto"] = 15.00
+        session["dzg_user_id"] = new_id
+        session["dzg_role"] = "bayi"
+        session["dzg_firma_unvani"] = firma_unvani
+        session["dzg_yetkili"] = yetkili_ad_soyad
+        session["dzg_iskonto"] = 15.00
 
-        flash("B2B Bayilik kaydınız Supabase veritabanına başarıyla işlendi ve hesabınız aktif edildi!", "success")
-        return redirect(url_for("b2b_panel"))
+        flash("B2B Bayilik kaydınız Supabase veritabanına başarıyla işlendi!", "success")
+        return redirect(url_for("duzgunler.b2b_panel"))
     except Exception as e:
         flash(f"Kayıt sırasında hata oluştu: {str(e)}", "danger")
-        return redirect(url_for("index", modal="b2b-register"))
+        return redirect(url_for("duzgunler.index", modal="b2b-register"))
 
-# --- B2B BAYİ PANELİ ---
-@app.route("/b2b-panel")
+@duzgunler_bp.route("/b2b-panel")
 @login_required(role="bayi")
 def b2b_panel():
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("SELECT * FROM b2b_urunler ORDER BY kategori, id ASC")
     urunler = cur.fetchall()
-    cur.execute("SELECT * FROM b2b_siparisler WHERE bayi_id = %s ORDER BY olusturma_tarihi DESC", (session["user_id"],))
+    cur.execute("SELECT * FROM b2b_siparisler WHERE bayi_id = %s ORDER BY olusturma_tarihi DESC", (session["dzg_user_id"],))
     siparisler = cur.fetchall()
     cur.close()
     conn.close()
     return render_template("b2b_panel.html", urunler=urunler, siparisler=siparisler)
 
-# --- PLASİYER PANELİ ---
-@app.route("/plasiyer-panel")
+@duzgunler_bp.route("/plasiyer-panel")
 @login_required(role="plasiyer")
 def plasiyer_panel():
     conn = get_db_connection()
@@ -352,20 +334,18 @@ def plasiyer_panel():
     conn.close()
     return render_template("plasiyer_panel.html", bayiler=bayiler, urunler=urunler, siparisler=siparisler)
 
-# --- HIZLI B2B SİPARİŞ OLUŞTURMA API ---
-@app.route("/api/siparis-ver", methods=["POST"])
+@duzgunler_bp.route("/api/siparis-ver", methods=["POST"])
 @login_required()
 def siparis_ver():
-    data = request.get_json()
+    data = request.get_json() or {}
     toplam_tutar = data.get("toplam_tutar", 0)
     notlar = data.get("notlar", "")
-    bayi_id = session["user_id"] if session["role"] == "bayi" else data.get("bayi_id")
-    plasiyer_id = session["user_id"] if session["role"] == "plasiyer" else None
+    bayi_id = session["dzg_user_id"] if session.get("dzg_role") == "bayi" else data.get("bayi_id")
+    plasiyer_id = session["dzg_user_id"] if session.get("dzg_role") == "plasiyer" else None
 
     if not bayi_id or float(toplam_tutar) <= 0:
         return jsonify({"ok": False, "mesaj": "Geçerli bir bayi ve sepet tutarı gereklidir."}), 400
 
-    import random
     siparis_no = f"DZG-{random.randint(100000, 999999)}"
 
     try:
@@ -382,8 +362,7 @@ def siparis_ver():
     except Exception as e:
         return jsonify({"ok": False, "mesaj": str(e)}), 500
 
-# --- PLASİYER BAYİ İSKONTO / DURUM GÜNCELLEME ---
-@app.route("/plasiyer/bayi-guncelle/<int:bayi_id>", methods=["POST"])
+@duzgunler_bp.route("/plasiyer/bayi-guncelle/<int:bayi_id>", methods=["POST"])
 @login_required(role="plasiyer")
 def bayi_guncelle(bayi_id):
     iskonto = request.form.get("iskonto_orani", 15)
@@ -401,13 +380,14 @@ def bayi_guncelle(bayi_id):
         flash("Bayi iskonto ve hesap durumu güncellendi.", "success")
     except Exception as e:
         flash(f"Güncelleme hatası: {e}", "danger")
-    return redirect(url_for("plasiyer_panel"))
+    return redirect(url_for("duzgunler.plasiyer_panel"))
 
-@app.route("/cikis")
+@duzgunler_bp.route("/cikis")
 def cikis():
-    session.clear()
-    flash("Oturumunuz güvenli bir şekilde sonlandırıldı.", "info")
-    return redirect(url_for("index"))
-
-if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    for k in [
+        "dzg_user_id", "dzg_role", "dzg_firma_unvani", "dzg_yetkili",
+        "dzg_iskonto", "dzg_ad_soyad", "dzg_plasiyer_kodu", "dzg_bolge"
+    ]:
+        session.pop(k, None)
+    flash("Düzgünler B2B oturumunuz sonlandırıldı.", "info")
+    return redirect(url_for("duzgunler.index"))

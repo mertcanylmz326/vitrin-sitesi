@@ -6,13 +6,13 @@
     <title>B2B Bayi Portalı | Düzgünler Elektrik</title>
     <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('duzgunler.static', filename='css/style.css') }}">
 </head>
 <body class="dashboard-body">
 
     <header class="dash-header">
         <div class="container dash-header-inner">
-            <a href="{{ url_for('index') }}" class="brand-logo">
+            <a href="{{ url_for('duzgunler.index') }}" class="brand-logo">
                 <div class="logo-emblem"><i class="fa-solid fa-bolt"></i></div>
                 <div class="logo-text">
                     <span class="brand-main" style="color:#fff;">DÜZGÜNLER B2B</span>
@@ -20,10 +20,10 @@
                 </div>
             </a>
             <div class="dash-user-info">
-                <span class="discount-pill"><i class="fa-solid fa-percent"></i> Bayi İskontonuz: <strong>%{{ session.get('iskonto', 15) }}</strong></span>
-                <span class="user-name"><i class="fa-solid fa-building"></i> {{ session.get('firma_unvani') }}</span>
-                <a href="{{ url_for('index') }}" class="top-btn btn-outline-light">Vitrine Dön</a>
-                <a href="{{ url_for('cikis') }}" class="top-btn btn-gold">Çıkış</a>
+                <span class="discount-pill"><i class="fa-solid fa-percent"></i> Bayi İskontonuz: <strong>%{{ session.get('dzg_iskonto', 15) }}</strong></span>
+                <span class="user-name"><i class="fa-solid fa-building"></i> {{ session.get('dzg_firma_unvani') }}</span>
+                <a href="{{ url_for('duzgunler.index') }}" class="top-btn btn-outline-light">Vitrine Dön</a>
+                <a href="{{ url_for('duzgunler.cikis') }}" class="top-btn btn-gold">Çıkış</a>
             </div>
         </div>
     </header>
@@ -40,7 +40,6 @@
         {% endwith %}
 
         <div class="dash-grid">
-            <!-- SOL: İSKONTOLU ÜRÜN KATALOĞU -->
             <div class="dash-card">
                 <div class="dash-card-header">
                     <h2><i class="fa-solid fa-boxes-stacked"></i> B2B Toptan Fiyat Listesi & Hızlı Sipariş</h2>
@@ -61,7 +60,7 @@
                             </tr>
                         </thead>
                         <tbody>
-                            {% set iskonto = session.get('iskonto', 15) %}
+                            {% set iskonto = session.get('dzg_iskonto', 15) %}
                             {% for u in urunler %}
                             {% set net_fiyat = (u.liste_fiyati|float) * (1 - (iskonto|float / 100.0)) %}
                             <tr>
@@ -86,7 +85,6 @@
                 </div>
             </div>
 
-            <!-- SAĞ: SİPARİŞ SEPETİ & GEÇMİŞ SİPARİŞLER -->
             <div class="dash-sidebar">
                 <div class="dash-card">
                     <div class="dash-card-header">
@@ -187,7 +185,7 @@
             const kalemler = sepet.map(i => `${i.kod} (${i.adet} adet)`).join(", ");
             const not = document.getElementById("orderNote").value + " | Kalemler: " + kalemler;
 
-            const res = await fetch("{{ url_for('siparis_ver') }}", {
+            const res = await fetch("{{ url_for('duzgunler.siparis_ver') }}", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ toplam_tutar: toplam.toFixed(2), notlar: not })

@@ -8,11 +8,10 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('duzgunler.static', filename='css/style.css') }}">
 </head>
 <body>
 
-    <!-- FLASH BİLDİRİMLER -->
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
         <div class="flash-container">
@@ -26,7 +25,6 @@
       {% endif %}
     {% endwith %}
 
-    <!-- ÜST KURUMSAL BAR (Hira Kapı Kolları Stilinde Top Header + B2B/Plasiyer Erişimi) -->
     <div class="top-bar">
         <div class="container top-bar-inner">
             <div class="top-contact">
@@ -35,13 +33,13 @@
                 <span class="hide-mobile"><i class="fa-solid fa-location-dot"></i> İstanbul / Türkiye</span>
             </div>
             <div class="top-b2b-actions">
-                {% if session.get('user_id') %}
-                    {% if session.get('role') == 'bayi' %}
-                        <a href="{{ url_for('b2b_panel') }}" class="top-btn btn-gold"><i class="fa-solid fa-gauge"></i> B2B Bayi Paneli ({{ session.get('firma_unvani')[:18] }}...)</a>
+                {% if session.get('dzg_user_id') %}
+                    {% if session.get('dzg_role') == 'bayi' %}
+                        <a href="{{ url_for('duzgunler.b2b_panel') }}" class="top-btn btn-gold"><i class="fa-solid fa-gauge"></i> B2B Bayi Paneli ({{ session.get('dzg_firma_unvani')[:18] }}...)</a>
                     {% else %}
-                        <a href="{{ url_for('plasiyer_panel') }}" class="top-btn btn-gold"><i class="fa-solid fa-user-tie"></i> Plasiyer Paneli ({{ session.get('plasiyer_kodu') }})</a>
+                        <a href="{{ url_for('duzgunler.plasiyer_panel') }}" class="top-btn btn-gold"><i class="fa-solid fa-user-tie"></i> Plasiyer Paneli ({{ session.get('dzg_plasiyer_kodu') }})</a>
                     {% endif %}
-                    <a href="{{ url_for('cikis') }}" class="top-btn btn-outline-light"><i class="fa-solid fa-right-from-bracket"></i> Çıkış</a>
+                    <a href="{{ url_for('duzgunler.cikis') }}" class="top-btn btn-outline-light"><i class="fa-solid fa-right-from-bracket"></i> Çıkış</a>
                 {% else %}
                     <button type="button" onclick="openModal('b2bLoginModal')" class="top-btn btn-gold">
                         <i class="fa-solid fa-building-lock"></i> B2B Bayi Girişi
@@ -57,10 +55,9 @@
         </div>
     </div>
 
-    <!-- ANA NAVİGASYON BAR -->
     <header class="main-header" id="navbar">
         <div class="container header-inner">
-            <a href="{{ url_for('index') }}" class="brand-logo">
+            <a href="{{ url_for('duzgunler.index') }}" class="brand-logo">
                 <div class="logo-emblem">
                     <i class="fa-solid fa-bolt"></i>
                 </div>
@@ -90,7 +87,6 @@
         </div>
     </header>
 
-    <!-- HERO SLIDER (Hira Kapı Kolları Tam Ekran Zarif Mimari & Endüstriyel Vitrin Konsepti) -->
     <section class="hero-slider" id="anasayfa">
         <div class="slide active" style="background-image: linear-gradient(95deg, rgba(15, 20, 28, 0.90) 0%, rgba(15, 20, 28, 0.65) 55%, rgba(15, 20, 28, 0.30) 100%), url('https://images.unsplash.com/photo-1558002038-1055907df827?auto=format&fit=crop&w=1920&q=80');">
             <div class="container hero-content">
@@ -109,7 +105,6 @@
         </div>
     </section>
 
-    <!-- KURUMSAL İSTATİSTİK & GÜVEN ŞERİDİ -->
     <section class="stats-strip">
         <div class="container stats-grid">
             <div class="stat-item">
@@ -143,7 +138,6 @@
         </div>
     </section>
 
-    <!-- ÜRÜN GRUPLARI (Hira Kapı Kolları 6'lı Kategorik Vitrin Grid Yapısı) -->
     <section class="section-padding bg-light" id="urun-gruplari">
         <div class="container">
             <div class="section-header">
@@ -222,7 +216,6 @@
         </div>
     </section>
 
-    <!-- KURUMSAL HAKKIMIZDA BÖLÜMÜ -->
     <section class="section-padding" id="kurumsal">
         <div class="container about-grid">
             <div class="about-image-wrap">
@@ -247,7 +240,6 @@
         </div>
     </section>
 
-    <!-- SUPABASE VERİTABANINDAN ÇEKİLEN VİTRİN ÜRÜNLERİ -->
     <section class="section-padding bg-dark-section" id="vitrin">
         <div class="container">
             <div class="section-header light">
@@ -283,7 +275,6 @@
         </div>
     </section>
 
-    <!-- B2B & PLASİYER ERİŞİM CALL-TO-ACTION BANNER -->
     <section class="b2b-cta-banner" id="b2b-avantaj">
         <div class="container b2b-cta-inner">
             <div class="b2b-cta-text">
@@ -305,7 +296,6 @@
         </div>
     </section>
 
-    <!-- KURUMSAL FOOTER -->
     <footer class="main-footer" id="iletisim">
         <div class="container footer-grid">
             <div class="footer-col">
@@ -354,9 +344,6 @@
         </div>
     </footer>
 
-    <!-- ========================================================= -->
-    <!-- MODAL 1: B2B BAYİ GİRİŞİ -->
-    <!-- ========================================================= -->
     <div class="modal-backdrop" id="b2bLoginModal">
         <div class="modal-box">
             <div class="modal-header">
@@ -366,7 +353,7 @@
                 </div>
                 <button class="modal-close" onclick="closeModal('b2bLoginModal')">&times;</button>
             </div>
-            <form action="{{ url_for('b2b_giris') }}" method="POST" class="modal-form">
+            <form action="{{ url_for('duzgunler.b2b_giris') }}" method="POST" class="modal-form">
                 <div class="form-group">
                     <label>E-Posta Adresi veya Vergi Numarası</label>
                     <input type="text" name="kullanici" placeholder="Örn: bayi@ornek.com veya 1234567890" required>
@@ -386,9 +373,6 @@
         </div>
     </div>
 
-    <!-- ========================================================= -->
-    <!-- MODAL 2: PLASİYER GİRİŞİ -->
-    <!-- ========================================================= -->
     <div class="modal-backdrop" id="plasiyerLoginModal">
         <div class="modal-box">
             <div class="modal-header dark-header">
@@ -398,7 +382,7 @@
                 </div>
                 <button class="modal-close" onclick="closeModal('plasiyerLoginModal')">&times;</button>
             </div>
-            <form action="{{ url_for('plasiyer_giris') }}" method="POST" class="modal-form">
+            <form action="{{ url_for('duzgunler.plasiyer_giris') }}" method="POST" class="modal-form">
                 <div class="form-group">
                     <label>Plasiyer Kodu veya Kurumsal E-Posta</label>
                     <input type="text" name="plasiyer_kodu" placeholder="Örn: PLS-001 veya plasiyer@duzgunlerelektrik.com" required>
@@ -415,9 +399,6 @@
         </div>
     </div>
 
-    <!-- ========================================================= -->
-    <!-- MODAL 3: B2B BAYİ KAYIT FORMU -->
-    <!-- ========================================================= -->
     <div class="modal-backdrop" id="b2bRegisterModal">
         <div class="modal-box modal-lg">
             <div class="modal-header">
@@ -427,7 +408,7 @@
                 </div>
                 <button class="modal-close" onclick="closeModal('b2bRegisterModal')">&times;</button>
             </div>
-            <form action="{{ url_for('b2b_kayit') }}" method="POST" class="modal-form">
+            <form action="{{ url_for('duzgunler.b2b_kayit') }}" method="POST" class="modal-form">
                 <div class="form-grid-2">
                     <div class="form-group">
                         <label>Firma Ticari Ünvanı *</label>
@@ -474,6 +455,6 @@
         </div>
     </div>
 
-    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    <script src="{{ url_for('duzgunler.static', filename='js/main.js') }}"></script>
 </body>
 </html>

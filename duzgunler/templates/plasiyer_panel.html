@@ -6,13 +6,13 @@
     <title>Plasiyer Saha Paneli | Düzgünler Elektrik</title>
     <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('duzgunler.static', filename='css/style.css') }}">
 </head>
 <body class="dashboard-body">
 
     <header class="dash-header" style="background:#0b1320;">
         <div class="container dash-header-inner">
-            <a href="{{ url_for('index') }}" class="brand-logo">
+            <a href="{{ url_for('duzgunler.index') }}" class="brand-logo">
                 <div class="logo-emblem"><i class="fa-solid fa-bolt"></i></div>
                 <div class="logo-text">
                     <span class="brand-main" style="color:#fff;">DÜZGÜNLER SAHA</span>
@@ -20,10 +20,10 @@
                 </div>
             </a>
             <div class="dash-user-info">
-                <span class="discount-pill"><i class="fa-solid fa-map-pin"></i> Bölge: <strong>{{ session.get('bolge') }}</strong></span>
-                <span class="user-name"><i class="fa-solid fa-user-tie"></i> {{ session.get('ad_soyad') }} ({{ session.get('plasiyer_kodu') }})</span>
-                <a href="{{ url_for('index') }}" class="top-btn btn-outline-light">Vitrine Dön</a>
-                <a href="{{ url_for('cikis') }}" class="top-btn btn-gold">Çıkış</a>
+                <span class="discount-pill"><i class="fa-solid fa-map-pin"></i> Bölge: <strong>{{ session.get('dzg_bolge') }}</strong></span>
+                <span class="user-name"><i class="fa-solid fa-user-tie"></i> {{ session.get('dzg_ad_soyad') }} ({{ session.get('dzg_plasiyer_kodu') }})</span>
+                <a href="{{ url_for('duzgunler.index') }}" class="top-btn btn-outline-light">Vitrine Dön</a>
+                <a href="{{ url_for('duzgunler.cikis') }}" class="top-btn btn-gold">Çıkış</a>
             </div>
         </div>
     </header>
@@ -39,7 +39,6 @@
           {% endif %}
         {% endwith %}
 
-        <!-- KAYITLI B2B BAYİLER YÖNETİMİ -->
         <div class="dash-card">
             <div class="dash-card-header">
                 <h2><i class="fa-solid fa-users-gear"></i> Kayıtlı B2B Bayiler & İskonto Yönetimi (Supabase Canlı)</h2>
@@ -65,7 +64,7 @@
                             <td>{{ b.yetkili_ad_soyad }}</td>
                             <td>{{ b.vergi_dairesi }}<br><small>{{ b.vergi_no }}</small></td>
                             <td>{{ b.sehir }}<br><small>{{ b.telefon }}</small></td>
-                            <form action="{{ url_for('bayi_guncelle', bayi_id=b.id) }}" method="POST">
+                            <form action="{{ url_for('duzgunler.bayi_guncelle', bayi_id=b.id) }}" method="POST">
                                 <td>
                                     <input type="number" step="0.5" name="iskonto_orani" value="{{ b.iskonto_orani }}" class="qty-input" style="width:75px;">
                                 </td>
@@ -87,7 +86,6 @@
             </div>
         </div>
 
-        <!-- BAYİ ADINA SAHA SİPARİŞİ GİRİŞİ VE TÜM SİPARİŞLER -->
         <div class="dash-grid" style="margin-top:24px;">
             <div class="dash-card">
                 <div class="dash-card-header">
@@ -149,7 +147,7 @@
                 alert("Lütfen geçerli bir sipariş tutarı giriniz.");
                 return;
             }
-            const res = await fetch("{{ url_for('siparis_ver') }}", {
+            const res = await fetch("{{ url_for('duzgunler.siparis_ver') }}", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ bayi_id, toplam_tutar, notlar })
