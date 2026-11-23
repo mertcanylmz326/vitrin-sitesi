@@ -117,3 +117,26 @@ body.dzg-panel-body {
 .dzg-btn-primary:active {
   transform: scale(0.99);
 }
+
+@media print {
+  body.dzg-panel-body {
+    background: #ffffff !important;
+    color: #0f172a !important;
+  }
+  .dzg-sidebar,
+  .no-print {
+    display: none !important;
+  }
+  .dzg-card,
+  .dzg-stat-card {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    border: 1px solid #cbd5e1 !important;
+    box-shadow: none !important;
+  }
+  .dzg-table th,
+  .dzg-table td {
+    color: #0f172a !important;
+    border-color: #cbd5e1 !important;
+  }
+}
