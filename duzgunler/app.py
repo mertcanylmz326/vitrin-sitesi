@@ -1,11 +1,23 @@
+import csv
 import hmac
+import io
 import os
 import random
 from functools import wraps
 from urllib.parse import urlparse
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from flask import Blueprint, request, redirect, url_for, session, flash, jsonify, get_flashed_messages
+from flask import (
+    Blueprint,
+    Response,
+    request,
+    redirect,
+    url_for,
+    session,
+    flash,
+    jsonify,
+    get_flashed_messages,
+)
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -15,12 +27,13 @@ duzgunler_bp = Blueprint(
     url_prefix="/duzgunler",
     template_folder="templates",
     static_folder="static",
-    static_url_path="/duzgunler/static"
+    static_url_path="/duzgunler/static",
 )
 
 DZG_ADMIN_USER = os.environ.get("DZG_ADMIN_USER", "").strip()
 DZG_ADMIN_PASS = os.environ.get("DZG_ADMIN_PASS", "").strip()
 DZG_ADMIN_ENABLED = bool(DZG_ADMIN_USER and DZG_ADMIN_PASS)
+KDV_ORANI = 0.20
 
 _DZG_TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
 _dzg_env = Environment(
@@ -48,15 +61,12 @@ def _normalize_db_url(url: str) -> str:
     return url
 
 
-DATABASE_URL = _normalize_db_url(
-    os.environ.get(
-        "DATABASE_URL",
-        "postgresql://postgres.wpthfxzdhwinkamyrpyo:KOLAYV%C4%B0TR%C4%B0NSAAS@aws-1-eu-west-1.pooler.supabase.com:6543/postgres"
-    )
-)
+DATABASE_URL = _normalize_db_url(os.environ.get("DATABASE_URL", ""))
 
 
 def get_db_connection():
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL ortam değişkeni tanımlı değil.")
     host = urlparse(DATABASE_URL).hostname or ""
     sslmode = "require" if ("supabase" in host or "pooler" in host) else "prefer"
     return psycopg2.connect(
@@ -142,8 +152,26 @@ def siparislere_kalem_ekle(cur, siparisler):
     return siparisler
 
 
+def _csv_response(filename: str, headers: list, rows: list):
+    buf = io.StringIO()
+    writer = csv.writer(buf, delimiter=";")
+    writer.writerow(headers)
+    for r in rows:
+        writer.writerow(r)
+    content = "\ufeff" + buf.getvalue()
+    return Response(
+        content,
+        mimetype="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 def init_db():
     """Supabase PostgreSQL üzerinde Düzgünler Elektrik B2B tablolarını ve varsayılan verileri oluşturur."""
+    if not DATABASE_URL:
+        print("Düzgünler DB başlatma atlandı: DATABASE_URL tanımlı değil.")
+        return
+
     conn = None
     cur = None
     try:
@@ -295,7 +323,7 @@ def init_db():
                 "Marmara & İstanbul Anadolu",
                 "0532 000 00 01",
                 "plasiyer@duzgunlerelektrik.com",
-                generate_password_hash("123456")
+                generate_password_hash("123456"),
             ))
 
         cur.execute("SELECT id FROM b2b_bayiler WHERE vergi_no = %s", ("1234567890",))
@@ -314,7 +342,7 @@ def init_db():
                 "Alemdağ Cad. No:142 Çekmeköy / İstanbul",
                 generate_password_hash("123456"),
                 22.50,
-                "aktif"
+                "aktif",
             ))
 
         cur.execute("SELECT COUNT(*) AS cnt FROM b2b_urunler")
@@ -325,7 +353,7 @@ def init_db():
                 ("DZG-SIG-309", "Siemens 1x16A B Tipi Otomatik Sigorta", "Şalt & Pano", "Sentron", 168.00, 820, "Adet", "shield-halved", "6kA kesme kapasiteli, DIN ray montajına uygun."),
                 ("DZG-KAB-412", "Öznur 3x2.5 NYM Antigron Kablo (100m Top)", "Kablo Grupları", "TSE Belgeli", 3890.00, 145, "Top", "bolt", "Tam bakır iletken, PVC izolasyonlu tesisat kablosu."),
                 ("DZG-END-505", "3x32A IP67 Kauçuk Makine Fişi (Eğik)", "Endüstriyel Ürünler", "HeavyDuty", 295.00, 310, "Adet", "industry", "Suya ve toza tam dayanıklı ağır hizmet tipi sanayi fişi."),
-                ("DZG-DIA-602", "Audio 7 İnç Renkli Görüntülü Diafon Seti", "Zayıf Akım & Diafon", "SmartHome", 4650.00, 95, "Set", "video", "Handsfree konuşma, kapı otomatiği kontrolü ve şık cam panel.")
+                ("DZG-DIA-602", "Audio 7 İnç Renkli Görüntülü Diafon Seti", "Zayıf Akım & Diafon", "SmartHome", 4650.00, 95, "Set", "video", "Handsfree konuşma, kapı otomatiği kontrolü ve şık cam panel."),
             ]
             cur.executemany("""
                 INSERT INTO b2b_urunler (stok_kodu, urun_adi, kategori, seri, liste_fiyati, stok_adedi, birim, gorsel_ikon, aciklama)
@@ -414,8 +442,7 @@ def index():
         urunler = cur.fetchall()
 
         cur.execute("SELECT * FROM b2b_icerikler ORDER BY id ASC")
-        tum_icerikler = cur.fetchall()
-        for ic in tum_icerikler:
+        for ic in cur.fetchall():
             icerik_map[ic["slug"]] = ic
             if ic["bolum"] == "sozlesme":
                 sozlesmeler.append(ic)
@@ -440,12 +467,12 @@ def index():
 
 @duzgunler_bp.route("/iletisim-gonder", methods=["POST"])
 def iletisim_gonder():
-    form_turu = request.form.get("form_turu", "İletişim / Teklif Formu").strip()
-    ad_soyad = request.form.get("ad_soyad", "").strip()
-    firma = request.form.get("firma", "").strip()
-    telefon = request.form.get("telefon", "").strip()
-    email = request.form.get("email", "").strip()
-    mesaj = request.form.get("mesaj", "").strip()
+    form_turu = request.form.get("form_turu", "İletişim / Teklif Formu").strip()[:80]
+    ad_soyad = request.form.get("ad_soyad", "").strip()[:150]
+    firma = request.form.get("firma", "").strip()[:200]
+    telefon = request.form.get("telefon", "").strip()[:40]
+    email = request.form.get("email", "").strip()[:150]
+    mesaj = request.form.get("mesaj", "").strip()[:2000]
 
     if not ad_soyad or not mesaj:
         flash("Lütfen ad soyad ve mesaj alanlarını doldurunuz.", "danger")
@@ -491,7 +518,7 @@ def b2b_giris():
         cur = conn.cursor()
         cur.execute(
             "SELECT * FROM b2b_bayiler WHERE email = %s OR vergi_no = %s",
-            (email_or_vkn, email_or_vkn)
+            (email_or_vkn, email_or_vkn),
         )
         bayi = cur.fetchone()
 
@@ -536,7 +563,7 @@ def plasiyer_giris():
         cur = conn.cursor()
         cur.execute(
             "SELECT * FROM b2b_plasiyerler WHERE plasiyer_kodu = %s OR email = %s",
-            (kod_or_email.upper(), kod_or_email)
+            (kod_or_email.upper(), kod_or_email),
         )
         plasiyer = cur.fetchone()
 
@@ -665,6 +692,7 @@ def b2b_panel():
         toplam_odenen=cari["toplam_odenen"],
         bekleyen_odeme=cari["bekleyen_odeme"],
         acik_bakiye=cari["acik_bakiye"],
+        kdv_orani=KDV_ORANI,
     )
 
 
@@ -680,7 +708,7 @@ def b2b_odeme_yap():
     except ValueError:
         tutar = 0.0
 
-    if tutar <= 0:
+    if tutar <= 0 or tutar > 100_000_000:
         flash("Lütfen geçerli bir ödeme tutarı giriniz.", "danger")
         return redirect(url_for("duzgunler.b2b_panel", sekme="odeme-yap"))
 
@@ -692,7 +720,7 @@ def b2b_odeme_yap():
         cur.execute("""
             INSERT INTO b2b_odemeler (bayi_id, tutar, odeme_yontemi, aciklama, durum)
             VALUES (%s, %s, %s, %s, 'Onay Bekliyor')
-        """, (session["dzg_user_id"], tutar, odeme_yontemi, aciklama))
+        """, (session["dzg_user_id"], round(tutar, 2), odeme_yontemi, aciklama))
         conn.commit()
         flash(f"{tutar:.2f} ₺ tutarındaki ödeme bildiriminiz kaydedildi.", "success")
     except Exception as e:
@@ -733,12 +761,14 @@ def plasiyer_panel():
 @login_required()
 def siparis_ver():
     data = request.get_json(silent=True) or {}
-    notlar = (data.get("notlar") or "").strip()
+    notlar = (data.get("notlar") or "").strip()[:500]
     kalemler_raw = data.get("kalemler") or []
     bayi_id = session["dzg_user_id"] if session.get("dzg_role") == "bayi" else data.get("bayi_id")
     plasiyer_id = session["dzg_user_id"] if session.get("dzg_role") == "plasiyer" else None
 
-    if not bayi_id:
+    try:
+        bayi_id = int(bayi_id)
+    except (TypeError, ValueError):
         return jsonify({"ok": False, "mesaj": "Geçerli bir bayi seçilmelidir."}), 400
 
     siparis_no = f"DZG-{random.randint(100000, 999999)}"
@@ -749,7 +779,7 @@ def siparis_ver():
         conn = get_db_connection()
         cur = conn.cursor()
 
-        cur.execute("SELECT iskonto_orani FROM b2b_bayiler WHERE id = %s", (bayi_id,))
+        cur.execute("SELECT iskonto_orani, durum FROM b2b_bayiler WHERE id = %s", (bayi_id,))
         bayi_row = cur.fetchone()
         if not bayi_row:
             return jsonify({"ok": False, "mesaj": "Bayi kaydı bulunamadı."}), 404
@@ -762,43 +792,50 @@ def siparis_ver():
 
         if isinstance(kalemler_raw, list) and len(kalemler_raw) > 0:
             for item in kalemler_raw:
-                urun_id = item.get("urun_id")
-                adet = int(item.get("adet") or 0)
-                if adet <= 0:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    urun_id = int(item.get("urun_id"))
+                    adet = int(item.get("adet") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if adet <= 0 or adet > 100_000:
                     continue
 
-                if urun_id:
-                    cur.execute("SELECT * FROM b2b_urunler WHERE id = %s FOR UPDATE", (urun_id,))
-                    urun = cur.fetchone()
-                    if not urun:
-                        conn.rollback()
-                        return jsonify({"ok": False, "mesaj": f"Ürün bulunamadı (ID: {urun_id})."}), 400
-                    mevcut_stok = int(urun["stok_adedi"] or 0)
-                    if mevcut_stok < adet:
-                        conn.rollback()
-                        return jsonify({
-                            "ok": False,
-                            "mesaj": f"{urun['urun_adi']} için yeterli stok yok (Stok: {mevcut_stok})."
-                        }), 400
+                cur.execute("SELECT * FROM b2b_urunler WHERE id = %s FOR UPDATE", (urun_id,))
+                urun = cur.fetchone()
+                if not urun:
+                    conn.rollback()
+                    return jsonify({"ok": False, "mesaj": f"Ürün bulunamadı (ID: {urun_id})."}), 400
+                mevcut_stok = int(urun["stok_adedi"] or 0)
+                if mevcut_stok < adet:
+                    conn.rollback()
+                    return jsonify({
+                        "ok": False,
+                        "mesaj": f"{urun['urun_adi']} için yeterli stok yok (Stok: {mevcut_stok}).",
+                    }), 400
 
-                    cur.execute(
-                        "UPDATE b2b_urunler SET stok_adedi = stok_adedi - %s WHERE id = %s",
-                        (adet, urun["id"])
-                    )
-                    birim_fiyat = round(float(urun["liste_fiyati"] or 0) * carpan, 2)
-                    satir_tutari = round(birim_fiyat * adet, 2)
-                    toplam_tutar = round(toplam_tutar + satir_tutari, 2)
-                    hazir_kalemler.append({
-                        "urun_id": urun["id"],
-                        "stok_kodu": urun["stok_kodu"],
-                        "urun_adi": urun["urun_adi"],
-                        "adet": adet,
-                        "birim_fiyat": birim_fiyat,
-                        "satir_tutari": satir_tutari,
-                    })
+                cur.execute(
+                    "UPDATE b2b_urunler SET stok_adedi = stok_adedi - %s WHERE id = %s",
+                    (adet, urun["id"]),
+                )
+                birim_fiyat = round(float(urun["liste_fiyati"] or 0) * carpan, 2)
+                satir_tutari = round(birim_fiyat * adet, 2)
+                toplam_tutar = round(toplam_tutar + satir_tutari, 2)
+                hazir_kalemler.append({
+                    "urun_id": urun["id"],
+                    "stok_kodu": urun["stok_kodu"],
+                    "urun_adi": urun["urun_adi"],
+                    "adet": adet,
+                    "birim_fiyat": birim_fiyat,
+                    "satir_tutari": satir_tutari,
+                })
 
         if not hazir_kalemler:
-            toplam_tutar = round(float(data.get("toplam_tutar") or 0), 2)
+            try:
+                toplam_tutar = round(float(data.get("toplam_tutar") or 0), 2)
+            except (TypeError, ValueError):
+                toplam_tutar = 0.0
             if toplam_tutar <= 0:
                 conn.rollback()
                 return jsonify({"ok": False, "mesaj": "Geçerli bir sepet tutarı veya ürün kalemi gereklidir."}), 400
@@ -829,7 +866,7 @@ def siparis_ver():
         return jsonify({
             "ok": True,
             "siparis_no": siparis_no,
-            "mesaj": f"{siparis_no} numaralı siparişiniz oluşturuldu ({toplam_tutar:.2f} ₺)."
+            "mesaj": f"{siparis_no} numaralı siparişiniz oluşturuldu ({toplam_tutar:.2f} ₺).",
         })
     except Exception as e:
         if conn:
@@ -854,7 +891,7 @@ def bayi_guncelle(bayi_id):
         cur = conn.cursor()
         cur.execute(
             "UPDATE b2b_bayiler SET iskonto_orani = %s, durum = %s WHERE id = %s",
-            (iskonto, durum, bayi_id)
+            (iskonto, durum, bayi_id),
         )
         conn.commit()
         flash("Bayi iskonto ve hesap durumu güncellendi.", "success")
@@ -874,7 +911,7 @@ def bayi_guncelle(bayi_id):
 def cikis():
     for k in [
         "dzg_user_id", "dzg_role", "dzg_firma_unvani", "dzg_yetkili",
-        "dzg_iskonto", "dzg_ad_soyad", "dzg_plasiyer_kodu", "dzg_bolge"
+        "dzg_iskonto", "dzg_ad_soyad", "dzg_plasiyer_kodu", "dzg_bolge",
     ]:
         session.pop(k, None)
     flash("Düzgünler B2B oturumunuz sonlandırıldı.", "info")
@@ -1020,7 +1057,55 @@ def admin_panel():
         yoneticiler=yoneticiler,
         toplam_ciro=toplam_ciro,
         env_admin_aktif=DZG_ADMIN_ENABLED,
+        db_tanimli=bool(DATABASE_URL),
+        kdv_orani=KDV_ORANI,
     )
+
+
+@duzgunler_bp.route("/admin/export/<tur>.csv")
+@dzg_admin_required
+def admin_export_csv(tur):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        if tur == "katalog":
+            cur.execute("SELECT stok_kodu, urun_adi, kategori, seri, birim, stok_adedi, liste_fiyati FROM b2b_urunler ORDER BY id ASC")
+            rows = [
+                [r["stok_kodu"], r["urun_adi"], r["kategori"], r["seri"] or "", r["birim"], r["stok_adedi"], r["liste_fiyati"]]
+                for r in cur.fetchall()
+            ]
+            return _csv_response("duzgunler_katalog.csv", ["Stok Kodu", "Urun Adi", "Kategori", "Seri", "Birim", "Stok", "Liste Fiyati"], rows)
+
+        if tur == "siparisler":
+            cur.execute("""
+                SELECT s.siparis_no, b.firma_unvani, s.durum, s.toplam_tutar, s.notlar
+                FROM b2b_siparisler s
+                LEFT JOIN b2b_bayiler b ON s.bayi_id = b.id
+                ORDER BY s.id DESC
+            """)
+            rows = [
+                [r["siparis_no"], r["firma_unvani"] or "", r["durum"], r["toplam_tutar"], r["notlar"] or ""]
+                for r in cur.fetchall()
+            ]
+            return _csv_response("duzgunler_siparisler.csv", ["Siparis No", "Bayi", "Durum", "Toplam Tutar", "Notlar"], rows)
+
+        cur.execute("SELECT id, firma_unvani, vergi_no FROM b2b_bayiler ORDER BY id ASC")
+        bayiler = cur.fetchall()
+        cur.execute("SELECT bayi_id, toplam_tutar, durum FROM b2b_siparisler")
+        sips = cur.fetchall()
+        cur.execute("SELECT bayi_id, tutar, durum FROM b2b_odemeler")
+        odms = cur.fetchall()
+        rows = []
+        for b in bayiler:
+            oz = hesapla_cari_ozet(
+                [s for s in sips if s["bayi_id"] == b["id"]],
+                [o for o in odms if o["bayi_id"] == b["id"]],
+            )
+            rows.append([b["firma_unvani"], b["vergi_no"], f"{oz['toplam_siparis']:.2f}", f"{oz['toplam_odenen']:.2f}", f"{oz['acik_bakiye']:.2f}"])
+        return _csv_response("duzgunler_cari_mutabakat.csv", ["Bayi", "Vergi No", "Toplam Siparis", "Onaylanan Odeme", "Net Bakiye"], rows)
+    finally:
+        cur.close()
+        conn.close()
 
 
 @duzgunler_bp.route("/admin/bayi-odeme/<int:odeme_id>/durum", methods=["POST"])
@@ -1204,15 +1289,40 @@ def admin_urun_sil(urun_id):
 @duzgunler_bp.route("/admin/siparis/<int:siparis_id>/durum", methods=["POST"])
 @dzg_admin_required
 def admin_siparis_durum(siparis_id):
-    durum = request.form.get("durum", "Onaylandı - Hazırlanıyor").strip()
+    yeni_durum = request.form.get("durum", "Onaylandı - Hazırlanıyor").strip()
     conn = None
     cur = None
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("UPDATE b2b_siparisler SET durum = %s WHERE id = %s", (durum, siparis_id))
+        cur.execute("SELECT durum FROM b2b_siparisler WHERE id = %s FOR UPDATE", (siparis_id,))
+        sip = cur.fetchone()
+        if not sip:
+            flash("Sipariş bulunamadı.", "danger")
+            return _admin_redirect("siparisler")
+
+        eski_durum = sip["durum"] or ""
+        cur.execute("SELECT urun_id, adet FROM b2b_siparis_kalemleri WHERE siparis_id = %s", (siparis_id,))
+        kalemler = cur.fetchall()
+
+        if eski_durum != "İptal" and yeni_durum == "İptal":
+            for k in kalemler:
+                if k["urun_id"] and int(k["adet"] or 0) > 0:
+                    cur.execute(
+                        "UPDATE b2b_urunler SET stok_adedi = stok_adedi + %s WHERE id = %s",
+                        (int(k["adet"]), k["urun_id"]),
+                    )
+        elif eski_durum == "İptal" and yeni_durum != "İptal":
+            for k in kalemler:
+                if k["urun_id"] and int(k["adet"] or 0) > 0:
+                    cur.execute(
+                        "UPDATE b2b_urunler SET stok_adedi = GREATEST(0, stok_adedi - %s) WHERE id = %s",
+                        (int(k["adet"]), k["urun_id"]),
+                    )
+
+        cur.execute("UPDATE b2b_siparisler SET durum = %s WHERE id = %s", (yeni_durum, siparis_id))
         conn.commit()
-        flash("Sipariş durumu güncellendi.", "success")
+        flash("Sipariş durumu ve kalem stok hareketleri güncellendi.", "success")
     except Exception as e:
         if conn:
             conn.rollback()
