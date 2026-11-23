@@ -3,40 +3,93 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Düzgünler Elektrik | B2B Admin Paneli</title>
+  <title>Düzgünler Elektrik | B2B Yönetim Merkezi</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-slate-950 text-slate-100 min-h-screen">
-  <header class="bg-slate-900 border-b border-slate-800 sticky top-0 z-20">
-    <div class="max-w-7xl mx-auto px-4 py-4 flex flex-wrap items-center justify-between gap-4">
-      <div>
-        <h1 class="text-xl font-bold text-white flex items-center gap-2">
-          <span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
-          Düzgünler Elektrik — B2B Merkez Admin Paneli
-        </h1>
-        <p class="text-xs text-slate-400">Bayi onayları, iskonto oranları, saha plasiyerleri, ürün kataloğu ve sipariş yönetimi</p>
-      </div>
-      <div class="flex items-center gap-3">
-        <a href="{{ url_for('duzgunler.index') }}" target="_blank"
-           class="px-3 py-2 text-xs font-medium rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200">
-          Vitrine Git ↗
-        </a>
-        <form method="POST" action="{{ url_for('duzgunler.admin_logout') }}">
-          <button type="submit"
-                  class="px-3 py-2 text-xs font-medium rounded-lg bg-red-500/15 hover:bg-red-500/25 text-red-300 border border-red-500/30">
-            Çıkış Yap
-          </button>
-        </form>
-      </div>
-    </div>
-  </header>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col lg:flex-row">
 
-  <main class="max-w-7xl mx-auto px-4 py-6 space-y-8">
+  <!-- Sol Menü (16 Modül) -->
+  <aside class="w-full lg:w-72 bg-slate-900 border-b lg:border-b-0 lg:border-r border-slate-800 flex-shrink-0">
+    <div class="p-5 border-b border-slate-800 flex items-center justify-between lg:block">
+      <div>
+        <div class="text-xs font-semibold uppercase tracking-wider text-amber-400">B2B Yönetim Merkezi</div>
+        <h1 class="text-lg font-bold text-white mt-0.5">Düzgünler Elektrik</h1>
+        <p class="text-xs text-slate-400 mt-1">Yönetici: {{ session.get('dzg_admin_name', 'Admin') }}</p>
+      </div>
+      <form method="POST" action="{{ url_for('duzgunler.admin_logout') }}" class="lg:hidden">
+        <button type="submit" class="px-3 py-1.5 rounded-lg bg-red-500/20 text-red-300 text-xs">Çıkış</button>
+      </form>
+    </div>
+
+    {% set menu_items = [
+      ('GENEL', [
+        ('gosterge', 'Gösterge Paneli'),
+        ('katalog', 'Katalog (' ~ (urunler|length) ~ ')'),
+        ('siparisler', 'Siparişler (' ~ (siparisler|length) ~ ')'),
+        ('musteriler', 'Müşteriler (' ~ (bayiler|length) ~ ')'),
+        ('bayilik-basvurulari', 'Bayilik Başvuruları (' ~ (bekleyen_basvurular|length) ~ ')'),
+        ('odemeler', 'Ödeme Yöntemleri')
+      ]),
+      ('İÇERİK & KURUMSAL', [
+        ('icerik', 'İçerik Yönetimi'),
+        ('sozlesmeler', 'Sözleşmeler'),
+        ('sayfalar', 'Sayfalar'),
+        ('iletisim-bilgileri', 'İletişim Bilgileri'),
+        ('hakkimizda', 'Hakkımızda')
+      ]),
+      ('FORMLAR & TALEPLER', [
+        ('formlar', 'Formlar'),
+        ('iletisim-formlari', 'İletişim Formları (' ~ (yeni_formlar|length) ~ ')')
+      ]),
+      ('EKİP & SİSTEM', [
+        ('satis-temsilcileri', 'Satış Temsilcileri'),
+        ('yoneticiler', 'Yöneticiler'),
+        ('araclar', 'Yönetici Araçları')
+      ])
+    ] %}
+
+    <nav class="p-3 space-y-4 max-h-[60vh] lg:max-h-[calc(100vh-140px)] overflow-y-auto">
+      {% for grup, items in menu_items %}
+        <div>
+          <div class="px-3 mb-1.5 text-[11px] font-semibold tracking-wider text-slate-500 uppercase">{{ grup }}</div>
+          <div class="space-y-1">
+            {% for key, label in items %}
+              <a href="{{ url_for('duzgunler.admin_panel', sekme=key) }}"
+                 class="block px-3 py-2 rounded-lg text-sm transition
+                 {% if sekme == key %}
+                   bg-amber-500 text-slate-950 font-semibold
+                 {% else %}
+                   text-slate-300 hover:bg-slate-800/80 hover:text-white
+                 {% endif %}">
+                {{ label }}
+              </a>
+            {% endfor %}
+          </div>
+        </div>
+      {% endfor %}
+    </nav>
+
+    <div class="hidden lg:flex p-4 border-t border-slate-800 items-center justify-between gap-2">
+      <a href="{{ url_for('duzgunler.index') }}" target="_blank"
+         class="flex-1 text-center py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200">
+        Vitrine Git ↗
+      </a>
+      <form method="POST" action="{{ url_for('duzgunler.admin_logout') }}">
+        <button type="submit"
+                class="px-3 py-2 rounded-lg bg-red-500/15 hover:bg-red-500/25 text-red-300 border border-red-500/30 text-xs">
+          Çıkış
+        </button>
+      </form>
+    </div>
+  </aside>
+
+  <!-- Ana İçerik -->
+  <main class="flex-1 p-4 lg:p-8 max-w-7xl w-full mx-auto space-y-6">
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
         <div class="space-y-2">
           {% for cat, msg in messages %}
-            <div class="p-3 rounded-lg text-sm border
+            <div class="p-3.5 rounded-xl text-sm border
               {% if cat == 'success' %}bg-emerald-500/10 border-emerald-500/30 text-emerald-300
               {% elif cat == 'danger' %}bg-red-500/10 border-red-500/30 text-red-300
               {% else %}bg-amber-500/10 border-amber-500/30 text-amber-300{% endif %}">
@@ -47,234 +100,512 @@
       {% endif %}
     {% endwith %}
 
-    <!-- Özet Kartlar -->
-    <section class="grid grid-cols-2 lg:grid-cols-4 gap-4">
-      <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
-        <div class="text-xs text-slate-400">Toplam Bayi</div>
-        <div class="text-2xl font-bold text-white mt-1">{{ bayiler|length }}</div>
-      </div>
-      <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
-        <div class="text-xs text-slate-400">Saha Plasiyerleri</div>
-        <div class="text-2xl font-bold text-amber-400 mt-1">{{ plasiyerler|length }}</div>
-      </div>
-      <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
-        <div class="text-xs text-slate-400">Katalog Ürünleri</div>
-        <div class="text-2xl font-bold text-sky-400 mt-1">{{ urunler|length }}</div>
-      </div>
-      <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
-        <div class="text-xs text-slate-400">Aktif Sipariş Cirosu</div>
-        <div class="text-2xl font-bold text-emerald-400 mt-1">{{ "%.2f"|format(toplam_ciro) }} ₺</div>
-      </div>
-    </section>
+    <!-- 1. GÖSTERGE PANELİ -->
+    {% if sekme == 'gosterge' %}
+      <div class="space-y-6">
+        <div>
+          <h2 class="text-2xl font-bold text-white">Gösterge Paneli</h2>
+          <p class="text-sm text-slate-400">Düzgünler Elektrik B2B operasyon özeti</p>
+        </div>
 
-    <!-- Hızlı Menü -->
-    <nav class="flex flex-wrap gap-2 text-xs font-medium">
-      <a href="#siparisler" class="px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 hover:border-amber-400">Siparişler ({{ siparisler|length }})</a>
-      <a href="#bayiler" class="px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 hover:border-amber-400">Bayiler ({{ bayiler|length }})</a>
-      <a href="#urunler" class="px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 hover:border-amber-400">Ürün & Stok ({{ urunler|length }})</a>
-      <a href="#plasiyerler" class="px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 hover:border-amber-400">Plasiyerler ({{ plasiyerler|length }})</a>
-    </nav>
+        <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+          <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+            <div class="text-xs text-slate-400">Aktif Sipariş Cirosu</div>
+            <div class="text-2xl font-bold text-emerald-400 mt-1">{{ "%.2f"|format(toplam_ciro) }} ₺</div>
+            <div class="text-xs text-slate-500 mt-1">Toplam {{ siparisler|length }} sipariş</div>
+          </div>
+          <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+            <div class="text-xs text-slate-400">Kayıtlı Bayi / Bekleyen Başvuru</div>
+            <div class="text-2xl font-bold text-white mt-1">{{ bayiler|length }} <span class="text-sm text-amber-400">/ {{ bekleyen_basvurular|length }} onay bekliyor</span></div>
+            <a href="{{ url_for('duzgunler.admin_panel', sekme='bayilik-basvurulari') }}" class="text-xs text-amber-400 hover:underline mt-1 inline-block">Başvuruları gör →</a>
+          </div>
+          <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+            <div class="text-xs text-slate-400">Katalog Ürün Sayısı</div>
+            <div class="text-2xl font-bold text-sky-400 mt-1">{{ urunler|length }}</div>
+            <a href="{{ url_for('duzgunler.admin_panel', sekme='katalog') }}" class="text-xs text-sky-400 hover:underline mt-1 inline-block">Kataloğu yönet →</a>
+          </div>
+          <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+            <div class="text-xs text-slate-400">Yeni İletişim Formları</div>
+            <div class="text-2xl font-bold text-amber-400 mt-1">{{ yeni_formlar|length }}</div>
+            <a href="{{ url_for('duzgunler.admin_panel', sekme='iletisim-formlari') }}" class="text-xs text-amber-400 hover:underline mt-1 inline-block">Mesajları incele →</a>
+          </div>
+        </div>
 
-    <!-- SİPARİŞLER -->
-    <section id="siparisler" class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
-      <h2 class="text-lg font-semibold text-white mb-4">B2B Sipariş Yönetimi</h2>
-      <div class="overflow-x-auto">
-        <table class="w-full text-sm text-left">
-          <thead class="text-xs uppercase text-slate-400 border-b border-slate-800">
-            <tr>
-              <th class="py-3 px-3">Sipariş No</th>
-              <th class="py-3 px-3">Bayi</th>
-              <th class="py-3 px-3">Plasiyer</th>
-              <th class="py-3 px-3">Tutar</th>
-              <th class="py-3 px-3">Notlar</th>
-              <th class="py-3 px-3">Durum</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-slate-800">
-            {% for s in siparisler %}
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+          <h3 class="text-base font-semibold text-white mb-4">Son Gelen B2B Siparişleri</h3>
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm text-left">
+              <thead class="text-xs uppercase text-slate-400 border-b border-slate-800">
+                <tr>
+                  <th class="py-2.5 px-3">Sipariş No</th>
+                  <th class="py-2.5 px-3">Bayi</th>
+                  <th class="py-2.5 px-3">Tutar</th>
+                  <th class="py-2.5 px-3">Durum</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-800">
+                {% for s in siparisler[:8] %}
+                  <tr>
+                    <td class="py-2.5 px-3 font-mono text-amber-400">{{ s.siparis_no }}</td>
+                    <td class="py-2.5 px-3">{{ s.firma_unvani or 'Silinmiş Bayi' }}</td>
+                    <td class="py-2.5 px-3 font-semibold text-emerald-400">{{ "%.2f"|format(s.toplam_tutar) }} ₺</td>
+                    <td class="py-2.5 px-3 text-xs">{{ s.durum }}</td>
+                  </tr>
+                {% else %}
+                  <tr><td colspan="4" class="py-4 text-center text-slate-500">Henüz sipariş yok.</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+    <!-- 2. KATALOG -->
+    {% elif sekme == 'katalog' %}
+      <div class="space-y-6">
+        <h2 class="text-2xl font-bold text-white">Ürün Kataloğu & Stok Yönetimi</h2>
+
+        <form method="POST" action="{{ url_for('duzgunler.admin_urun_ekle') }}"
+              class="grid grid-cols-1 md:grid-cols-4 gap-3 bg-slate-900 p-5 rounded-2xl border border-slate-800">
+          <input type="text" name="stok_kodu" placeholder="Stok Kodu (DZG-XXX)" required class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+          <input type="text" name="urun_adi" placeholder="Ürün Adı" required class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+          <input type="text" name="kategori" placeholder="Kategori (LED Aydınlatma)" required class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+          <input type="text" name="seri" placeholder="Seri / Marka" class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+          <input type="number" step="0.01" name="liste_fiyati" placeholder="Liste Fiyatı (₺)" required class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+          <input type="number" name="stok_adedi" placeholder="Stok Adedi" value="100" required class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+          <input type="text" name="birim" placeholder="Birim (Adet/Top/Set)" value="Adet" class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+          <input type="text" name="aciklama" placeholder="Açıklama" class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+          <button type="submit" class="md:col-span-4 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold text-sm">
+            + Yeni Ürün Ekle
+          </button>
+        </form>
+
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 overflow-x-auto">
+          <table class="w-full text-sm text-left">
+            <thead class="text-xs uppercase text-slate-400 border-b border-slate-800">
               <tr>
-                <td class="py-3 px-3 font-mono font-semibold text-amber-400">{{ s.siparis_no }}</td>
-                <td class="py-3 px-3">{{ s.firma_unvani or 'Silinmiş Bayi' }}</td>
-                <td class="py-3 px-3 text-slate-400">{{ s.plasiyer_adi or 'Doğrudan Bayi' }}</td>
-                <td class="py-3 px-3 font-semibold text-emerald-400">{{ "%.2f"|format(s.toplam_tutar) }} ₺</td>
-                <td class="py-3 px-3 text-xs text-slate-400 max-w-xs truncate">{{ s.notlar or '-' }}</td>
-                <td class="py-3 px-3">
-                  <form method="POST" action="{{ url_for('duzgunler.admin_siparis_durum', siparis_id=s.id) }}" class="flex items-center gap-2">
-                    <select name="durum" class="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs">
-                      {% for st in ['Onay Bekliyor', 'Onaylandı - Hazırlanıyor', 'Kargolandı', 'Tamamlandı', 'İptal'] %}
-                        <option value="{{ st }}" {% if s.durum == st %}selected{% endif %}>{{ st }}</option>
-                      {% endfor %}
-                    </select>
-                    <button type="submit" class="px-2.5 py-1 rounded bg-amber-500 text-slate-950 text-xs font-semibold">Kaydet</button>
-                  </form>
-                </td>
+                <th class="py-3 px-3">Stok Kodu</th>
+                <th class="py-3 px-3">Ürün / Kategori</th>
+                <th class="py-3 px-3">Liste Fiyatı & Stok</th>
+                <th class="py-3 px-3">Sil</th>
               </tr>
-            {% else %}
-              <tr><td colspan="6" class="py-6 text-center text-slate-500">Henüz sipariş bulunmuyor.</td></tr>
-            {% endfor %}
-          </tbody>
-        </table>
+            </thead>
+            <tbody class="divide-y divide-slate-800">
+              {% for u in urunler %}
+                <tr>
+                  <td class="py-3 px-3 font-mono text-xs text-amber-400">{{ u.stok_kodu }}</td>
+                  <td class="py-3 px-3">
+                    <div class="font-medium text-white">{{ u.urun_adi }}</div>
+                    <div class="text-xs text-slate-400">{{ u.kategori }} {% if u.seri %}• {{ u.seri }}{% endif %} ({{ u.birim }})</div>
+                  </td>
+                  <td class="py-3 px-3">
+                    <form method="POST" action="{{ url_for('duzgunler.admin_urun_guncelle', urun_id=u.id) }}" class="flex items-center gap-2">
+                      <input type="number" step="0.01" name="liste_fiyati" value="{{ u.liste_fiyati }}" class="w-28 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs">
+                      <input type="number" name="stok_adedi" value="{{ u.stok_adedi }}" class="w-24 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs">
+                      <button type="submit" class="px-3 py-1 rounded bg-sky-500 text-slate-950 text-xs font-semibold">Kaydet</button>
+                    </form>
+                  </td>
+                  <td class="py-3 px-3">
+                    <form method="POST" action="{{ url_for('duzgunler.admin_urun_sil', urun_id=u.id) }}" onsubmit="return confirm('Ürünü silmek istediğinize emin misiniz?');">
+                      <button type="submit" class="px-2.5 py-1 rounded bg-red-500/20 text-red-300 text-xs">Sil</button>
+                    </form>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
       </div>
-    </section>
 
-    <!-- BAYİLER -->
-    <section id="bayiler" class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
-      <h2 class="text-lg font-semibold text-white mb-4">Bayi Yönetimi & İskonto Oranları</h2>
-      <div class="overflow-x-auto">
-        <table class="w-full text-sm text-left">
-          <thead class="text-xs uppercase text-slate-400 border-b border-slate-800">
-            <tr>
-              <th class="py-3 px-3">Firma / Yetkili</th>
-              <th class="py-3 px-3">Vergi Dairesi / No</th>
-              <th class="py-3 px-3">İletişim / Şehir</th>
-              <th class="py-3 px-3">Güncelle (İskonto / Durum / Yeni Şifre)</th>
-              <th class="py-3 px-3">İşlem</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-slate-800">
-            {% for b in bayiler %}
+    <!-- 3. SİPARİŞLER -->
+    {% elif sekme == 'siparisler' %}
+      <div class="space-y-6">
+        <h2 class="text-2xl font-bold text-white">B2B Sipariş Yönetimi</h2>
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 overflow-x-auto">
+          <table class="w-full text-sm text-left">
+            <thead class="text-xs uppercase text-slate-400 border-b border-slate-800">
               <tr>
-                <td class="py-3 px-3">
-                  <div class="font-semibold text-white">{{ b.firma_unvani }}</div>
-                  <div class="text-xs text-slate-400">{{ b.yetkili_ad_soyad }} • {{ b.email }}</div>
-                </td>
-                <td class="py-3 px-3 text-xs">{{ b.vergi_dairesi }}<br><span class="font-mono text-slate-400">{{ b.vergi_no }}</span></td>
-                <td class="py-3 px-3 text-xs">{{ b.telefon }}<br><span class="text-slate-400">{{ b.sehir }}</span></td>
-                <td class="py-3 px-3">
-                  <form method="POST" action="{{ url_for('duzgunler.admin_bayi_guncelle', bayi_id=b.id) }}" class="flex flex-wrap items-center gap-2">
-                    <input type="number" step="0.5" min="0" max="80" name="iskonto_orani" value="{{ b.iskonto_orani }}"
-                           class="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs" title="İskonto %">
-                    <select name="durum" class="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs">
-                      <option value="aktif" {% if b.durum == 'aktif' %}selected{% endif %}>Aktif</option>
-                      <option value="beklemede" {% if b.durum == 'beklemede' %}selected{% endif %}>Beklemede</option>
-                      <option value="pasif" {% if b.durum == 'pasif' %}selected{% endif %}>Pasif</option>
-                    </select>
-                    <input type="password" name="yeni_sifre" placeholder="Yeni şifre (ops.)"
-                           class="w-32 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs">
-                    <button type="submit" class="px-2.5 py-1 rounded bg-emerald-500 text-slate-950 text-xs font-semibold">Güncelle</button>
-                  </form>
-                </td>
-                <td class="py-3 px-3">
-                  <form method="POST" action="{{ url_for('duzgunler.admin_bayi_sil', bayi_id=b.id) }}"
-                        onsubmit="return confirm('Bu bayiyi silmek istediğinize emin misiniz?');">
-                    <button type="submit" class="px-2.5 py-1 rounded bg-red-500/20 text-red-300 text-xs">Sil</button>
-                  </form>
-                </td>
+                <th class="py-3 px-3">Sipariş No</th>
+                <th class="py-3 px-3">Bayi</th>
+                <th class="py-3 px-3">Plasiyer</th>
+                <th class="py-3 px-3">Tutar</th>
+                <th class="py-3 px-3">Notlar</th>
+                <th class="py-3 px-3">Durum</th>
               </tr>
-            {% endfor %}
-          </tbody>
-        </table>
+            </thead>
+            <tbody class="divide-y divide-slate-800">
+              {% for s in siparisler %}
+                <tr>
+                  <td class="py-3 px-3 font-mono font-semibold text-amber-400">{{ s.siparis_no }}</td>
+                  <td class="py-3 px-3">{{ s.firma_unvani or 'Silinmiş Bayi' }}</td>
+                  <td class="py-3 px-3 text-slate-400">{{ s.plasiyer_adi or 'Doğrudan Bayi' }}</td>
+                  <td class="py-3 px-3 font-semibold text-emerald-400">{{ "%.2f"|format(s.toplam_tutar) }} ₺</td>
+                  <td class="py-3 px-3 text-xs text-slate-400 max-w-xs">{{ s.notlar or '-' }}</td>
+                  <td class="py-3 px-3">
+                    <form method="POST" action="{{ url_for('duzgunler.admin_siparis_durum', siparis_id=s.id) }}" class="flex items-center gap-2">
+                      <select name="durum" class="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs">
+                        {% for st in ['Onay Bekliyor', 'Onaylandı - Hazırlanıyor', 'Kargolandı', 'Tamamlandı', 'İptal'] %}
+                          <option value="{{ st }}" {% if s.durum == st %}selected{% endif %}>{{ st }}</option>
+                        {% endfor %}
+                      </select>
+                      <button type="submit" class="px-2.5 py-1 rounded bg-amber-500 text-slate-950 text-xs font-semibold">Güncelle</button>
+                    </form>
+                  </td>
+                </tr>
+              {% else %}
+                <tr><td colspan="6" class="py-6 text-center text-slate-500">Henüz sipariş bulunmuyor.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
       </div>
-    </section>
 
-    <!-- ÜRÜNLER -->
-    <section id="urunler" class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-5">
-      <h2 class="text-lg font-semibold text-white">Ürün Kataloğu & Stok Yönetimi</h2>
+    <!-- 4. MÜŞTERİLER & 5. BAYİLİK BAŞVURULARI -->
+    {% elif sekme in ['musteriler', 'bayilik-basvurulari'] %}
+      {% set gosterilecek_bayiler = bekleyen_basvurular if sekme == 'bayilik-basvurulari' else bayiler %}
+      <div class="space-y-6">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <h2 class="text-2xl font-bold text-white">
+            {{ 'Bayilik Başvuruları (Onay Bekleyenler)' if sekme == 'bayilik-basvurulari' else 'Müşteriler / Tüm Bayiler' }}
+          </h2>
+          <div class="flex gap-2 text-xs">
+            <a href="{{ url_for('duzgunler.admin_panel', sekme='musteriler') }}" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700">Tüm Müşteriler ({{ bayiler|length }})</a>
+            <a href="{{ url_for('duzgunler.admin_panel', sekme='bayilik-basvurulari') }}" class="px-3 py-1.5 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/30">Bekleyen Başvurular ({{ bekleyen_basvurular|length }})</a>
+          </div>
+        </div>
 
-      <form method="POST" action="{{ url_for('duzgunler.admin_urun_ekle') }}"
-            class="grid grid-cols-1 md:grid-cols-4 gap-3 bg-slate-950 p-4 rounded-xl border border-slate-800">
-        <input type="text" name="stok_kodu" placeholder="Stok Kodu (DZG-XXX)" required class="bg-slate-900 border border-slate-700 rounded px-3 py-2 text-xs">
-        <input type="text" name="urun_adi" placeholder="Ürün Adı" required class="bg-slate-900 border border-slate-700 rounded px-3 py-2 text-xs">
-        <input type="text" name="kategori" placeholder="Kategori (LED Aydınlatma)" required class="bg-slate-900 border border-slate-700 rounded px-3 py-2 text-xs">
-        <input type="text" name="seri" placeholder="Seri / Marka" class="bg-slate-900 border border-slate-700 rounded px-3 py-2 text-xs">
-        <input type="number" step="0.01" name="liste_fiyati" placeholder="Liste Fiyatı (₺)" required class="bg-slate-900 border border-slate-700 rounded px-3 py-2 text-xs">
-        <input type="number" name="stok_adedi" placeholder="Stok Adedi" value="100" required class="bg-slate-900 border border-slate-700 rounded px-3 py-2 text-xs">
-        <input type="text" name="birim" placeholder="Birim (Adet/Top/Set)" value="Adet" class="bg-slate-900 border border-slate-700 rounded px-3 py-2 text-xs">
-        <input type="text" name="aciklama" placeholder="Kısa açıklama" class="bg-slate-900 border border-slate-700 rounded px-3 py-2 text-xs">
-        <button type="submit" class="md:col-span-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold text-xs">
-          + Yeni Ürün Ekle
-        </button>
-      </form>
-
-      <div class="overflow-x-auto">
-        <table class="w-full text-sm text-left">
-          <thead class="text-xs uppercase text-slate-400 border-b border-slate-800">
-            <tr>
-              <th class="py-3 px-3">Stok Kodu</th>
-              <th class="py-3 px-3">Ürün / Kategori</th>
-              <th class="py-3 px-3">Fiyat & Stok Güncelle</th>
-              <th class="py-3 px-3">Sil</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-slate-800">
-            {% for u in urunler %}
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 overflow-x-auto">
+          <table class="w-full text-sm text-left">
+            <thead class="text-xs uppercase text-slate-400 border-b border-slate-800">
               <tr>
-                <td class="py-3 px-3 font-mono text-xs text-amber-400">{{ u.stok_kodu }}</td>
-                <td class="py-3 px-3">
-                  <div class="font-medium text-white">{{ u.urun_adi }}</div>
-                  <div class="text-xs text-slate-400">{{ u.kategori }} {% if u.seri %}• {{ u.seri }}{% endif %} ({{ u.birim }})</div>
-                </td>
-                <td class="py-3 px-3">
-                  <form method="POST" action="{{ url_for('duzgunler.admin_urun_guncelle', urun_id=u.id) }}" class="flex items-center gap-2">
-                    <input type="number" step="0.01" name="liste_fiyati" value="{{ u.liste_fiyati }}"
-                           class="w-28 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs">
-                    <input type="number" name="stok_adedi" value="{{ u.stok_adedi }}"
-                           class="w-24 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs">
-                    <button type="submit" class="px-2.5 py-1 rounded bg-sky-500 text-slate-950 text-xs font-semibold">Kaydet</button>
-                  </form>
-                </td>
-                <td class="py-3 px-3">
-                  <form method="POST" action="{{ url_for('duzgunler.admin_urun_sil', urun_id=u.id) }}"
-                        onsubmit="return confirm('Ürünü silmek istediğinize emin misiniz?');">
-                    <button type="submit" class="px-2.5 py-1 rounded bg-red-500/20 text-red-300 text-xs">Sil</button>
-                  </form>
-                </td>
+                <th class="py-3 px-3">Firma / Yetkili</th>
+                <th class="py-3 px-3">Vergi Dairesi / No</th>
+                <th class="py-3 px-3">İletişim / Adres</th>
+                <th class="py-3 px-3">İskonto / Durum / Şifre</th>
+                <th class="py-3 px-3">Sil</th>
               </tr>
-            {% endfor %}
-          </tbody>
-        </table>
+            </thead>
+            <tbody class="divide-y divide-slate-800">
+              {% for b in gosterilecek_bayiler %}
+                <tr>
+                  <td class="py-3 px-3">
+                    <div class="font-semibold text-white">{{ b.firma_unvani }}</div>
+                    <div class="text-xs text-slate-400">{{ b.yetkili_ad_soyad }} • {{ b.email }}</div>
+                  </td>
+                  <td class="py-3 px-3 text-xs">{{ b.vergi_dairesi }}<br><span class="font-mono text-slate-400">{{ b.vergi_no }}</span></td>
+                  <td class="py-3 px-3 text-xs">{{ b.telefon }} • {{ b.sehir }}<br><span class="text-slate-500">{{ b.adres or '-' }}</span></td>
+                  <td class="py-3 px-3">
+                    <form method="POST" action="{{ url_for('duzgunler.admin_bayi_guncelle', bayi_id=b.id) }}" class="flex flex-wrap items-center gap-2">
+                      <input type="hidden" name="sekme" value="{{ sekme }}">
+                      <input type="number" step="0.5" min="0" max="80" name="iskonto_orani" value="{{ b.iskonto_orani }}" class="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs" title="İskonto %">
+                      <select name="durum" class="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs">
+                        <option value="aktif" {% if b.durum == 'aktif' %}selected{% endif %}>Aktif (Onaylı)</option>
+                        <option value="beklemede" {% if b.durum == 'beklemede' %}selected{% endif %}>Beklemede</option>
+                        <option value="pasif" {% if b.durum == 'pasif' %}selected{% endif %}>Pasif / Red</option>
+                      </select>
+                      <input type="password" name="yeni_sifre" placeholder="Yeni şifre (ops.)" class="w-32 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs">
+                      <button type="submit" class="px-2.5 py-1 rounded bg-emerald-500 text-slate-950 text-xs font-semibold">Kaydet</button>
+                    </form>
+                  </td>
+                  <td class="py-3 px-3">
+                    <form method="POST" action="{{ url_for('duzgunler.admin_bayi_sil', bayi_id=b.id) }}" onsubmit="return confirm('Bayi silinsin mi?');">
+                      <input type="hidden" name="sekme" value="{{ sekme }}">
+                      <button type="submit" class="px-2.5 py-1 rounded bg-red-500/20 text-red-300 text-xs">Sil</button>
+                    </form>
+                  </td>
+                </tr>
+              {% else %}
+                <tr><td colspan="5" class="py-6 text-center text-slate-500">Kayıt bulunamadı.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
       </div>
-    </section>
 
-    <!-- PLASİYERLER -->
-    <section id="plasiyerler" class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-5">
-      <h2 class="text-lg font-semibold text-white">Saha Plasiyer Yönetimi</h2>
+    <!-- 6. ÖDEME YÖNTEMLERİ -->
+    {% elif sekme == 'odemeler' %}
+      <div class="space-y-6">
+        <h2 class="text-2xl font-bold text-white">Ödeme Yöntemleri</h2>
 
-      <form method="POST" action="{{ url_for('duzgunler.admin_plasiyer_ekle') }}"
-            class="grid grid-cols-1 md:grid-cols-6 gap-3 bg-slate-950 p-4 rounded-xl border border-slate-800">
-        <input type="text" name="plasiyer_kodu" placeholder="Kod (PLS-002)" required class="bg-slate-900 border border-slate-700 rounded px-3 py-2 text-xs">
-        <input type="text" name="ad_soyad" placeholder="Ad Soyad" required class="bg-slate-900 border border-slate-700 rounded px-3 py-2 text-xs">
-        <input type="text" name="bolge" placeholder="Bölge" required class="bg-slate-900 border border-slate-700 rounded px-3 py-2 text-xs">
-        <input type="text" name="telefon" placeholder="Telefon" class="bg-slate-900 border border-slate-700 rounded px-3 py-2 text-xs">
-        <input type="email" name="email" placeholder="E-posta" required class="bg-slate-900 border border-slate-700 rounded px-3 py-2 text-xs">
-        <input type="password" name="sifre" placeholder="Şifre" required class="bg-slate-900 border border-slate-700 rounded px-3 py-2 text-xs">
-        <button type="submit" class="md:col-span-6 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold text-xs">
-          + Plasiyer Ekle
-        </button>
-      </form>
+        <form method="POST" action="{{ url_for('duzgunler.admin_odeme_ekle') }}"
+              class="grid grid-cols-1 md:grid-cols-4 gap-3 bg-slate-900 p-5 rounded-2xl border border-slate-800">
+          <input type="text" name="kod" placeholder="Kod (ORN: KREDI_KARTI)" required class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+          <input type="text" name="baslik" placeholder="Başlık (Sanal POS)" required class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+          <input type="text" name="aciklama" placeholder="Kısa açıklama" class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+          <input type="text" name="iban_veya_detay" placeholder="IBAN / Hesap veya Ödeme Detayı" class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+          <button type="submit" class="md:col-span-4 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold text-sm">
+            + Ödeme Yöntemi Ekle
+          </button>
+        </form>
 
-      <div class="overflow-x-auto">
-        <table class="w-full text-sm text-left">
-          <thead class="text-xs uppercase text-slate-400 border-b border-slate-800">
-            <tr>
-              <th class="py-3 px-3">Kod</th>
-              <th class="py-3 px-3">Ad Soyad</th>
-              <th class="py-3 px-3">Bölge</th>
-              <th class="py-3 px-3">İletişim</th>
-              <th class="py-3 px-3">Durum</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-slate-800">
-            {% for p in plasiyerler %}
+        <div class="space-y-4">
+          {% for o in odeme_yontemleri %}
+            <form method="POST" action="{{ url_for('duzgunler.admin_odeme_guncelle', odeme_id=o.id) }}"
+                  class="bg-slate-900 border border-slate-800 rounded-2xl p-5 grid grid-cols-1 md:grid-cols-4 gap-3 items-center">
+              <div>
+                <div class="text-xs font-mono text-amber-400">{{ o.kod }}</div>
+                <input type="text" name="baslik" value="{{ o.baslik }}" class="mt-1 w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm">
+              </div>
+              <input type="text" name="aciklama" value="{{ o.aciklama or '' }}" placeholder="Açıklama" class="bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm">
+              <input type="text" name="iban_veya_detay" value="{{ o.iban_veya_detay or '' }}" placeholder="IBAN / Detay" class="bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm">
+              <div class="flex items-center justify-between gap-3">
+                <label class="flex items-center gap-2 text-xs text-slate-300">
+                  <input type="checkbox" name="aktif" value="1" {% if o.aktif %}checked{% endif %}> Aktif
+                </label>
+                <button type="submit" class="px-4 py-2 rounded-lg bg-emerald-500 text-slate-950 text-xs font-semibold">Kaydet</button>
+              </div>
+            </form>
+          {% endfor %}
+        </div>
+      </div>
+
+    <!-- 7-11. İÇERİK YÖNETİMİ / SÖZLEŞMELER / SAYFALAR / İLETİŞİM BİLGİLERİ / HAKKIMIZDA -->
+    {% elif sekme in ['icerik', 'sozlesmeler', 'sayfalar', 'iletisim-bilgileri', 'hakkimizda'] %}
+      {% set bolum_map = {
+        'sozlesmeler': ('sozlesme', 'Sözleşmeler'),
+        'sayfalar': ('sayfa', 'Sayfalar'),
+        'iletisim-bilgileri': ('iletisim', 'İletişim Bilgileri'),
+        'hakkimizda': ('hakkimizda', 'Hakkımızda'),
+        'icerik': ('', 'Tüm İçerik Yönetimi')
+      } %}
+      {% set secili_bolum, baslik_etiket = bolum_map[sekme] %}
+      <div class="space-y-6">
+        <h2 class="text-2xl font-bold text-white">{{ baslik_etiket }}</h2>
+
+        <form method="POST" action="{{ url_for('duzgunler.admin_icerik_kaydet') }}"
+              class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
+          <input type="hidden" name="sekme" value="{{ sekme }}">
+          <div class="text-sm font-semibold text-amber-400">Yeni İçerik / Sayfa / Sözleşme Ekle veya Güncelle</div>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <select name="bolum" class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+              <option value="sayfa" {% if secili_bolum == 'sayfa' %}selected{% endif %}>Sayfa</option>
+              <option value="sozlesme" {% if secili_bolum == 'sozlesme' %}selected{% endif %}>Sözleşme</option>
+              <option value="iletisim" {% if secili_bolum == 'iletisim' %}selected{% endif %}>İletişim Bilgileri</option>
+              <option value="hakkimizda" {% if secili_bolum == 'hakkimizda' %}selected{% endif %}>Hakkımızda</option>
+            </select>
+            <input type="text" name="slug" placeholder="Benzersiz kod (örn: mesafeli-satis)" required class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+            <input type="text" name="baslik" placeholder="Başlık" required class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+          </div>
+          <textarea name="icerik" rows="4" placeholder="Metin içeriği..." required class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm"></textarea>
+          <button type="submit" class="px-5 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold text-sm">
+            İçeriği Kaydet
+          </button>
+        </form>
+
+        <div class="space-y-4">
+          {% for ic in icerikler if (not secili_bolum or ic.bolum == secili_bolum) %}
+            <form method="POST" action="{{ url_for('duzgunler.admin_icerik_kaydet') }}"
+                  class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
+              <input type="hidden" name="sekme" value="{{ sekme }}">
+              <input type="hidden" name="bolum" value="{{ ic.bolum }}">
+              <input type="hidden" name="slug" value="{{ ic.slug }}">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <span class="text-xs px-2.5 py-1 rounded bg-slate-800 text-amber-400 font-mono">{{ ic.bolum }} / {{ ic.slug }}</span>
+                <button type="submit" class="px-4 py-1.5 rounded-lg bg-emerald-500 text-slate-950 text-xs font-semibold">Değişiklikleri Kaydet</button>
+              </div>
+              <input type="text" name="baslik" value="{{ ic.baslik }}" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm font-semibold">
+              <textarea name="icerik" rows="4" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm">{{ ic.icerik }}</textarea>
+            </form>
+          {% endfor %}
+        </div>
+      </div>
+
+    <!-- 12-13. FORMLAR & İLETİŞİM FORMLARI -->
+    {% elif sekme in ['formlar', 'iletisim-formlari'] %}
+      <div class="space-y-6">
+        <h2 class="text-2xl font-bold text-white">
+          {{ 'İletişim Formları' if sekme == 'iletisim-formlari' else 'Tüm Formlar & Talepler' }}
+        </h2>
+
+        <form method="POST" action="{{ url_for('duzgunler.admin_form_ekle') }}"
+              class="bg-slate-900 border border-slate-800 rounded-2xl p-5 grid grid-cols-1 md:grid-cols-3 gap-3">
+          <input type="hidden" name="sekme" value="{{ sekme }}">
+          <input type="text" name="form_turu" value="{{ 'İletişim Formu' if sekme == 'iletisim-formlari' else 'Teklif / Talep Formu' }}" class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+          <input type="text" name="ad_soyad" placeholder="Ad Soyad" required class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+          <input type="text" name="firma" placeholder="Firma Adı" class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+          <input type="text" name="telefon" placeholder="Telefon" class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+          <input type="email" name="email" placeholder="E-posta" class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+          <input type="text" name="mesaj" placeholder="Mesaj / Not" required class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+          <button type="submit" class="md:col-span-3 py-2 rounded-lg bg-amber-500 text-slate-950 font-semibold text-sm">+ Manuel Form Kaydı Ekle</button>
+        </form>
+
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 overflow-x-auto">
+          <table class="w-full text-sm text-left">
+            <thead class="text-xs uppercase text-slate-400 border-b border-slate-800">
               <tr>
-                <td class="py-3 px-3 font-mono text-amber-400">{{ p.plasiyer_kodu }}</td>
-                <td class="py-3 px-3 font-medium text-white">{{ p.ad_soyad }}</td>
-                <td class="py-3 px-3 text-slate-300">{{ p.bolge }}</td>
-                <td class="py-3 px-3 text-xs text-slate-400">{{ p.email }} • {{ p.telefon or '-' }}</td>
-                <td class="py-3 px-3">
-                  <form method="POST" action="{{ url_for('duzgunler.admin_plasiyer_durum', plasiyer_id=p.id) }}">
-                    <button type="submit"
-                            class="px-2.5 py-1 rounded text-xs font-semibold {% if p.aktif %}bg-emerald-500/20 text-emerald-300{% else %}bg-red-500/20 text-red-300{% endif %}">
-                      {{ 'Aktif (Pasif Yap)' if p.aktif else 'Pasif (Aktif Yap)' }}
-                    </button>
-                  </form>
-                </td>
+                <th class="py-3 px-3">Tür</th>
+                <th class="py-3 px-3">Gönderen</th>
+                <th class="py-3 px-3">İletişim</th>
+                <th class="py-3 px-3">Mesaj</th>
+                <th class="py-3 px-3">Durum</th>
               </tr>
-            {% endfor %}
-          </tbody>
-        </table>
+            </thead>
+            <tbody class="divide-y divide-slate-800">
+              {% for f in formlar %}
+                <tr>
+                  <td class="py-3 px-3 text-xs text-amber-400">{{ f.form_turu }}</td>
+                  <td class="py-3 px-3 font-medium">{{ f.ad_soyad }}<br><span class="text-xs text-slate-400">{{ f.firma or '-' }}</span></td>
+                  <td class="py-3 px-3 text-xs">{{ f.telefon or '-' }}<br><span class="text-slate-400">{{ f.email or '-' }}</span></td>
+                  <td class="py-3 px-3 text-xs max-w-md">{{ f.mesaj }}</td>
+                  <td class="py-3 px-3">
+                    <form method="POST" action="{{ url_for('duzgunler.admin_form_durum', form_id=f.id) }}" class="flex items-center gap-2">
+                      <input type="hidden" name="sekme" value="{{ sekme }}">
+                      <select name="durum" class="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs">
+                        <option value="yeni" {% if f.durum == 'yeni' %}selected{% endif %}>Yeni</option>
+                        <option value="incelendi" {% if f.durum == 'incelendi' %}selected{% endif %}>İncelendi</option>
+                        <option value="yanitlandi" {% if f.durum == 'yanitlandi' %}selected{% endif %}>Yanıtlandı</option>
+                      </select>
+                      <button type="submit" class="px-2.5 py-1 rounded bg-sky-500 text-slate-950 text-xs font-semibold">Kaydet</button>
+                    </form>
+                  </td>
+                </tr>
+              {% else %}
+                <tr><td colspan="5" class="py-6 text-center text-slate-500">Henüz form kaydı bulunmuyor.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
       </div>
-    </section>
+
+    <!-- 14. SATIŞ TEMSİLCİLERİ -->
+    {% elif sekme == 'satis-temsilcileri' %}
+      <div class="space-y-6">
+        <h2 class="text-2xl font-bold text-white">Satış Temsilcileri (Saha Plasiyerleri)</h2>
+
+        <form method="POST" action="{{ url_for('duzgunler.admin_plasiyer_ekle') }}"
+              class="grid grid-cols-1 md:grid-cols-6 gap-3 bg-slate-900 p-5 rounded-2xl border border-slate-800">
+          <input type="text" name="plasiyer_kodu" placeholder="Kod (PLS-002)" required class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+          <input type="text" name="ad_soyad" placeholder="Ad Soyad" required class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+          <input type="text" name="bolge" placeholder="Bölge" required class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+          <input type="text" name="telefon" placeholder="Telefon" class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+          <input type="email" name="email" placeholder="E-posta" required class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+          <input type="password" name="sifre" placeholder="Şifre" required class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+          <button type="submit" class="md:col-span-6 py-2.5 rounded-lg bg-amber-500 text-slate-950 font-semibold text-sm">
+            + Satış Temsilcisi Ekle
+          </button>
+        </form>
+
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 overflow-x-auto">
+          <table class="w-full text-sm text-left">
+            <thead class="text-xs uppercase text-slate-400 border-b border-slate-800">
+              <tr>
+                <th class="py-3 px-3">Kod</th>
+                <th class="py-3 px-3">Ad Soyad</th>
+                <th class="py-3 px-3">Bölge</th>
+                <th class="py-3 px-3">İletişim</th>
+                <th class="py-3 px-3">Durum</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800">
+              {% for p in plasiyerler %}
+                <tr>
+                  <td class="py-3 px-3 font-mono text-amber-400">{{ p.plasiyer_kodu }}</td>
+                  <td class="py-3 px-3 font-medium">{{ p.ad_soyad }}</td>
+                  <td class="py-3 px-3">{{ p.bolge }}</td>
+                  <td class="py-3 px-3 text-xs text-slate-400">{{ p.email }} • {{ p.telefon or '-' }}</td>
+                  <td class="py-3 px-3">
+                    <form method="POST" action="{{ url_for('duzgunler.admin_plasiyer_durum', plasiyer_id=p.id) }}">
+                      <button type="submit" class="px-3 py-1 rounded text-xs font-semibold {% if p.aktif %}bg-emerald-500/20 text-emerald-300{% else %}bg-red-500/20 text-red-300{% endif %}">
+                        {{ 'Aktif (Pasif Yap)' if p.aktif else 'Pasif (Aktif Yap)' }}
+                      </button>
+                    </form>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    <!-- 15. YÖNETİCİLER -->
+    {% elif sekme == 'yoneticiler' %}
+      <div class="space-y-6">
+        <h2 class="text-2xl font-bold text-white">Yöneticiler</h2>
+
+        <form method="POST" action="{{ url_for('duzgunler.admin_yonetici_ekle') }}"
+              class="grid grid-cols-1 md:grid-cols-4 gap-3 bg-slate-900 p-5 rounded-2xl border border-slate-800">
+          <input type="text" name="kullanici_adi" placeholder="Kullanıcı Adı" required class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+          <input type="text" name="ad_soyad" placeholder="Ad Soyad" required class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+          <select name="rol" class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+            <option value="admin">Tam Yönetici</option>
+            <option value="editor">İçerik & Sipariş Editörü</option>
+          </select>
+          <input type="password" name="sifre" placeholder="Şifre" required class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+          <button type="submit" class="md:col-span-4 py-2.5 rounded-lg bg-amber-500 text-slate-950 font-semibold text-sm">
+            + Yeni Yönetici Ekle
+          </button>
+        </form>
+
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 overflow-x-auto">
+          <table class="w-full text-sm text-left">
+            <thead class="text-xs uppercase text-slate-400 border-b border-slate-800">
+              <tr>
+                <th class="py-3 px-3">Kullanıcı Adı</th>
+                <th class="py-3 px-3">Ad Soyad</th>
+                <th class="py-3 px-3">Rol</th>
+                <th class="py-3 px-3">Durum</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800">
+              {% for y in yoneticiler %}
+                <tr>
+                  <td class="py-3 px-3 font-mono text-amber-400">{{ y.kullanici_adi }}</td>
+                  <td class="py-3 px-3">{{ y.ad_soyad }}</td>
+                  <td class="py-3 px-3 text-xs">{{ y.rol }}</td>
+                  <td class="py-3 px-3">
+                    <form method="POST" action="{{ url_for('duzgunler.admin_yonetici_durum', yonetici_id=y.id) }}">
+                      <button type="submit" class="px-3 py-1 rounded text-xs font-semibold {% if y.aktif %}bg-emerald-500/20 text-emerald-300{% else %}bg-red-500/20 text-red-300{% endif %}">
+                        {{ 'Aktif (Pasif Yap)' if y.aktif else 'Pasif (Aktif Yap)' }}
+                      </button>
+                    </form>
+                  </td>
+                </tr>
+              {% else %}
+                <tr><td colspan="4" class="py-6 text-center text-slate-500">Veritabanında kayıtlı ek yönetici yok (Ortam değişkeni yöneticisi aktif).</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    <!-- 16. YÖNETİCİ ARAÇLARI -->
+    {% elif sekme == 'araclar' %}
+      <div class="space-y-6">
+        <h2 class="text-2xl font-bold text-white">Yönetici Araçları & Sistem Durumu</h2>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
+            <h3 class="text-base font-semibold text-white">Veritabanı Tablo & Varsayılan Veri Kontrolü</h3>
+            <p class="text-xs text-slate-400">
+              Supabase PostgreSQL üzerinde eksik tablo varsa oluşturur ve varsayılan ödeme yöntemleri ile kurumsal içerikleri tamamlar.
+            </p>
+            <form method="POST" action="{{ url_for('duzgunler.admin_araclar_db_yenile') }}">
+              <button type="submit" class="px-4 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold text-xs">
+                Tabloları Kontrol Et ve Onar
+              </button>
+            </form>
+          </div>
+
+          <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-2 text-xs">
+            <h3 class="text-base font-semibold text-white">Sistem & Güvenlik Özeti</h3>
+            <div class="flex justify-between py-1.5 border-b border-slate-800">
+              <span class="text-slate-400">Render Env Admin Hesabı:</span>
+              <span class="{{ 'text-emerald-400 font-semibold' if env_admin_aktif else 'text-amber-400' }}">
+                {{ 'Tanımlı ve Aktif' if env_admin_aktif else 'Tanımlı Değil' }}
+              </span>
+            </div>
+            <div class="flex justify-between py-1.5 border-b border-slate-800">
+              <span class="text-slate-400">Aktif Oturum Yöneticisi:</span>
+              <span class="text-white">{{ session.get('dzg_admin_name', 'Admin') }}</span>
+            </div>
+            <div class="flex justify-between py-1.5">
+              <span class="text-slate-400">Kayıtlı Tablo Sayısı (Düzgünler B2B):</span>
+              <span class="text-sky-400 font-mono">8 Tablo</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    {% endif %}
   </main>
 </body>
 </html>
