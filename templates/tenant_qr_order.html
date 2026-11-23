@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>{{ tenant.business_name }} — Masa QR Menü &amp; Sipariş</title>
+  <style>
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { background:#080d0b; color:#f8fafc; font-family:Inter,system-ui,sans-serif; padding:18px 14px 104px; overflow-x:hidden; }
+    .wrap { max-width:920px; margin:0 auto; display:grid; gap:15px; }
+    .top { display:flex; justify-content:space-between; align-items:center; gap:12px; border-bottom:1px solid rgba(16,185,129,0.22); padding-bottom:14px; }
+    .brand-row { display:flex; align-items:center; gap:12px; min-width:0; }
+    .biz-logo { width:48px; height:48px; border-radius:12px; object-fit:cover; border:1px solid rgba(16,185,129,0.35); background:#0f1714; flex-shrink:0; display:block; }
+    .biz-logo-fallback { width:48px; height:48px; border-radius:12px; display:grid; place-items:center; font-weight:900; font-size:1.1rem; color:#04130d; background:linear-gradient(135deg,#34d399,#10b981); flex-shrink:0; }
+    .badge { font-size:0.74rem; color:#34d399; background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.28); padding:3px 9px; border-radius:999px; font-weight:700; display:inline-block; margin-bottom:4px; }
+    .card { background:#121d18; border:1px solid rgba(16,185,129,0.22); border-radius:16px; padding:16px; display:grid; gap:13px; }
+    .ok { padding:13px 15px; border-radius:12px; background:rgba(16,185,129,0.18); border:1px solid rgba(16,185,129,0.45); color:#a7f3d0; font-weight:700; font-size:0.9rem; }
+    label { display:block; font-size:0.84rem; color:#d1d5db; margin-bottom:5px; font-weight:600; }
+    select, textarea { width:100%; padding:10px 12px; border-radius:10px; border:1px solid rgba(16,185,129,0.22); background:#0f1714; color:#f8fafc; font-size:0.92rem; }
+    .btn-main { text-decoration:none; padding:12px 16px; border-radius:11px; font-weight:800; font-size:0.92rem; background:linear-gradient(135deg,#34d399,#10b981); color:#04130d; border:none; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; width:100%; }
+    .quick-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    .q-btn {
+      padding:14px 12px; border-radius:13px; font-weight:800; font-size:0.9rem;
+      border:1px solid rgba(245,158,11,0.42); background:rgba(245,158,11,0.14); color:#fcd34d;
+      cursor:pointer; display:flex; align-items:center; justify-content:center; gap:7px; width:100%;
+    }
+    .q-btn.bill { border-color:rgba(59,130,246,0.45); background:rgba(59,130,246,0.15); color:#93c5fd; }
+    .menu-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(215px,1fr)); gap:12px; }
+    .menu-card { background:#0f1714; border:1px solid rgba(16,185,129,0.2); border-radius:14px; padding:12px; display:flex; flex-direction:column; justify-content:space-between; gap:10px; }
+    .menu-img { width:100%; aspect-ratio:16/10; object-fit:cover; border-radius:9px; display:block; }
+    .qty-bar { display:flex; align-items:center; justify-content:space-between; background:#121d18; border:1px solid rgba(16,185,129,0.25); border-radius:10px; padding:5px 8px; }
+    .qty-btn { width:34px; height:34px; border-radius:8px; border:none; background:#10b981; color:#04130d; font-weight:900; font-size:1.1rem; cursor:pointer; }
+    .qty-btn.minus { background:#1e293b; color:#f8fafc; }
+    .cart-bar {
+      position:fixed; bottom:0; left:0; right:0; z-index:50;
+      background:rgba(12,21,17,0.97); backdrop-filter:blur(14px);
+      border-top:1px solid rgba(52,211,153,0.45); padding:12px 16px;
+      display:none; justify-content:space-between; align-items:center; gap:12px;
+    }
+    .cart-bar.show { display:flex; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div class="brand-row">
+        {% if tenant.logo_filename %}
+          <img src="/images/logos/{{ tenant.id }}/{{ tenant.logo_filename }}" alt="{{ tenant.business_name }}" class="biz-logo" onerror="this.style.display='none';document.getElementById('bizFallbackQr').style.display='grid';" />
+          <div id="bizFallbackQr" class="biz-logo-fallback" style="display:none;">{{ tenant.business_name[:1]|upper }}</div>
+        {% else %}
+          <div class="biz-logo-fallback">{{ tenant.business_name[:1]|upper }}</div>
+        {% endif %}
+        <div style="min-width:0;">
+          <div class="badge">Masa QR Menü &amp; Sipariş</div>
+          <h1 style="font-size:1.38rem;word-break:break-word;">{{ tenant.business_name }}</h1>
+        </div>
+      </div>
+    </div>
+
+    {% if sent %}
+    <div class="ok">{{ sent_msg }}</div>
+    {% endif %}
+
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+        <div>
+          <span style="font-size:0.74rem;color:#9ca3af;font-weight:700;">OTURDUĞUNUZ MASA</span>
+          <div style="font-size:1.2rem;font-weight:900;color:#34d399;">
+            {{ preselected_masa if preselected_masa else 'Masa 1' }}
+          </div>
+        </div>
+        {% if not preselected_masa %}
+        <div style="min-width:150px;">
+          <select id="activeMasaSelect" onchange="syncMasaInputs(this.value)">
+            {% for m_idx in range(1, (tenant.table_count or 8) + 1) %}
+            <option value="Masa {{ m_idx }}">Masa {{ m_idx }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        {% endif %}
+      </div>
+
+      <div class="quick-grid">
+        <form method="POST" action="{{ url_for('tenant_qr_order_page', slug=tenant.slug) }}">
+          <input type="hidden" name="action_type" value="garson" />
+          <input type="hidden" name="masa_name" class="masa-hidden-input" value="{{ preselected_masa or 'Masa 1' }}" />
+          <button type="submit" class="q-btn">🔔 Garson Çağır</button>
+        </form>
+        <form method="POST" action="{{ url_for('tenant_qr_order_page', slug=tenant.slug) }}">
+          <input type="hidden" name="action_type" value="hesap" />
+          <input type="hidden" name="masa_name" class="masa-hidden-input" value="{{ preselected_masa or 'Masa 1' }}" />
+          <button type="submit" class="q-btn bill">💳 Hesap İste</button>
+        </form>
+      </div>
+    </div>
+
+    <form class="card" method="POST" action="{{ url_for('tenant_qr_order_page', slug=tenant.slug) }}" id="qrOrderForm">
+      <input type="hidden" name="action_type" value="siparis" />
+      <input type="hidden" name="masa_name" class="masa-hidden-input" value="{{ preselected_masa or 'Masa 1' }}" />
+      <input type="hidden" name="cart_json" id="cartJsonInput" value="" />
+
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">
+        <h2 style="font-size:1.1rem;">🍽️ Dijital Menü &amp; Sipariş</h2>
+        <span style="font-size:0.8rem;color:#9ca3af;">Ürün seçip masanıza sipariş verin</span>
+      </div>
+
+      {% if menu_items %}
+      <div class="menu-grid">
+        {% for item in menu_items %}
+        <div class="menu-card">
+          <div>
+            {% if item.image_filename %}
+              <img src="/images/menu/{{ tenant.id }}/{{ item.image_filename }}" alt="{{ item.name }}" class="menu-img" onerror="this.style.display='none'" />
+            {% endif %}
+            <div style="margin-top:8px;">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px;">
+                <strong style="font-size:0.96rem;">{{ item.name }}</strong>
+                {% if item.price %}<span style="color:#34d399;font-weight:800;white-space:nowrap;">{{ item.price }}</span>{% endif %}
+              </div>
+              {% if item.description %}
+              <p style="font-size:0.8rem;color:#9ca3af;margin-top:4px;">{{ item.description }}</p>
+              {% endif %}
+            </div>
+          </div>
+
+          <div class="qty-bar">
+            <button type="button" class="qty-btn minus" onclick="changeQty({{ item.id }}, -1)">−</button>
+            <span id="qty-{{ item.id }}" style="font-weight:800;font-size:0.96rem;">0</span>
+            <button type="button" class="qty-btn" onclick="changeQty({{ item.id }}, 1)">+</button>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div style="padding:14px;border-radius:12px;background:#0f1714;color:#9ca3af;font-size:0.86rem;">
+        İşletme henüz menü ürünü eklemedi. Aşağıdaki not alanından doğrudan siparişinizi yazabilirsiniz.
+      </div>
+      {% endif %}
+
+      <div>
+        <label>Sipariş Notu / Özel İstek (Opsiyonel)</label>
+        <textarea name="message" id="qrOrderNote" rows="2" placeholder="Örn: Şekersiz olsun, buzlu gelsin veya menü dışı istek..."></textarea>
+      </div>
+
+      <button type="submit" class="btn-main" onclick="return prepareQrOrder()">Siparişi Gönder</button>
+    </form>
+
+    <div class="cart-bar" id="floatingCartBar">
+      <div>
+        <div style="font-size:0.75rem;color:#9ca3af;">Seçilen Ürünler (<span id="cartCount">0</span> adet)</div>
+        <strong style="font-size:1.05rem;color:#34d399;" id="cartTotalText">0 TL</strong>
+      </div>
+      <button type="button" class="btn-main" style="width:auto;padding:11px 18px;" onclick="submitFloatingOrder()">Siparişi Onayla →</button>
+    </div>
+  </div>
+
+  <script>
+    const QR_MENU = {{ menu_items | tojson }};
+    const cart = {};
+
+    function syncMasaInputs(val) {
+      document.querySelectorAll('.masa-hidden-input').forEach(el => el.value = val);
+    }
+
+    function changeQty(id, delta) {
+      const cur = cart[id] || 0;
+      const next = Math.max(0, cur + delta);
+      cart[id] = next;
+      const lbl = document.getElementById('qty-' + id);
+      if (lbl) lbl.textContent = next;
+      renderCartSummary();
+    }
+
+    function renderCartSummary() {
+      let count = 0;
+      let total = 0;
+      QR_MENU.forEach(item => {
+        const q = cart[item.id] || 0;
+        if (q > 0) {
+          count += q;
+          total += q * (parseFloat(item.numeric_price) || 0);
+        }
+      });
+      document.getElementById('cartCount').textContent = count;
+      document.getElementById('cartTotalText').textContent = total > 0 ? (total.toFixed(0) + ' TL') : (count + ' Ürün');
+      const bar = document.getElementById('floatingCartBar');
+      if (count > 0) bar.classList.add('show');
+      else bar.classList.remove('show');
+    }
+
+    function prepareQrOrder() {
+      const lines = [];
+      let total = 0;
+      QR_MENU.forEach(item => {
+        const q = cart[item.id] || 0;
+        if (q > 0) {
+          const p = parseFloat(item.numeric_price) || 0;
+          total += q * p;
+          lines.push(`${q}x ${item.name}${item.price ? ' (' + item.price + ')' : ''}`);
+        }
+      });
+      const note = document.getElementById('qrOrderNote').value.trim();
+      if (!lines.length && !note) {
+        alert('Lütfen menüden en az bir ürün seçin veya sipariş notu yazın.');
+        return false;
+      }
+      let summary = lines.join(', ');
+      if (total > 0) summary += ` | Toplam: ${total.toFixed(0)} TL`;
+      document.getElementById('cartJsonInput').value = JSON.stringify(cart);
+      return true;
+    }
+
+    function submitFloatingOrder() {
+      if (prepareQrOrder()) {
+        document.getElementById('qrOrderForm').submit();
+      }
+    }
+  </script>
+</body>
+</html>

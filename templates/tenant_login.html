@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ tenant.business_name }} — Panel Girişi</title>
+  <style>
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { min-height:100vh; display:grid; place-items:center; background:#080d0b; color:#f8fafc; font-family:Inter,system-ui,sans-serif; padding:16px; }
+    .box { width:100%; max-width:400px; background:#121d18; border:1px solid rgba(16,185,129,0.25); border-radius:16px; padding:22px; display:grid; gap:13px; }
+    label { display:block; font-size:0.84rem; margin-bottom:5px; color:#d1d5db; }
+    input { width:100%; padding:10px 12px; border-radius:10px; border:1px solid rgba(16,185,129,0.25); background:#0f1714; color:#f8fafc; }
+    button { padding:11px; border-radius:10px; border:none; background:linear-gradient(135deg,#34d399,#10b981); color:#04130d; font-weight:800; cursor:pointer; width:100%; }
+    .err { padding:10px; border-radius:10px; background:rgba(239,68,68,0.16); color:#fca5a5; font-size:0.86rem; }
+  </style>
+</head>
+<body>
+  <form class="box" method="POST">
+    <div>
+      <h1 style="font-size:1.2rem;">{{ tenant.business_name }}</h1>
+      <p style="color:#9ca3af;font-size:0.84rem;">İşletme yönetim paneli girişi</p>
+    </div>
+    {% if error %}<div class="err">{{ error }}</div>{% endif %}
+    <div><label>Şifre</label><input type="password" name="password" required /></div>
+    <button type="submit">Giriş Yap</button>
+  </form>
+</body>
+</html>

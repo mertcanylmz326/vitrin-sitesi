@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Süper Admin — IBAN Ödeme Onayı &amp; İşletmeler</title>
+  <style>
+    :root { --bg:#080d0b; --card:#121d18; --soft:#0f1714; --text:#f8fafc; --muted:#9ca3af; --accent:#10b981; --bright:#34d399; --amber:#f59e0b; --danger:#ef4444; --border:rgba(16,185,129,0.22); }
+    * { box-sizing:border-box; margin:0; padding:0; font-family:Inter,system-ui,sans-serif; -webkit-tap-highlight-color:transparent; }
+    body { background:var(--bg); color:var(--text); padding:0 0 82px; overflow-x:hidden; }
+
+    .topbar {
+      position:sticky; top:0; z-index:40;
+      background:rgba(8,13,11,0.9); backdrop-filter:blur(12px);
+      border-bottom:1px solid var(--border);
+      padding:13px 16px; display:flex; justify-content:space-between; align-items:center; gap:10px;
+    }
+    .topbar-left { display:flex; align-items:center; gap:9px; }
+    .live-dot { width:9px; height:9px; border-radius:50%; background:var(--bright); box-shadow:0 0 10px var(--bright); }
+    .topbar h1 { font-size:1.05rem; font-weight:800; }
+
+    .wrap { max-width:1140px; margin:0 auto; padding:16px; display:grid; gap:14px; }
+
+    .kpi-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
+    .kpi { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:12px; }
+    .kpi span { font-size:0.74rem; color:var(--muted); display:block; margin-bottom:3px; }
+    .kpi strong { font-size:1.3rem; font-weight:800; }
+    .kpi strong.green { color:var(--bright); }
+    .kpi strong.amber { color:#fcd34d; }
+    .kpi strong.red { color:#fca5a5; }
+
+    .iban-bar {
+      background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.34);
+      border-radius:14px; padding:11px 14px;
+      display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;
+    }
+    .iban-bar code { font-size:0.84rem; color:#fcd34d; font-weight:800; word-break:break-all; }
+
+    .search-wrap { position:relative; }
+    .search-wrap input {
+      width:100%; padding:11px 14px 11px 38px; border-radius:12px;
+      border:1px solid var(--border); background:var(--card); color:var(--text); font-size:0.9rem; outline:none;
+    }
+    .search-wrap input:focus { border-color:var(--bright); }
+    .search-ico { position:absolute; left:13px; top:50%; transform:translateY(-50%); font-size:0.9rem; opacity:0.7; }
+
+    .filter-row { display:flex; gap:8px; overflow-x:auto; padding-bottom:2px; scrollbar-width:none; }
+    .filter-row::-webkit-scrollbar { display:none; }
+    .f-pill {
+      background:var(--card); color:var(--muted); border:1px solid var(--border);
+      padding:7px 14px; border-radius:999px; font-size:0.8rem; font-weight:700; white-space:nowrap; cursor:pointer;
+    }
+    .f-pill.active { background:var(--accent); color:#04130d; border-color:var(--accent); }
+
+    .btn { text-decoration:none; padding:9px 12px; border-radius:10px; font-weight:700; font-size:0.82rem; border:1px solid var(--border); background:var(--soft); color:var(--bright); cursor:pointer; display:inline-flex; align-items:center; justify-content:center; gap:5px; }
+    .btn-approve { background:linear-gradient(135deg,#34d399,#10b981); color:#04130d; border:none; font-weight:800; }
+    .btn-gold { background:linear-gradient(135deg,#fbbf24,#f59e0b); color:#1f1300; border:none; font-weight:800; }
+    .btn-extend { background:rgba(59,130,246,0.18); border-color:rgba(59,130,246,0.42); color:#93c5fd; }
+    .btn-edit { background:rgba(245,158,11,0.14); border-color:rgba(245,158,11,0.38); color:#fcd34d; }
+    .btn-suspend { background:rgba(239,68,68,0.14); border-color:rgba(239,68,68,0.38); color:#fca5a5; }
+    .card { background:var(--card); border:1px solid var(--border); border-radius:16px; padding:16px; display:grid; gap:12px; }
+    .card.pending { border-color:rgba(245,158,11,0.52); }
+    .card.expired { border-color:rgba(239,68,68,0.58); }
+    .badge-on { padding:3px 9px; border-radius:999px; font-size:0.72rem; font-weight:800; background:rgba(16,185,129,0.16); color:#6ee7b7; }
+    .badge-off { padding:3px 9px; border-radius:999px; font-size:0.72rem; font-weight:800; background:rgba(245,158,11,0.18); color:#fcd34d; }
+    .badge-exp { padding:3px 9px; border-radius:999px; font-size:0.72rem; font-weight:800; background:rgba(239,68,68,0.2); color:#fca5a5; }
+    .badge-notify { padding:3px 9px; border-radius:999px; font-size:0.72rem; font-weight:800; background:rgba(59,130,246,0.2); color:#93c5fd; }
+    select, .modal-input { padding:9px 11px; border-radius:9px; border:1px solid var(--border); background:var(--soft); color:var(--text); font-size:0.86rem; width:100%; }
+
+    .actions-bar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding-top:10px; border-top:1px solid rgba(16,185,129,0.12); }
+
+    .modal-bg { position:fixed; inset:0; background:rgba(2,6,4,0.8); backdrop-filter:blur(5px); z-index:70; display:none; align-items:center; justify-content:center; padding:16px; }
+    .modal-bg.open { display:flex; }
+    .modal-card { width:100%; max-width:440px; background:var(--card); border:1px solid var(--border); border-radius:18px; padding:20px; display:grid; gap:12px; }
+    .modal-card label { display:block; font-size:0.78rem; color:var(--muted); margin-bottom:4px; font-weight:600; }
+
+    .bottom-nav {
+      position:fixed; bottom:0; left:0; right:0; height:64px;
+      background:rgba(8,13,11,0.96); backdrop-filter:blur(14px);
+      border-top:1px solid var(--border); display:grid; grid-template-columns:repeat(3,1fr); z-index:45;
+    }
+    .bnav { background:none; border:none; color:var(--muted); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; font-size:0.74rem; font-weight:700; cursor:pointer; text-decoration:none; }
+    .bnav.active { color:var(--bright); }
+
+    @media (max-width:768px) {
+      .kpi-grid { grid-template-columns:repeat(2,1fr); }
+      .actions-bar > a, .actions-bar > form, .actions-bar > button { flex:1 1 calc(50% - 4px); }
+      .actions-bar > form button { width:100%; }
+    }
+  </style>
+</head>
+<body>
+  {% set active_count = tenants|selectattr('is_active')|list|length %}
+  {% set pending_count = (tenants|length) - active_count %}
+  {% set expired_count = tenants|selectattr('is_expired')|list|length %}
+  {% set notify_count = tenants|selectattr('payment_requested')|list|length + tenants|selectattr('qr_addon_requested')|list|length %}
+
+  <header class="topbar">
+    <div class="topbar-left">
+      <span class="live-dot"></span>
+      <h1>KOLAY Süper Admin</h1>
+    </div>
+    <form method="POST" action="{{ url_for('superadmin_logout') }}">
+      <button type="submit" class="btn btn-suspend">Çıkış</button>
+    </form>
+  </header>
+
+  <div class="wrap">
+    <div class="kpi-grid">
+      <div class="kpi"><span>Toplam İşletme</span><strong>{{ tenants|length }}</strong></div>
+      <div class="kpi"><span>Aktif</span><strong class="green">{{ active_count }}</strong></div>
+      <div class="kpi"><span>Onay Bekleyen</span><strong class="amber">{{ pending_count }}</strong></div>
+      <div class="kpi"><span>Süresi Dolan</span><strong class="red">{{ expired_count }}</strong></div>
+    </div>
+
+    <div class="iban-bar">
+      <div>
+        <div style="font-size:0.72rem;color:var(--muted);font-weight:700;">AKTİF TAHSİLAT IBAN</div>
+        <code id="adminIban">{{ iban_number }}</code>
+      </div>
+      <button type="button" class="btn" id="ibanCopyBtn" onclick="copyAdminIban()">IBAN Kopyala</button>
+    </div>
+
+    <div class="search-wrap">
+      <span class="search-ico">🔍</span>
+      <input type="text" id="tenantSearch" placeholder="İşletme adı, slug veya e-posta ara..." onkeyup="filterTenants()" />
+    </div>
+
+    <div class="filter-row">
+      <button type="button" class="f-pill active" onclick="setTenantFilter('all', this)">Tümü ({{ tenants|length }})</button>
+      <button type="button" class="f-pill" onclick="setTenantFilter('notify', this)">Ödeme / QR Bildirimi ({{ notify_count }})</button>
+      <button type="button" class="f-pill" onclick="setTenantFilter('pending', this)">Onay Bekleyen ({{ pending_count }})</button>
+      <button type="button" class="f-pill" onclick="setTenantFilter('expired', this)">Süresi Dolan ({{ expired_count }})</button>
+      <button type="button" class="f-pill" onclick="setTenantFilter('active', this)">Aktifler ({{ active_count }})</button>
+    </div>
+
+    {% for tn in tenants %}
+    <div class="card tenant-item {% if tn.is_expired %}expired{% elif not tn.is_active %}pending{% endif %}"
+         data-search="{{ (tn.business_name ~ ' ' ~ tn.slug ~ ' ' ~ tn.owner_email)|lower }}"
+         data-state="{{ 'notify' if (tn.payment_requested or tn.qr_addon_requested) else ('expired' if tn.is_expired else ('active' if tn.is_active else 'pending')) }}"
+         data-pending="{{ '0' if tn.is_active else '1' }}">
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <strong style="font-size:1.02rem;">{{ tn.business_name }}</strong>
+          <code style="font-size:0.82rem;color:var(--bright);">/i/{{ tn.slug }}</code>
+          {% if tn.is_expired %}
+            <span class="badge-exp">SÜRESİ DOLDU ({{ tn.expires_str }})</span>
+          {% elif tn.is_active %}
+            <span class="badge-on">AKTİF {% if tn.days_left is not none %}({{ tn.days_left }} gün kaldı){% endif %}</span>
+          {% else %}
+            <span class="badge-off">ONAY BEKLİYOR</span>
+          {% endif %}
+          {% if tn.payment_requested and not tn.is_active %}
+            <span class="badge-notify">ÜYELİK ÖDEME BİLDİRİMİ</span>
+          {% endif %}
+          {% if tn.qr_addon_requested %}
+            <span class="badge-notify">+250 TL QR EKLENTİ BİLDİRİMİ</span>
+          {% endif %}
+          {% if tn.module_type == 'kafe-randevu' %}
+            <span class="{{ 'badge-on' if (tn.plan == 'pro' or tn.qr_addon_active) else 'badge-off' }}">
+              QR: {{ 'AÇIK' if (tn.plan == 'pro' or tn.qr_addon_active) else 'KİLİTLİ' }}
+            </span>
+          {% endif %}
+        </div>
+        <div style="font-size:0.82rem;color:var(--muted);margin-top:6px;line-height:1.5;">
+          {{ tn.owner_email }} • Paket: <strong style="color:var(--text);">{{ tn.plan|upper }}</strong> • Modül: <code>{{ tn.module_type }}</code> • Masa: {{ tn.table_count or '-' }} • Talep: {{ tn.ticket_count }} • Bitiş: <strong>{{ tn.expires_str }}</strong>
+          {% if tn.payment_note %}
+          <div style="margin-top:5px;padding:7px 10px;border-radius:8px;background:rgba(245,158,11,0.1);color:#fcd34d;">
+            Üyelik Dekont Notu: <strong>{{ tn.payment_note }}</strong>
+          </div>
+          {% endif %}
+          {% if tn.qr_addon_note %}
+          <div style="margin-top:5px;padding:7px 10px;border-radius:8px;background:rgba(59,130,246,0.12);color:#93c5fd;">
+            QR Eklenti (+250 TL) Dekont Notu: <strong>{{ tn.qr_addon_note }}</strong>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="actions-bar">
+        <a class="btn" href="{{ url_for('tenant_public', slug=tn.slug) }}">Müşteri Linki</a>
+        <a class="btn" href="{{ url_for('tenant_panel', slug=tn.slug) }}">Paneli Aç</a>
+
+        {% if not tn.is_active %}
+        <form method="POST" action="{{ url_for('superadmin_approve_tenant', tenant_id=tn.id) }}">
+          <button type="submit" class="btn btn-approve">Ödeme Alındı &amp; Onayla (+30 Gün)</button>
+        </form>
+        {% else %}
+        <form method="POST" action="{{ url_for('superadmin_extend_tenant', tenant_id=tn.id) }}">
+          <button type="submit" class="btn btn-extend">+30 Gün Uzat</button>
+        </form>
+        <form method="POST" action="{{ url_for('superadmin_suspend_tenant', tenant_id=tn.id) }}">
+          <button type="submit" class="btn btn-suspend">Askıya Al</button>
+        </form>
+        {% endif %}
+
+        {% if tn.module_type == 'kafe-randevu' and tn.plan == 'starter' and not tn.qr_addon_active %}
+        <form method="POST" action="{{ url_for('superadmin_unlock_qr_addon', tenant_id=tn.id) }}">
+          <button type="submit" class="btn btn-gold">🔓 +250 TL QR Kilidini Aç</button>
+        </form>
+        {% endif %}
+
+        <button type="button" class="btn btn-edit"
+          data-id="{{ tn.id }}" data-name="{{ tn.business_name }}" data-email="{{ tn.owner_email }}" data-plan="{{ tn.plan }}" data-module="{{ tn.module_type }}" data-tables="{{ tn.table_count or 8 }}" onclick="openEditTenantModal(this)">
+          ✏️ Düzenle
+        </button>
+
+        {% if tn.slug != 'kolay-vitrin' %}
+        <form method="POST" action="{{ url_for('superadmin_delete_tenant', tenant_id=tn.id) }}"
+              onsubmit="return confirm('Bu işletme ve tüm talepleri/menüleri KALICI OLARAK silinsin mi?');">
+          <button type="submit" class="btn btn-suspend">🗑️ Kalıcı Sil</button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="modal-bg" id="editTenantModal" onclick="if(event.target===this) closeEditTenantModal()">
+    <form class="modal-card" id="editTenantForm" method="POST">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <h3 style="font-size:1.05rem;">İşletmeyi Düzenle</h3>
+        <button type="button" class="btn" onclick="closeEditTenantModal()">✕</button>
+      </div>
+      <div>
+        <label>İşletme Adı</label>
+        <input type="text" name="business_name" id="etName" class="modal-input" required />
+      </div>
+      <div>
+        <label>E-posta</label>
+        <input type="email" name="owner_email" id="etEmail" class="modal-input" required />
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div>
+          <label>Paket</label>
+          <select name="plan" id="etPlan">
+            <option value="starter">STARTER</option>
+            <option value="pro">PRO</option>
+          </select>
+        </div>
+        <div>
+          <label>Masa Sayısı</label>
+          <input type="number" name="table_count" id="etTables" min="1" max="200" class="modal-input" />
+        </div>
+      </div>
+      <div>
+        <label>Modül Türü</label>
+        <select name="module_type" id="etModule">
+          <option value="kafe-randevu">Kafe &amp; Restoran Masa Randevu + Masa QR</option>
+          <option value="masa-qr">Masa QR Menü, Sipariş &amp; Garson Çağır</option>
+          <option value="berber-randevu">Berber &amp; Kuaför Saat Randevu</option>
+          <option value="mobil-saha">Mobil Uygulama &amp; Saha Akışları</option>
+          <option value="web-otomasyon">Web Panelleri, Formlar &amp; Botlar</option>
+          <option value="masaustu-otomasyon">Masaüstü Kasa, Barkod &amp; Stok Otomasyonu</option>
+          <option value="genel">Genel Talep Formu</option>
+        </select>
+      </div>
+      <div>
+        <label>Yeni Panel Şifresi (Değiştirmek istemiyorsan boş bırak)</label>
+        <input type="text" name="new_password" placeholder="Yeni şifre (en az 8 karakter)" class="modal-input" />
+      </div>
+      <button type="submit" class="btn btn-approve" style="width:100%;padding:12px;">Değişiklikleri Kaydet</button>
+    </form>
+  </div>
+
+  <nav class="bottom-nav">
+    <button type="button" class="bnav active" onclick="setTenantFilter('all', document.querySelector('.f-pill'))">
+      <span style="font-size:1.15rem;">🏢</span>
+      <span>İşletmeler</span>
+    </button>
+    <button type="button" class="bnav" onclick="setTenantFilter('pending', document.querySelectorAll('.f-pill')[2])">
+      <span style="font-size:1.15rem;">⏳</span>
+      <span>Onay ({{ pending_count }})</span>
+    </button>
+    <a class="bnav" href="{{ url_for('index') }}">
+      <span style="font-size:1.15rem;">🌐</span>
+      <span>Ana Vitrin</span>
+    </a>
+  </nav>
+
+  <script>
+    let activeFilter = 'all';
+
+    function setTenantFilter(mode, pillBtn) {
+      activeFilter = mode;
+      document.querySelectorAll('.f-pill').forEach(p => p.classList.remove('active'));
+      if (pillBtn) pillBtn.classList.add('active');
+      filterTenants();
+    }
+
+    function filterTenants() {
+      const q = document.getElementById('tenantSearch').value.toLowerCase().trim();
+      document.querySelectorAll('.tenant-item').forEach(card => {
+        const hay = card.dataset.search || '';
+        const st = card.dataset.state || 'active';
+        const isPending = card.dataset.pending === '1';
+        const matchText = hay.includes(q);
+        let matchMode = true;
+        if (activeFilter === 'notify') matchMode = (st === 'notify');
+        else if (activeFilter === 'pending') matchMode = isPending;
+        else if (activeFilter === 'expired') matchMode = (st === 'expired');
+        else if (activeFilter === 'active') matchMode = !isPending;
+        card.style.display = (matchText && matchMode) ? 'grid' : 'none';
+      });
+    }
+
+    function openEditTenantModal(btn) {
+      const d = btn.dataset;
+      const id = d.id, name = d.name, email = d.email, plan = d.plan, mod = d.module, tables = d.tables;
+      document.getElementById('editTenantForm').action = '/admin/tenant/' + id + '/edit';
+      document.getElementById('etName').value = name;
+      document.getElementById('etEmail').value = email;
+      document.getElementById('etPlan').value = plan;
+      document.getElementById('etModule').value = mod;
+      document.getElementById('etTables').value = tables;
+      document.getElementById('editTenantModal').classList.add('open');
+    }
+
+    function closeEditTenantModal() {
+      document.getElementById('editTenantModal').classList.remove('open');
+    }
+
+    function copyAdminIban() {
+      const txt = document.getElementById('adminIban').textContent.trim();
+      navigator.clipboard?.writeText(txt);
+      const btn = document.getElementById('ibanCopyBtn');
+      btn.textContent = 'Kopyalandı ✓';
+      setTimeout(() => btn.textContent = 'IBAN Kopyala', 1800);
+    }
+  </script>
+</body>
+</html>

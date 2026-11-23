@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KOLAY Otomasyon — Mikro-SaaS &amp; Web Sistemleri</title>
+  <style>
+    :root {
+      --bg: #080d0b; --bg-soft: #0f1714; --card: rgba(17, 27, 23, 0.92);
+      --text: #f8fafc; --muted: #9ca3af; --accent: #10b981; --accent-bright: #34d399;
+      --accent-2: #f59e0b; --border: rgba(16, 185, 129, 0.22);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: "Inter", system-ui, -apple-system, sans-serif; }
+    html { scroll-behavior: smooth; max-width: 100%; overflow-x: hidden; }
+    body {
+      background:
+        radial-gradient(circle at 12% 8%, rgba(16, 185, 129, 0.15), transparent 36%),
+        radial-gradient(circle at 88% 16%, rgba(245, 158, 11, 0.11), transparent 38%),
+        var(--bg);
+      color: var(--text); line-height: 1.6; overflow-x: hidden; width: 100%;
+    }
+    .container { max-width: 1180px; margin: 0 auto; padding: 0 18px; width: 100%; }
+    .wp-icon { width: 18px; height: 18px; flex-shrink: 0; display: inline-block; }
+
+    .navbar { position: sticky; top: 0; z-index: 40; backdrop-filter: blur(14px); background: rgba(8, 13, 11, 0.88); border-bottom: 1px solid var(--border); }
+    .nav-inner { display: flex; align-items: center; justify-content: space-between; min-height: 68px; padding: 10px 0; gap: 10px; flex-wrap: wrap; }
+    .brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 800; font-size: 1rem; color: var(--text); text-decoration: none; }
+    .brand-logo-img { height: 38px; width: auto; max-width: 54px; object-fit: contain; border-radius: 10px; display: block; }
+    .brand-badge { width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; font-weight: 900; color: #04130d; background: linear-gradient(135deg, var(--accent-bright), var(--accent-2)); }
+    .brand-text small { display: block; font-size: 0.7rem; font-weight: 600; color: var(--accent-bright); }
+    .nav-links { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .nav-btn { color: var(--muted); text-decoration: none; font-size: 0.86rem; font-weight: 600; padding: 8px 11px; border-radius: 10px; border: 1px solid transparent; display: inline-flex; align-items: center; gap: 6px; }
+    .nav-btn:hover, .nav-btn.active { color: var(--text); background: rgba(16, 185, 129, 0.12); border-color: rgba(16, 185, 129, 0.32); }
+    .nav-cta { color: #04130d; background: linear-gradient(135deg, var(--accent-bright), var(--accent)); font-weight: 800; }
+    .nav-wa { color: #dcfce7; background: rgba(34, 197, 94, 0.16); border: 1px solid rgba(34, 197, 94, 0.42); font-weight: 700; }
+
+    .hero { padding: 44px 0 32px; }
+    .hero-grid { display: grid; grid-template-columns: 1.25fr 0.75fr; gap: 24px; align-items: center; }
+    .badge { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; font-size: 0.78rem; font-weight: 700; color: var(--accent-bright); background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.28); margin-bottom: 12px; }
+    .hero h1 { font-size: clamp(1.75rem, 6vw, 3rem); line-height: 1.15; margin-bottom: 12px; word-break: break-word; }
+    .hero h1 span { background: linear-gradient(135deg, var(--accent-bright), var(--accent-2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .hero p { color: var(--muted); font-size: 0.96rem; max-width: 630px; margin-bottom: 20px; }
+    .hero-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+    .btn-primary, .btn-secondary, .btn-wa {
+      text-decoration: none; padding: 11px 16px; border-radius: 11px; font-weight: 700; font-size: 0.88rem;
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer;
+    }
+    .btn-primary { background: linear-gradient(135deg, var(--accent-bright), var(--accent)); color: #04130d; border: none; }
+    .btn-secondary { background: var(--card); color: var(--text); border: 1px solid var(--border); }
+    .btn-wa { background: linear-gradient(135deg, #22c55e, #16a34a); color: #052e16; border: none; }
+
+    .hero-panel { background: linear-gradient(160deg, rgba(19, 32, 27, 0.94), rgba(10, 17, 14, 0.94)); border: 1px solid var(--border); border-radius: 18px; padding: 20px; }
+    .panel-title { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent-2); margin-bottom: 10px; font-weight: 800; }
+    .mini-list { list-style: none; display: grid; gap: 8px; }
+    .mini-list li { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border-radius: 11px; background: rgba(8, 13, 11, 0.65); border: 1px solid rgba(16, 185, 129, 0.14); font-size: 0.85rem; gap: 8px; flex-wrap: wrap; }
+    .pill { font-size: 0.72rem; padding: 3px 8px; border-radius: 999px; background: rgba(16, 185, 129, 0.16); color: var(--accent-bright); font-weight: 700; border: 1px solid rgba(16, 185, 129, 0.3); }
+    .pill-amber { font-size: 0.72rem; padding: 3px 8px; border-radius: 999px; background: rgba(245, 158, 11, 0.16); color: #fcd34d; font-weight: 700; border: 1px solid rgba(245, 158, 11, 0.36); }
+
+    section.block { padding: 40px 0; }
+    .section-head { margin-bottom: 18px; }
+    .section-head span { color: var(--accent-2); font-size: 0.78rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
+    .section-head h2 { font-size: clamp(1.4rem, 5vw, 2.05rem); margin-top: 4px; margin-bottom: 6px; }
+    .section-head p { color: var(--muted); max-width: 760px; font-size: 0.92rem; }
+
+    .services-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 16px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between; cursor: pointer; }
+    .card:hover { border-color: rgba(16, 185, 129, 0.48); }
+    .card-thumb { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; display: block; border-bottom: 1px solid rgba(16, 185, 129, 0.16); }
+    .card-body { padding: 16px 18px 10px; }
+    .card-tag { display: inline-block; font-size: 0.74rem; font-weight: 700; color: var(--accent-bright); background: rgba(16, 185, 129, 0.12); padding: 4px 9px; border-radius: 8px; margin-bottom: 8px; }
+    .card h3 { font-size: 1.05rem; margin-bottom: 6px; }
+    .card p { color: var(--muted); font-size: 0.88rem; }
+    .card-footer { display: flex; align-items: center; justify-content: space-between; padding: 11px 18px 14px; border-top: 1px solid rgba(156, 163, 175, 0.12); }
+    .detail-link { background: transparent; border: none; color: var(--accent-2); font-weight: 700; font-size: 0.88rem; cursor: pointer; }
+
+    .saas-grid { display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 18px; align-items: start; }
+    .saas-card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 20px; display: grid; gap: 13px; }
+    .iban-box { background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.35); border-radius: 12px; padding: 14px; display: grid; gap: 6px; }
+    .iban-code { font-family: monospace; font-size: 0.88rem; font-weight: 800; color: #fcd34d; background: rgba(0, 0, 0, 0.35); padding: 8px 10px; border-radius: 8px; word-break: break-all; }
+    .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    label { display: block; font-size: 0.84rem; color: #d1d5db; margin-bottom: 5px; font-weight: 600; }
+    input, select, textarea { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-soft); color: var(--text); font-size: 0.92rem; }
+    .submit-btn { padding: 12px 16px; border-radius: 11px; border: none; cursor: pointer; font-weight: 800; font-size: 0.92rem; color: #04130d; background: linear-gradient(135deg, var(--accent-bright), var(--accent-2)); width: 100%; }
+    .alert-ok { padding: 13px 15px; border-radius: 12px; background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); color: #a7f3d0; font-size: 0.88rem; word-break: break-word; }
+    .alert-err { padding: 13px 15px; border-radius: 12px; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); color: #fca5a5; font-size: 0.88rem; }
+
+    .modal-backdrop { position: fixed; inset: 0; z-index: 90; background: rgba(4, 8, 6, 0.78); backdrop-filter: blur(8px); display: none; align-items: center; justify-content: center; padding: 14px; }
+    .modal-backdrop.open { display: flex; }
+    .modal-box { width: 100%; max-width: 580px; max-height: 90vh; overflow-y: auto; background: #101915; border: 1px solid rgba(16, 185, 129, 0.35); border-radius: 18px; padding: 20px; }
+    .modal-img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 12px; margin: 12px 0; }
+    .modal-list { list-style: none; display: grid; gap: 8px; margin: 12px 0 16px; }
+    .modal-list li { padding: 9px 12px; border-radius: 10px; background: rgba(8, 13, 11, 0.72); border: 1px solid rgba(16, 185, 129, 0.16); font-size: 0.88rem; }
+
+    footer { border-top: 1px solid var(--border); padding: 22px 0; margin-top: 24px; color: var(--muted); font-size: 0.86rem; }
+    .footer-inner { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+    footer a { color: var(--muted); text-decoration: none; }
+
+    @media (max-width: 860px) {
+      .hero-grid, .saas-grid, .row-2 { grid-template-columns: 1fr; }
+      .nav-links { width: 100%; justify-content: flex-start; }
+      .hero-actions { flex-direction: column; }
+      .hero-actions a, .hero-actions button { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+
+<svg style="display:none;" aria-hidden="true">
+  <symbol id="icon-whatsapp" viewBox="0 0 24 24">
+    <path fill="currentColor" d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2.05 22l5.25-1.38c1.45.79 3.08 1.21 4.74 1.21 5.46 0 9.91-4.45 9.91-9.91S17.5 2 12.04 2zm5.82 14.05c-.24.68-1.41 1.3-1.95 1.38-.5.08-1.14.11-1.84-.11-.42-.13-.97-.31-1.67-.61-2.94-1.27-4.86-4.23-5.01-4.43-.15-.2-1.19-1.58-1.19-3.02 0-1.44.75-2.15 1.02-2.44.27-.29.59-.37.79-.37.2 0 .4.01.57.01.18 0 .43-.07.67.51.24.59.83 2.03.9 2.18.07.15.12.32.02.52-.1.2-.15.32-.3.5-.15.17-.31.39-.45.52-.15.15-.3.31-.13.61.17.3.77 1.27 1.65 2.06 1.14 1.02 2.1 1.34 2.4 1.49.3.15.48.12.66-.07.18-.2.76-.89.96-1.19.2-.3.41-.25.69-.15.28.1 1.78.84 2.08.99.3.15.5.22.58.35.07.12.07.72-.17 1.4z"/>
+  </symbol>
+</svg>
+
+  <header class="navbar">
+    <div class="container nav-inner">
+      <a href="#anasayfa" class="brand">
+        <img src="/images/logo.png" alt="KOLAY Otomasyon" class="brand-logo-img" onerror="if(!this.dataset.fb){this.dataset.fb='1';this.src='/logo.png';}else{this.style.display='none';document.getElementById('fallbackBadge').style.display='grid';}" />
+        <span id="fallbackBadge" class="brand-badge" style="display: none;">K</span>
+        <span class="brand-text">KOLAY <small>Mikro-SaaS &amp; Web Sistemleri</small></span>
+      </a>
+      <nav class="nav-links">
+        <a href="#anasayfa" class="nav-btn active">Anasayfa</a>
+        <a href="#hizmetler" class="nav-btn">Modüller</a>
+        <a href="#saas-basla" class="nav-btn nav-cta">Hesap Aç &amp; IBAN</a>
+        <a href="https://wa.me/{{ wa_number }}?text={{ 'Merhaba KOLAY Otomasyon, IBAN odeme ve paketler hakkinda bilgi almak istiyorum.' | urlencode }}" target="_blank" rel="noopener noreferrer" class="nav-btn nav-wa" aria-label="WhatsApp">
+          <svg class="wp-icon"><use href="#icon-whatsapp"></use></svg>
+          <span>WhatsApp</span>
+        </a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section id="anasayfa" class="hero">
+      <div class="container hero-grid">
+        <div>
+          <div class="badge">IBAN Ödemeli Mikro-SaaS</div>
+          <h1>İşletmen İçin <span>Kendi Panelini Aç</span>, Ödeme Onayıyla Aktif Et</h1>
+          <p>
+            İşletme hesabını oluştur, seçtiğin modül kilitli olarak tanımlansın, IBAN üzerinden ödemeni yap ve onaylandığında
+            müşteri linkin ile işletme yönetim panelin hemen aktif olsun.
+          </p>
+          <div class="hero-actions">
+            <a href="#saas-basla" class="btn-primary">İşletme Hesabı Oluştur</a>
+            <a href="https://wa.me/{{ wa_number }}?text={{ 'Merhaba KOLAY Otomasyon, yeni hesap acmak istiyorum.' | urlencode }}" target="_blank" rel="noopener noreferrer" class="btn-wa" aria-label="WhatsApp">
+              <svg class="wp-icon"><use href="#icon-whatsapp"></use></svg>
+              <span>WhatsApp</span>
+            </a>
+          </div>
+        </div>
+
+        <aside class="hero-panel">
+          <div class="panel-title">Paket &amp; Aktivasyon Akışı</div>
+          <ul class="mini-list">
+            <li><span>Starter Paket (Temel Modül)</span><span class="pill">{{ price_starter }}</span></li>
+            <li><span>Pro Paket (Masa QR Dahil)</span><span class="pill-amber">{{ price_pro }}</span></li>
+            <li><span>Starter'da Masa QR Kilidi</span><span class="pill-amber">+{{ qr_addon_price }} Ek Açılım</span></li>
+            <li><span>Aktivasyon</span><span class="pill">IBAN Onayı Sonrası</span></li>
+          </ul>
+        </aside>
+      </div>
+    </section>
+
+    <section id="hizmetler" class="block">
+      <div class="container">
+        <div class="section-head">
+          <span>Modüller</span>
+          <h2>İşletmene Uygun Çözümleri İncele</h2>
+          <p>Tüm modüller hazır ve çalışır durumdadır. Kartlara tıklayarak detayları inceleyip doğrudan o modülle hesap açabilirsin.</p>
+        </div>
+
+        <div class="services-grid">
+          {% for srv in services %}
+          <article class="card" onclick="openServiceModal('{{ srv.id }}')">
+            <div>
+              {% if srv.image %}
+              <img src="/images/{{ srv.image }}" alt="{{ srv.tag }}" class="card-thumb" onerror="this.style.display='none'" />
+              {% endif %}
+              <div class="card-body">
+                <span class="card-tag">{{ srv.tag }}</span>
+                <h3>{{ srv.title }}</h3>
+                <p>{{ srv.short }}</p>
+              </div>
+            </div>
+            <div class="card-footer">
+              <span style="font-size: 0.8rem; color: var(--muted);">Detayları gör</span>
+              <button type="button" class="detail-link">İncele →</button>
+            </div>
+          </article>
+          {% endfor %}
+        </div>
+      </div>
+    </section>
+
+    <section id="saas-basla" class="block">
+      <div class="container">
+        <div class="section-head">
+          <span>Hesap Açma &amp; IBAN Ödeme</span>
+          <h2>Yeni İşletme Hesabı Oluştur veya Paneline Gir</h2>
+          <p>Starter pakette kafe randevu açarsan Masa QR kısmı panelde kilitli gelir (+{{ qr_addon_price }} ile açılır); Pro pakette ise baştan açıktır.</p>
+        </div>
+
+        {% if created_tenant %}
+        <div class="alert-ok" style="margin-bottom: 16px;">
+          <strong>{{ created_tenant.business_name }}</strong> (<code>/i/{{ created_tenant.slug }}</code>) hesabı oluşturuldu!
+          Durumu: <strong>{% if created_tenant.is_active %}AKTİF{% else %}ÖDEME ONAYI BEKLİYOR{% endif %}</strong>.
+          Panel: <a href="{{ url_for('tenant_panel', slug=created_tenant.slug) }}" style="color:#fff;text-decoration:underline;">/i/{{ created_tenant.slug }}/panel</a>
+        </div>
+        {% endif %}
+
+        {% if saas_error %}
+        <div class="alert-err" style="margin-bottom: 16px;">{{ saas_error }}</div>
+        {% endif %}
+
+        <div class="saas-grid">
+          <form class="saas-card" method="POST" action="{{ url_for('register_tenant') }}">
+            <div>
+              <h3 style="font-size: 1.12rem; margin-bottom: 4px;">Yeni İşletme Hesabı Aç</h3>
+              <p style="color: var(--muted); font-size: 0.86rem;">Seçtiğin modül üyelik sonrası panelden değiştirilemez şekilde kilitlenir.</p>
+            </div>
+
+            <div class="row-2">
+              <div>
+                <label for="business_name">İşletme Adı</label>
+                <input id="business_name" type="text" name="business_name" placeholder="Örn: Yıldız Kafe" required />
+              </div>
+              <div>
+                <label for="slug">Özel URL Adresi (Slug)</label>
+                <input id="slug" type="text" name="slug" placeholder="Örn: yildiz-kafe" />
+              </div>
+            </div>
+
+            <div class="row-2">
+              <div>
+                <label for="owner_email">E-posta</label>
+                <input id="owner_email" type="email" name="owner_email" placeholder="sahip@isletme.com" required />
+              </div>
+              <div>
+                <label for="whatsapp_number">İşletme WhatsApp (Opsiyonel)</label>
+                <input id="whatsapp_number" type="text" name="whatsapp_number" placeholder="05xx xxx xx xx" />
+              </div>
+            </div>
+
+            <div class="row-2">
+              <div>
+                <label for="password">Panel Şifresi</label>
+                <input id="password" type="password" name="password" placeholder="En az 8 karakter" minlength="8" required />
+              </div>
+              <div>
+                <label for="plan">Paket Seçimi</label>
+                <select id="plan" name="plan">
+                  <option value="starter">Starter — {{ price_starter }} (Masa QR Kilitli)</option>
+                  <option value="pro">Pro — {{ price_pro }} (Tüm Özellikler Açık)</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label for="module_type">Modül Seçimi (Üyelik Sonrası Kilitlenir)</label>
+              <select id="module_type" name="module_type">
+                <option value="kafe-randevu">Kafe &amp; Restoran Masa Randevu + Masa QR</option>
+                <option value="masa-qr">Masa QR Menü, Sipariş &amp; Garson Çağır</option>
+                <option value="berber-randevu">Berber &amp; Kuaför Saat Randevu</option>
+                <option value="mobil-saha">Mobil Uygulama &amp; Saha Akışları</option>
+                <option value="web-otomasyon">Web Panelleri, Formlar &amp; Botlar</option>
+                <option value="masaustu-otomasyon">Masaüstü Kasa, Barkod &amp; Stok Otomasyonu</option>
+                <option value="genel">Genel Talep / Müşteri Formu</option>
+              </select>
+            </div>
+
+            <div class="iban-box">
+              <strong style="color: #fcd34d; font-size: 0.88rem;">IBAN Ödeme Bilgileri</strong>
+              <span style="font-size: 0.82rem; color: #e5e7eb;">Alıcı: <strong>{{ iban_holder }}</strong> • Banka: {{ iban_bank }}</span>
+              <div class="iban-code">{{ iban_number }}</div>
+              <span style="font-size: 0.78rem; color: var(--muted);">Açıklamaya işletme adını yazarak ödeme yapabilirsin.</span>
+            </div>
+
+            <button type="submit" class="submit-btn">Hesabı Oluştur (Onaya Gönder)</button>
+          </form>
+
+          <form class="saas-card" method="POST" action="{{ url_for('tenant_quick_login') }}">
+            <div>
+              <h3 style="font-size: 1.12rem; margin-bottom: 4px;">İşletme Paneline Giriş</h3>
+              <p style="color: var(--muted); font-size: 0.86rem;">Ödeme durumunu görmek veya aktif panelini yönetmek için giriş yap.</p>
+            </div>
+
+            <div>
+              <label for="login_slug">İşletme Slug</label>
+              <input id="login_slug" type="text" name="slug" placeholder="kolay-vitrin" required />
+            </div>
+
+            <div>
+              <label for="login_password">Şifre</label>
+              <input id="login_password" type="password" name="password" required />
+            </div>
+
+            <button type="submit" class="btn-secondary" style="width:100%;padding:12px 16px;">İşletme Paneline Gir</button>
+
+            <div class="iban-box">
+              <strong style="color: var(--accent-bright); font-size: 0.86rem;">Hızlı Erişim Bilgisi</strong>
+              <span style="font-size: 0.82rem; color: var(--muted);">Örnek müşteri linki: <a href="{{ url_for('tenant_public', slug='kolay-vitrin') }}" style="color: var(--accent-bright);">/i/kolay-vitrin</a></span>
+            </div>
+          </form>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container footer-inner">
+      <span>© 2026 KOLAY Otomasyon Mikro-SaaS</span>
+      <span>
+        <a href="#anasayfa">Anasayfa</a> •
+        <a href="#hizmetler">Modüller</a> •
+        <a href="#saas-basla">Hesap Aç</a>
+      </span>
+    </div>
+  </footer>
+
+  <div id="serviceModal" class="modal-backdrop" onclick="if(event.target.id==='serviceModal')closeServiceModal()">
+    <div class="modal-box">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <span id="modalTag" class="card-tag" style="margin-bottom:0;">Modül</span>
+        <button type="button" onclick="closeServiceModal()" style="background:none;border:1px solid rgba(255,255,255,0.2);color:#fff;width:34px;height:34px;border-radius:8px;cursor:pointer;">✕</button>
+      </div>
+      <img id="modalImg" src="" alt="" class="modal-img" onerror="this.style.display='none'" />
+      <h3 id="modalTitle">Başlık</h3>
+      <p id="modalDesc" style="color:#d1d5db;font-size:0.9rem;margin-top:8px;"></p>
+      <ul id="modalFeatures" class="modal-list"></ul>
+      <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;">
+        <button type="button" class="btn-secondary" onclick="closeServiceModal()">Kapat</button>
+        <a href="#saas-basla" id="modalSelectBtn" class="btn-primary" onclick="selectModuleAndClose()">Bu Modülle Hesap Aç</a>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const SERVICES = {{ services | tojson }};
+    let currentModalModule = "kafe-randevu";
+    function openServiceModal(id) {
+      const item = SERVICES.find(s => s.id === id);
+      if (!item) return;
+      currentModalModule = item.module_key || "genel";
+      document.getElementById("modalTag").textContent = item.tag;
+      document.getElementById("modalTitle").textContent = item.title;
+      document.getElementById("modalDesc").textContent = item.details;
+      const img = document.getElementById("modalImg");
+      if (item.image) { img.style.display = "block"; img.src = `/images/${item.image}`; }
+      const ul = document.getElementById("modalFeatures");
+      ul.innerHTML = "";
+      item.features.forEach(f => { const li = document.createElement("li"); li.textContent = f; ul.appendChild(li); });
+      document.getElementById("serviceModal").classList.add("open");
+    }
+    function selectModuleAndClose() {
+      const sel = document.getElementById("module_type");
+      if (sel && currentModalModule) sel.value = currentModalModule;
+      closeServiceModal();
+    }
+    function closeServiceModal() { document.getElementById("serviceModal").classList.remove("open"); }
+  </script>
+</body>
+</html>

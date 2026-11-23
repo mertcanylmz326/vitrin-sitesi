@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ tenant.business_name }}</title>
+  <style>
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { background:#080d0b; color:#f8fafc; font-family:Inter,system-ui,sans-serif; padding:18px 14px 48px; overflow-x:hidden; }
+    .wrap { max-width:940px; margin:0 auto; display:grid; gap:15px; }
+    .top { display:flex; justify-content:space-between; align-items:center; gap:12px; border-bottom:1px solid rgba(16,185,129,0.22); padding-bottom:14px; }
+    .brand-row { display:flex; align-items:center; gap:12px; min-width:0; }
+    .biz-logo { width:48px; height:48px; border-radius:12px; object-fit:cover; border:1px solid rgba(16,185,129,0.35); background:#0f1714; flex-shrink:0; display:block; }
+    .biz-logo-fallback { width:48px; height:48px; border-radius:12px; display:grid; place-items:center; font-weight:900; font-size:1.1rem; color:#04130d; background:linear-gradient(135deg,#34d399,#10b981); flex-shrink:0; }
+    .btn-main { text-decoration:none; padding:12px 16px; border-radius:11px; font-weight:800; font-size:0.92rem; background:linear-gradient(135deg,#34d399,#10b981); color:#04130d; border:none; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; width:100%; }
+    .card { background:#121d18; border:1px solid rgba(16,185,129,0.22); border-radius:16px; padding:16px; display:grid; gap:13px; }
+    .row-2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .row-3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
+    label { display:block; font-size:0.84rem; color:#d1d5db; margin-bottom:5px; font-weight:600; }
+    input, select, textarea { width:100%; padding:10px 12px; border-radius:10px; border:1px solid rgba(16,185,129,0.22); background:#0f1714; color:#f8fafc; font-size:0.92rem; }
+    .ok { padding:13px 15px; border-radius:12px; background:rgba(16,185,129,0.18); border:1px solid rgba(16,185,129,0.45); color:#a7f3d0; font-weight:700; font-size:0.9rem; }
+    .badge { font-size:0.74rem; color:#34d399; background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.28); padding:3px 9px; border-radius:999px; font-weight:700; display:inline-block; margin-bottom:4px; }
+    .menu-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px; }
+    .menu-card { background:#0f1714; border:1px solid rgba(16,185,129,0.2); border-radius:14px; padding:12px; display:flex; flex-direction:column; justify-content:space-between; gap:10px; }
+    .menu-img { width:100%; aspect-ratio:16/10; object-fit:cover; border-radius:9px; display:block; }
+    .menu-check { display:flex; align-items:flex-start; gap:8px; font-size:0.85rem; color:#e5e7eb; cursor:pointer; }
+    .menu-check input[type="checkbox"] { width:auto; margin-top:3px; flex-shrink:0; }
+
+    @media (max-width:768px) {
+      .row-2, .row-3 { grid-template-columns:1fr; }
+      .card { padding:15px; }
+      h1 { font-size:1.25rem !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div class="brand-row">
+        {% if tenant.logo_filename %}
+          <img src="/images/logos/{{ tenant.id }}/{{ tenant.logo_filename }}" alt="{{ tenant.business_name }}" class="biz-logo" onerror="this.style.display='none';document.getElementById('bizFallback').style.display='grid';" />
+          <div id="bizFallback" class="biz-logo-fallback" style="display:none;">{{ tenant.business_name[:1]|upper }}</div>
+        {% else %}
+          <div class="biz-logo-fallback">{{ tenant.business_name[:1]|upper }}</div>
+        {% endif %}
+        <div style="min-width:0;">
+          <div class="badge">{{ mod_label }}</div>
+          <h1 style="font-size:1.42rem;word-break:break-word;">{{ tenant.business_name }}</h1>
+        </div>
+      </div>
+    </div>
+
+    {% if sent %}
+    <div class="ok">Kaydınız {{ tenant.business_name }} tarafına başarıyla iletildi!</div>
+    {% endif %}
+
+    {% if err_msg %}
+    <div class="ok" style="background:rgba(239,68,68,0.16);border-color:rgba(239,68,68,0.45);color:#fca5a5;">{{ err_msg }}</div>
+    {% endif %}
+
+    {% if tenant.module_type == 'kafe-randevu' %}
+    <form class="card" method="POST">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">
+        <h2 style="font-size:1.1rem;">Masa Randevusu Talebi</h2>
+        <span style="font-size:0.8rem;color:#9ca3af;">Kapasite: <strong>{{ tenant.table_count or 8 }} Masa</strong></span>
+      </div>
+
+      <div class="row-2">
+        <div><label>Ad Soyad</label><input type="text" name="name" placeholder="Adınız Soyadınız" required /></div>
+        <div><label>Telefon</label><input type="text" name="phone" placeholder="05xx xxx xx xx" required /></div>
+      </div>
+
+      <div class="row-3">
+        <div>
+          <label>1. Randevu Tarihi</label>
+          <input type="date" name="res_date" id="resDateInput" value="{{ selected_date }}" min="{{ min_date }}" max="{{ max_date }}" onchange="updateTableOptions()" required />
+        </div>
+        <div>
+          <label>2. Randevu Saati</label>
+          <select name="slot_time" id="slotSelect" onchange="updateTableOptions()" required>
+            {% for sl in slot_options %}
+              {% if sl.available_count > 0 %}
+                <option value="{{ sl.time }}">{{ sl.time }} — Müsait ({{ sl.available_count }} masa boş)</option>
+              {% else %}
+                <option value="{{ sl.time }}" disabled>{{ sl.time }} — Dolu</option>
+              {% endif %}
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label>3. Masa Seçimi</label>
+          <select name="table_no" id="tableSelect" required></select>
+        </div>
+      </div>
+
+      <div>
+        <label>Kişi Sayısı</label>
+        <select name="guest_count">
+          <option value="2 Kişilik">2 Kişilik</option>
+          <option value="4 Kişilik">4 Kişilik</option>
+          <option value="6 Kişilik">6 Kişilik</option>
+          <option value="8+ Kişilik Grup">8+ Kişilik Grup</option>
+        </select>
+      </div>
+
+      {% if menu_items %}
+      <div>
+        <label>Ön Sipariş / Menü Seçimi (Opsiyonel)</label>
+        <div class="menu-grid">
+          {% for item in menu_items %}
+          <div class="menu-card">
+            {% if item.image_filename %}
+              <img src="/images/menu/{{ tenant.id }}/{{ item.image_filename }}" alt="{{ item.name }}" class="menu-img" onerror="this.style.display='none'" />
+            {% endif %}
+            <label class="menu-check">
+              <input type="checkbox" name="menu_order" value="{{ item.name }}{% if item.price %} ({{ item.price }}){% endif %}" />
+              <span>
+                <strong>{{ item.name }}</strong> {% if item.price %}<span style="color:#34d399;font-weight:700;">— {{ item.price }}</span>{% endif %}
+                {% if item.description %}<small style="display:block;color:#9ca3af;margin-top:2px;">{{ item.description }}</small>{% endif %}
+              </span>
+            </label>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      <div><label>Ek Not / Özel İstek</label><textarea name="message" rows="2" placeholder="Cam kenarı, doğum günü notu veya ek istek..."></textarea></div>
+      <button type="submit" class="btn-main">Randevu Talebini Gönder</button>
+    </form>
+
+    <script>
+      const SLOT_DATA = {{ slot_options | tojson }};
+      let lastDate = document.getElementById("resDateInput").value;
+
+      function updateTableOptions() {
+        const dateInput = document.getElementById("resDateInput");
+        if (dateInput.value && dateInput.value !== lastDate) {
+          const url = new URL(window.location.href);
+          url.searchParams.set("date", dateInput.value);
+          window.location.href = url.toString();
+          return;
+        }
+        const slotSel = document.getElementById("slotSelect");
+        const tableSel = document.getElementById("tableSelect");
+        let chosenSlot = slotSel.value;
+        let currentObj = SLOT_DATA.find(s => s.time === chosenSlot && s.free_tables.length > 0);
+        if (!currentObj) {
+          currentObj = SLOT_DATA.find(s => s.free_tables.length > 0);
+          if (currentObj) {
+            slotSel.value = currentObj.time;
+          }
+        }
+        tableSel.innerHTML = "";
+        if (!currentObj || !currentObj.free_tables.length) {
+          const opt = document.createElement("option");
+          opt.value = "";
+          opt.textContent = "Bu saatte boş masa yok";
+          tableSel.appendChild(opt);
+          return;
+        }
+        currentObj.free_tables.forEach(tNo => {
+          const label = `Masa ${tNo}`;
+          const opt = document.createElement("option");
+          opt.value = label;
+          opt.textContent = `${label} (Müsait)`;
+          tableSel.appendChild(opt);
+        });
+      }
+
+      updateTableOptions();
+    </script>
+
+    {% elif tenant.module_type == 'berber-randevu' %}
+    <!-- BERBER & KUAFÖR: TARİH VE SAAT AYRI SEÇİM + DOLULUK KONTROLÜ -->
+    <form class="card" method="POST">
+      <h2 style="font-size:1.1rem;">Salon Randevu Talebi</h2>
+      <div class="row-2">
+        <div><label>Ad Soyad</label><input type="text" name="name" placeholder="Adınız Soyadınız" required /></div>
+        <div><label>Telefon</label><input type="text" name="phone" placeholder="05xx xxx xx xx" required /></div>
+      </div>
+      <div class="row-3">
+        <div>
+          <label>1. Randevu Tarihi</label>
+          <input type="date" name="res_date" id="barberDateInput" value="{{ selected_date }}" min="{{ min_date }}" max="{{ max_date }}" onchange="reloadBarberDate()" required />
+        </div>
+        <div>
+          <label>2. Müsait Saat Seçimi</label>
+          <select name="slot_time" required>
+            {% for bs in barber_slots %}
+              {% if bs.is_free %}
+                <option value="{{ bs.time }}">{{ bs.time }} — Müsait</option>
+              {% else %}
+                <option value="{{ bs.time }}" disabled>{{ bs.time }} — Dolu</option>
+              {% endif %}
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label>3. Hizmet Seçimi</label>
+          <select name="service">
+            <option value="Saç Kesimi">Saç Kesimi</option>
+            <option value="Saç + Sakal Tıraşı">Saç + Sakal Tıraşı</option>
+            <option value="Sakal Tıraşı & Bakım">Sakal Tıraşı &amp; Bakım</option>
+            <option value="Damat / Özel Bakım">Damat / Özel Bakım</option>
+          </select>
+        </div>
+      </div>
+      <div><label>Usta Tercihi / Ek Not</label><textarea name="message" rows="2" placeholder="Usta tercihi veya kesim notunuz..."></textarea></div>
+      <button type="submit" class="btn-main">Randevu Al</button>
+    </form>
+    <script>
+      function reloadBarberDate() {
+        const val = document.getElementById("barberDateInput").value;
+        if (!val) return;
+        const url = new URL(window.location.href);
+        url.searchParams.set("date", val);
+        window.location.href = url.toString();
+      }
+    </script>
+
+    {% elif tenant.module_type == 'mobil-saha' %}
+    <div class="card">
+      <h2 style="font-size:1.1rem;">Saha Ekibi &amp; Teslimat Sorgu / Talep</h2>
+      <p style="font-size:0.84rem;color:#9ca3af;">Saha ekibimiz teslimat ve servis taleplerinizi canlı takip eder.</p>
+      <form method="POST" style="display:grid;gap:12px;">
+        <div class="row-2">
+          <div><label>Ad Soyad / Firma</label><input type="text" name="name" required /></div>
+          <div><label>Telefon</label><input type="text" name="phone" placeholder="05xx xxx xx xx" required /></div>
+        </div>
+        <div>
+          <label>Saha İşlem Türü</label>
+          <select name="service">
+            <option value="Saha Teslimat Talebi">Saha Teslimat Talebi</option>
+            <option value="Teknik Servis / Saha Ekibi Çağır">Teknik Servis / Saha Ekibi Çağır</option>
+            <option value="Paket Durum Bilgisi">Paket Durum Bilgisi</option>
+          </select>
+        </div>
+        <div><label>Adres &amp; Paket Detayı</label><textarea name="message" rows="3" required></textarea></div>
+        <button type="submit" class="btn-main">Saha Talebi Gönder</button>
+      </form>
+    </div>
+
+    {% else %}
+    <form class="card" method="POST">
+      <h2 style="font-size:1.1rem;">Talep / Otomasyon İsteği Bırak</h2>
+      <div class="row-2">
+        <div><label>Ad Soyad</label><input type="text" name="name" required /></div>
+        <div><label>Telefon</label><input type="text" name="phone" placeholder="05xx xxx xx xx" required /></div>
+      </div>
+      <div>
+        <label>Konu / Hizmet</label>
+        <select name="service">
+          {% for srv in services %}
+          <option value="{{ srv.tag }} - {{ srv.title }}">{{ srv.tag }} — {{ srv.title }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div><label>Mesaj / Not</label><textarea name="message" rows="4" required></textarea></div>
+      <button type="submit" class="btn-main">Gönder</button>
+    </form>
+    {% endif %}
+  </div>
+</body>
+</html>

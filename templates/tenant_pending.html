@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ tenant.business_name }} — Ödeme Onayı Bekleniyor</title>
+  <style>
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { background:#080d0b; color:#f8fafc; font-family:Inter,system-ui,sans-serif; padding:22px 14px; overflow-x:hidden; }
+    .wrap { max-width:680px; margin:0 auto; display:grid; gap:16px; }
+    .card { background:#121d18; border:1px solid rgba(245,158,11,0.35); border-radius:16px; padding:20px; display:grid; gap:13px; }
+    .iban { font-family:monospace; font-size:0.9rem; font-weight:800; color:#fcd34d; background:#09100d; padding:10px 12px; border-radius:10px; border:1px solid rgba(245,158,11,0.3); word-break:break-all; }
+    input { width:100%; padding:10px 12px; border-radius:10px; border:1px solid rgba(16,185,129,0.25); background:#0f1714; color:#f8fafc; }
+    button, a.btn { text-decoration:none; padding:11px 16px; border-radius:10px; font-weight:800; font-size:0.9rem; border:none; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; width:100%; }
+    .btn-gold { background:linear-gradient(135deg,#fbbf24,#f59e0b); color:#1f1300; }
+    .btn-ghost { background:#0f1714; color:#34d399; border:1px solid rgba(16,185,129,0.3); }
+    .ok { padding:12px; border-radius:10px; background:rgba(16,185,129,0.16); color:#a7f3d0; font-size:0.88rem; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div style="font-size:0.78rem;color:#fbbf24;font-weight:800;">HESAP DURUMU: ÖDEME ONAYI / YENİLEME BEKLENİYOR</div>
+      <h1 style="font-size:1.28rem;">{{ tenant.business_name }}</h1>
+      <p style="color:#9ca3af;font-size:0.88rem;">
+        Hesabın modülü <strong>{{ mod_label }}</strong> olarak tanımlı.
+        IBAN ödemesi onaylandığında müşteri linkin ve panelin aktif olur.
+      </p>
+
+      {% if notified %}
+      <div class="ok">Ödeme bildirimin kaydedildi! Onaydan sonra hesabın aktif olacak.</div>
+      {% elif tenant.payment_requested %}
+      <div class="ok">Ödeme bildiriminiz iletilmiş durumda ({{ tenant.payment_note or 'Not girilmedi' }}). Onay bekleniyor.</div>
+      {% endif %}
+
+      <div style="font-size:0.86rem;color:#e5e7eb;display:grid;gap:4px;">
+        <div><strong>Alıcı:</strong> {{ iban_holder }}</div>
+        <div><strong>Banka:</strong> {{ iban_bank }}</div>
+        <div><strong>Paket:</strong> {{ tenant.plan|upper }} ({{ price_pro if tenant.plan == 'pro' else price_starter }})</div>
+        <div><strong>Kilitli Modül:</strong> {{ mod_label }}</div>
+      </div>
+      <div class="iban">{{ iban_number }}</div>
+
+      <form method="POST" action="{{ url_for('notify_iban_payment', slug=tenant.slug) }}" style="display:grid;gap:10px;">
+        <label style="font-size:0.84rem;color:#d1d5db;">Gönderen Adı / Dekont Notu</label>
+        <input type="text" name="payment_note" value="{{ tenant.payment_note or '' }}" placeholder="Örn: Ahmet Yılmaz - FAST ile gönderildi" required />
+        <button type="submit" class="btn-gold">Ödeme Yaptım / Onaya Bildir</button>
+      </form>
+
+      <a class="btn btn-ghost" href="https://wa.me/{{ wa_number }}?text={{ ('Merhaba, ' + tenant.business_name + ' (' + tenant.slug + ') icin IBAN odemesi yaptim, onay rica ederim.') | urlencode }}" target="_blank" rel="noopener noreferrer">WhatsApp'tan Yaz</a>
+    </div>
+  </div>
+</body>
+</html>

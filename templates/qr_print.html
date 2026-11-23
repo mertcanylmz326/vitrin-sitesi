@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ tenant.business_name }} — Masa QR Kodları Yazdır</title>
+  <style>
+    * { box-sizing:border-box; margin:0; padding:0; font-family:Inter,system-ui,sans-serif; }
+    body { background:#f1f5f9; color:#0f172a; padding:20px; }
+    .toolbar {
+      max-width:1020px; margin:0 auto 20px; background:#0f172a; color:#fff;
+      padding:14px 18px; border-radius:14px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;
+    }
+    .print-btn {
+      background:#10b981; color:#04130d; border:none; padding:10px 18px;
+      border-radius:10px; font-weight:800; font-size:0.9rem; cursor:pointer;
+    }
+    .sheet {
+      max-width:1020px; margin:0 auto;
+      display:grid; grid-template-columns:repeat(3, 1fr); gap:16px;
+    }
+    .sticker {
+      background:#ffffff; border:2px dashed #94a3b8; border-radius:16px;
+      padding:18px 14px; text-align:center; display:grid; gap:8px; justify-items:center;
+      page-break-inside:avoid;
+    }
+    .biz-name { font-size:0.85rem; font-weight:800; color:#475569; text-transform:uppercase; letter-spacing:0.04em; }
+    .table-title { font-size:1.35rem; font-weight:900; color:#0f172a; }
+    .sticker img { width:170px; height:170px; display:block; }
+    .scan-note { font-size:0.82rem; font-weight:700; color:#059669; }
+    @media print {
+      body { background:#fff; padding:0; }
+      .toolbar { display:none !important; }
+      .sheet { gap:12px; }
+      .sticker { border:1.5px solid #cbd5e1; }
+    }
+    @media (max-width:680px) {
+      .sheet { grid-template-columns:repeat(2, 1fr); }
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <div>
+      <strong>{{ tenant.business_name }} — Masa QR Etiketleri</strong>
+      <div style="font-size:0.8rem;color:#94a3b8;">Toplam {{ qr_list|length }} masa için hazır baskı şablonu</div>
+    </div>
+    <button type="button" class="print-btn" onclick="window.print()">🖨️ Yazdır / PDF Kaydet</button>
+  </div>
+
+  <div class="sheet">
+    {% for qr in qr_list %}
+    <div class="sticker">
+      <div class="biz-name">{{ tenant.business_name }}</div>
+      <div class="table-title">{{ qr.label }}</div>
+      <img src="{{ qr.qr_img_url }}" alt="{{ qr.label }}" />
+      <div class="scan-note">Menü &amp; Sipariş İçin QR Kodu Okutun</div>
+    </div>
+    {% endfor %}
+  </div>
+</body>
+</html>
