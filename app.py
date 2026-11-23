@@ -37,6 +37,8 @@ from flask import (
     url_for,
 )
 
+from duzgunler import duzgunler_bp, init_db as init_duzgunler_db
+
 try:
     import segno  # yerel QR uretimi (opsiyonel)
 except ImportError:  # pragma: no cover
@@ -56,8 +58,14 @@ def _require_env(name):
     return value
 
 
+def _normalize_db_url(url):
+    if url.startswith("postgres://"):
+        return "postgresql://" + url[len("postgres://"):]
+    return url
+
+
 app.secret_key = _require_env("FLASK_SECRET_KEY")
-DATABASE_URL = _require_env("DATABASE_URL")
+DATABASE_URL = _normalize_db_url(_require_env("DATABASE_URL"))
 
 app.config.update(
     MAX_CONTENT_LENGTH=8 * 1024 * 1024,
@@ -112,83 +120,98 @@ MODULE_LABELS = {
     "genel": "Genel Talep Formu",
 }
 
-SERVICES_DATA = [{'id': 'mobil-otomasyon',
-  'module_key': 'mobil-saha',
-  'tag': 'Mobil Otomasyon',
-  'title': 'Mobil Uygulama & Saha Akışları',
-  'image': 'mobilsaha.jpg',
-  'short': 'Saha elemanı canlı konum, şarj durumu, aktif paket ve müşteri teslimat akışlarını takip eden '
-           'mobil saha sistemi.',
-  'details': 'Saha personeline özel link üzerinden GPS konum, batarya/şarj yüzdesi, üzerindeki paket ve '
-             'gittiği müşteri bilgisini işletme paneline canlı aktaran sistem.',
-  'features': ['Saha elemanı linki ile tek tuşla konum & batarya izni ve canlı takip',
-               'Hangi paket üzerinde, hangi müşteriye gidiyor anlık görüntüleme',
-               'Harita üzerinde tek tıkla canlı konum açma ve teslimat durumu',
-               'İşletme panelinden tüm saha ekibini tek ekrandan izleme']},
- {'id': 'web-otomasyon',
-  'module_key': 'web-otomasyon',
-  'tag': 'Web Otomasyon',
-  'title': 'Web Panelleri, Formlar & Botlar',
-  'image': 'webotom.jpg',
-  'short': 'WhatsApp API, Telegram Bot Token, otomatik veri çekme (scraper/webhook) ve günlük raporlama '
-           'entegrasyonları.',
-  'details': 'İşletmenin WhatsApp API, Telegram Bot, harici Webhook ve otomatik veri çekme bağlantılarını '
-             'tek panelden yönetip otomatik bildirim gönderen altyapı.',
-  'features': ['WhatsApp Cloud/Business API & otomatik müşteri mesaj entegrasyonu',
-               'Telegram Bot Token & Chat ID ile anlık talep/sipariş bildirimi',
-               'Otomatik veri çekme URL (API/Webhook) ve zamanlanmış raporlama',
-               'Tek tıkla bağlantı testi ve canlı log takibi']},
- {'id': 'masaustu-otomasyon',
-  'module_key': 'masaustu-otomasyon',
-  'tag': 'Masaüstü Otomasyon',
-  'title': 'Kasa, Barkod & Yerel Programlar',
-  'image': 'masaustuoto.jpg',
-  'short': 'USB barkod okuyucu uyumlu hızlı ürün satışı, anlık stok düşümü ve günlük kasa ciro takip '
-           'sistemi.',
-  'details': 'Barkod okuyucu veya klavye ile saniyeler içinde satış düşen, kritik stokları uyaran ve günlük '
-             'kasa raporunu otomatik tutan pratik otomasyon paneli.',
-  'features': ['USB barkod okuyucu ile barkod okutulduğu anda otomatik satış',
-               'Anlık stok takibi, ürün tanımlama ve fiyat yönetimi',
-               'Günlük kasa cirosu ve satılan ürün özeti',
-               'Karmaşık menülerden arındırılmış hızlı kasa ekranı']},
- {'id': 'kafe-restoran-randevu',
-  'module_key': 'kafe-randevu',
-  'tag': 'Kafe & Restoran',
-  'title': 'Masa Randevu & Masa QR Sistemi',
-  'image': 'kaferesrandevu.jpg',
-  'short': 'Tarih/saat/masa bazlı rezervasyon ve her masaya özel QR kod etiketiyle hızlı masa yönetimi.',
-  'details': 'Kafe ve restoranlarda hem önceden masa randevusu almanı hem de her masaya özel QR kod etiketi '
-             'basıp ayrı menü/sipariş ekranı sunmanı sağlayan sistem.',
-  'features': ['Tarih, saat, boş masa ve kişi sayısına göre rezervasyon',
-               'Pro pakette veya +250 TL eklentiyle her masa için ayrı QR sipariş ekranı',
-               'Fotoğraflı dijital menü, Garson Çağır ve Hesap İste butonları',
-               'İşletme panelinden tek tıkla onay ve WhatsApp dönüşü']},
- {'id': 'berber-kuafor-randevu',
-  'module_key': 'berber-randevu',
-  'tag': 'Berber & Kuaför',
-  'title': 'Salon Randevu & Saat Yönetimi',
-  'image': 'berberrandevu.jpg',
-  'short': 'Müşterilerin tarih ve müsait saatleri ayrı ayrı seçebildiği, dolu saatleri kapatan randevu '
-           'sistemi.',
-  'details': 'Telefon trafiğini azaltan, müşterinin önce tarihi seçip o tarihteki boş saatleri görerek '
-             'randevu aldığı modern salon randevu altyapısı.',
-  'features': ['Tarih ve saat ayrı seçim; dolu saatleri otomatik kilitleme',
-               'Saç, sakal, bakım gibi hizmet türüne göre planlama',
-               'Usta/personel tercihi ve müşteri notu',
-               'Mobil ekrandan hızlı onay, iptal ve WhatsApp dönüşü']},
- {'id': 'masa-qr-garson',
-  'module_key': 'masa-qr',
-  'tag': 'Masa QR & Garson',
-  'title': 'QR Menü, Sipariş & Garson Çağır Sistemi',
-  'image': 'kaferestoqr.jpg',
-  'short': 'Masadaki QR kod üzerinden menüyü görüp sepetle sipariş verme ve tek dokunuşla garson/hesap '
-           'çağırma sistemi.',
-  'details': 'Masaya oturan müşterilerin QR kodu okutarak fotoğraflı menüyü incelemesini, adetli sipariş '
-             'vermesini ve tek tuşla garson/hesap çağırmasını sağlayan masa yönetim sistemi.',
-  'features': ['Her masaya özel tanımlı QR kod etiketi ve A4 yazdırma sayfası',
-               "Tek dokunuşla 'Garson Çağır' ve 'Hesap İste' bildirimi",
-               'Fotoğraflı QR menüden sepete ürün ekleyip sipariş verme',
-               'Uygulama indirmeden doğrudan tarayıcıdan çalışma']}]
+SERVICES_DATA = [
+    {
+        "id": "mobil-otomasyon",
+        "module_key": "mobil-saha",
+        "tag": "Mobil Otomasyon",
+        "title": "Mobil Uygulama & Saha Akışları",
+        "image": "mobilsaha.jpg",
+        "short": "Saha elemanı canlı konum, şarj durumu, aktif paket ve müşteri teslimat akışlarını takip eden mobil saha sistemi.",
+        "details": "Saha personeline özel link üzerinden GPS konum, batarya/şarj yüzdesi, üzerindeki paket ve gittiği müşteri bilgisini işletme paneline canlı aktaran sistem.",
+        "features": [
+            "Saha elemanı linki ile tek tuşla konum & batarya izni ve canlı takip",
+            "Hangi paket üzerinde, hangi müşteriye gidiyor anlık görüntüleme",
+            "Harita üzerinde tek tıkla canlı konum açma ve teslimat durumu",
+            "İşletme panelinden tüm saha ekibini tek ekrandan izleme",
+        ],
+    },
+    {
+        "id": "web-otomasyon",
+        "module_key": "web-otomasyon",
+        "tag": "Web Otomasyon",
+        "title": "Web Panelleri, Formlar & Botlar",
+        "image": "webotom.jpg",
+        "short": "WhatsApp API, Telegram Bot Token, otomatik veri çekme (scraper/webhook) ve günlük raporlama entegrasyonları.",
+        "details": "İşletmenin WhatsApp API, Telegram Bot, harici Webhook ve otomatik veri çekme bağlantılarını tek panelden yönetip otomatik bildirim gönderen altyapı.",
+        "features": [
+            "WhatsApp Cloud/Business API & otomatik müşteri mesaj entegrasyonu",
+            "Telegram Bot Token & Chat ID ile anlık talep/sipariş bildirimi",
+            "Otomatik veri çekme URL (API/Webhook) ve zamanlanmış raporlama",
+            "Tek tıkla bağlantı testi ve canlı log takibi",
+        ],
+    },
+    {
+        "id": "masaustu-otomasyon",
+        "module_key": "masaustu-otomasyon",
+        "tag": "Masaüstü Otomasyon",
+        "title": "Kasa, Barkod & Yerel Programlar",
+        "image": "masaustuoto.jpg",
+        "short": "USB barkod okuyucu uyumlu hızlı ürün satışı, anlık stok düşümü ve günlük kasa ciro takip sistemi.",
+        "details": "Barkod okuyucu veya klavye ile saniyeler içinde satış düşen, kritik stokları uyaran ve günlük kasa raporunu otomatik tutan pratik otomasyon paneli.",
+        "features": [
+            "USB barkod okuyucu ile barkod okutulduğu anda otomatik satış",
+            "Anlık stok takibi, ürün tanımlama ve fiyat yönetimi",
+            "Günlük kasa cirosu ve satılan ürün özeti",
+            "Karmaşık menülerden arındırılmış hızlı kasa ekranı",
+        ],
+    },
+    {
+        "id": "kafe-restoran-randevu",
+        "module_key": "kafe-randevu",
+        "tag": "Kafe & Restoran",
+        "title": "Masa Randevu & Masa QR Sistemi",
+        "image": "kaferesrandevu.jpg",
+        "short": "Tarih/saat/masa bazlı rezervasyon ve her masaya özel QR kod etiketiyle hızlı masa yönetimi.",
+        "details": "Kafe ve restoranlarda hem önceden masa randevusu almanı hem de her masaya özel QR kod etiketi basıp ayrı menü/sipariş ekranı sunmanı sağlayan sistem.",
+        "features": [
+            "Tarih, saat, boş masa ve kişi sayısına göre rezervasyon",
+            "Pro pakette veya +250 TL eklentiyle her masa için ayrı QR sipariş ekranı",
+            "Fotoğraflı dijital menü, Garson Çağır ve Hesap İste butonları",
+            "İşletme panelinden tek tıkla onay ve WhatsApp dönüşü",
+        ],
+    },
+    {
+        "id": "berber-kuafor-randevu",
+        "module_key": "berber-randevu",
+        "tag": "Berber & Kuaför",
+        "title": "Salon Randevu & Saat Yönetimi",
+        "image": "berberrandevu.jpg",
+        "short": "Müşterilerin tarih ve müsait saatleri ayrı ayrı seçebildiği, dolu saatleri kapatan randevu sistemi.",
+        "details": "Telefon trafiğini azaltan, müşterinin önce tarihi seçip o tarihteki boş saatleri görerek randevu aldığı modern salon randevu altyapısı.",
+        "features": [
+            "Tarih ve saat ayrı seçim; dolu saatleri otomatik kilitleme",
+            "Saç, sakal, bakım gibi hizmet türüne göre planlama",
+            "Usta/personel tercihi ve müşteri notu",
+            "Mobil ekrandan hızlı onay, iptal ve WhatsApp dönüşü",
+        ],
+    },
+    {
+        "id": "masa-qr-garson",
+        "module_key": "masa-qr",
+        "tag": "Masa QR & Garson",
+        "title": "QR Menü, Sipariş & Garson Çağır Sistemi",
+        "image": "kaferestoqr.jpg",
+        "short": "Masadaki QR kod üzerinden menüyü görüp sepetle sipariş verme ve tek dokunuşla garson/hesap çağırma sistemi.",
+        "details": "Masaya oturan müşterilerin QR kodu okutarak fotoğraflı menüyü incelemesini, adetli sipariş vermesini ve tek tuşla garson/hesap çağırmasını sağlayan masa yönetim sistemi.",
+        "features": [
+            "Her masaya özel tanımlı QR kod etiketi ve A4 yazdırma sayfası",
+            "Tek dokunuşla 'Garson Çağır' ve 'Hesap İste' bildirimi",
+            "Fotoğraflı QR menüden sepete ürün ekleyip sipariş verme",
+            "Uygulama indirmeden doğrudan tarayıcıdan çalışma",
+        ],
+    },
+]
 
 
 # ---------------------------------------------------------------------------
@@ -405,7 +428,7 @@ def init_db():
     LOGO_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
     with get_db() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT pg_advisory_xact_lock(7272741)")  # coklu worker yarisi olmasin
+            cur.execute("SELECT pg_advisory_xact_lock(7272741)")
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS tenants (
@@ -603,7 +626,6 @@ def init_db():
                 """
             )
 
-            # Vitrin hesabi: sabit/bilinen sifreyi asla birakma
             cur.execute("SELECT id, password_hash FROM tenants WHERE slug = %s", ("kolay-vitrin",))
             vit = cur.fetchone()
             if not vit:
@@ -615,9 +637,11 @@ def init_db():
                         expires_at, access_token)
                     VALUES (%s,%s,%s,%s,'pro','genel',8,%s,%s,FALSE,TRUE,NOW(), NOW() + INTERVAL '3650 days', %s)
                     """,
-                    ("kolay-vitrin", "KOLAY Otomasyon Ana Vitrin", "iletisim@kolayotomasyon.local",
-                     generate_password_hash(pw), WHATSAPP_NUMBER, "Varsayilan aktif vitrin hesabi",
-                     secrets.token_urlsafe(24)),
+                    (
+                        "kolay-vitrin", "KOLAY Otomasyon Ana Vitrin", "iletisim@kolayotomasyon.local",
+                        generate_password_hash(pw), WHATSAPP_NUMBER, "Varsayilan aktif vitrin hesabi",
+                        secrets.token_urlsafe(24),
+                    ),
                 )
                 if not VITRIN_PASSWORD:
                     app.logger.warning("kolay-vitrin icin rastgele sifre olusturuldu: Super Admin > Duzenle ile degistirin.")
@@ -648,9 +672,12 @@ def _migrate_legacy(cur):
             cur.execute(
                 """INSERT INTO tickets (id, tenant_id, name, phone, service, message, status, created_at, created_ts)
                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (id) DO NOTHING""",
-                (str(item.get("id") or uuid.uuid4().hex[:8]), tid, str(item.get("name", "")).strip(),
-                 str(item.get("phone", "")).strip(), str(item.get("service", "")).strip(),
-                 str(item.get("message", "")).strip(), str(item.get("status") or "Yeni").strip(), created, now_tr()),
+                (
+                    str(item.get("id") or uuid.uuid4().hex[:8]), tid, str(item.get("name", "")).strip(),
+                    str(item.get("phone", "")).strip(), str(item.get("service", "")).strip(),
+                    str(item.get("message", "")).strip(), str(item.get("status") or "Yeni").strip(),
+                    created, now_tr(),
+                ),
             )
 
 
@@ -764,9 +791,11 @@ def create_tenant(business_name, owner_email, password, raw_slug="", plan="start
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,FALSE,FALSE,%s,%s)
                 RETURNING *
                 """,
-                (candidate, business_name.strip()[:120], owner_email.strip().lower()[:160],
-                 generate_password_hash(password), chosen_plan, mod, default_tables,
-                 whatsapp_number.strip()[:30], chosen_plan == "pro", secrets.token_urlsafe(24)),
+                (
+                    candidate, business_name.strip()[:120], owner_email.strip().lower()[:160],
+                    generate_password_hash(password), chosen_plan, mod, default_tables,
+                    whatsapp_number.strip()[:30], chosen_plan == "pro", secrets.token_urlsafe(24),
+                ),
             )
             return cur.fetchone()
 
@@ -860,7 +889,10 @@ def get_pos_overview(tenant_id):
                    WHERE tenant_id = %s ORDER BY id DESC LIMIT 15""",
                 (tenant_id,),
             )
-            sales = [dict(r, total=float(r["total"]), time_str=r["sold_at"].strftime("%d.%m %H:%M")) for r in cur.fetchall()]
+            sales = [
+                dict(r, total=float(r["total"]), time_str=r["sold_at"].strftime("%d.%m %H:%M"))
+                for r in cur.fetchall()
+            ]
     return products, int(tot["q"]), float(tot["rev"]), sales
 
 
@@ -966,12 +998,17 @@ def add_ticket(tenant, name, phone, service, message, reservation=None):
                     cur.execute(
                         """INSERT INTO reservations (tenant_id, ticket_id, kind, res_date, slot, table_no)
                            VALUES (%s,%s,%s,%s,%s,%s)""",
-                        (tenant["id"], ticket_id, reservation["kind"], reservation["res_date"],
-                         reservation["slot"], reservation.get("table_no")),
+                        (
+                            tenant["id"], ticket_id, reservation["kind"], reservation["res_date"],
+                            reservation["slot"], reservation.get("table_no"),
+                        ),
                     )
     except psycopg2.errors.UniqueViolation:
         raise SlotTaken()
-    ticket = {"id": ticket_id, "name": name, "phone": phone, "service": service, "message": message, "created_at": created_at}
+    ticket = {
+        "id": ticket_id, "name": name, "phone": phone,
+        "service": service, "message": message, "created_at": created_at,
+    }
     run_async(notify_new_ticket, dict(tenant), ticket)
     return ticket_id
 
@@ -1045,7 +1082,7 @@ def run_async(fn, *args, **kwargs):
 def _safe_call(fn, args, kwargs):
     try:
         fn(*args, **kwargs)
-    except Exception as exc:  # arka plan hatasi istegi etkilemesin
+    except Exception as exc:
         app.logger.error("Arka plan gorevi hatasi (%s): %s", getattr(fn, "__name__", fn), exc)
 
 
@@ -1137,7 +1174,8 @@ def send_telegram(cfg, text):
     try:
         r = requests.post(
             f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat, "text": text[:3500]}, timeout=8,
+            json={"chat_id": chat, "text": text[:3500]},
+            timeout=8,
         )
         return r.ok, f"Telegram HTTP {r.status_code}"
     except Exception as exc:
@@ -1163,8 +1201,10 @@ def send_whatsapp(cfg, to_phone, text):
     if not to:
         return False, "Alıcı telefon yok"
     if cfg.get("wa_template_name"):
-        body = {"messaging_product": "whatsapp", "to": to, "type": "template",
-                "template": {"name": cfg["wa_template_name"], "language": {"code": "tr"}}}
+        body = {
+            "messaging_product": "whatsapp", "to": to, "type": "template",
+            "template": {"name": cfg["wa_template_name"], "language": {"code": "tr"}},
+        }
     else:
         body = {"messaging_product": "whatsapp", "to": to, "type": "text", "text": {"body": text[:1000]}}
     try:
@@ -1249,9 +1289,10 @@ def send_report_to_channels(tenant, cfg, text):
     if cfg["tg_bot_token"] and cfg["tg_chat_id"]:
         results.append(send_telegram(cfg, text))
     if cfg["webhook_url"]:
-        results.append(send_webhook(cfg, {"business": tenant["business_name"], "slug": tenant["slug"],
-                                          "event": "daily_report", "message": text,
-                                          "timestamp": now_tr().isoformat()}))
+        results.append(send_webhook(cfg, {
+            "business": tenant["business_name"], "slug": tenant["slug"],
+            "event": "daily_report", "message": text, "timestamp": now_tr().isoformat(),
+        }))
     return results
 
 
@@ -1317,6 +1358,9 @@ def start_scheduler():
 # Baslatma
 # ---------------------------------------------------------------------------
 init_db()
+with app.app_context():
+    init_duzgunler_db()
+app.register_blueprint(duzgunler_bp)
 start_scheduler()
 
 if not SUPERADMIN_ENABLED:
@@ -1326,7 +1370,7 @@ if not SUPERADMIN_ENABLED:
 # ---------------------------------------------------------------------------
 # Guvenlik katmani: CSRF, basliklar, yetki
 # ---------------------------------------------------------------------------
-CSRF_EXEMPT_ENDPOINTS = {"field_agent_ping"}  # cihaz anahtari (token) ile korunuyor
+CSRF_EXEMPT_ENDPOINTS = {"field_agent_ping"}
 _FORM_POST_RE = re.compile(r"(<form\b[^>]*\bmethod\s*=\s*[\"']?post[\"']?[^>]*>)", re.IGNORECASE)
 
 
@@ -1354,7 +1398,7 @@ def harden_response(resp):
     resp.headers.setdefault("Referrer-Policy", "same-origin")
     if resp.mimetype == "text/html" and not resp.direct_passthrough and resp.status_code < 400:
         body = resp.get_data(as_text=True)
-        if "<form" in body.lower():
+        if "<form" in body.lower() and 'name="csrf_token"' not in body.lower():
             hidden = f'<input type="hidden" name="csrf_token" value="{csrf_token()}">'
             resp.set_data(_FORM_POST_RE.sub(lambda m: m.group(1) + hidden, body))
         resp.headers["Cache-Control"] = "no-store"
@@ -1588,8 +1632,10 @@ def register_tenant():
     if not business_name or not _EMAIL_RE.match(owner_email) or len(password) < 8:
         return redirect(url_for("index", err="İşletme adı, geçerli e-posta ve en az 8 karakter şifre zorunlu.") + "#saas-basla")
     try:
-        tenant = create_tenant(business_name, owner_email, password, raw_slug=raw_slug, plan=plan,
-                               module_type=module_type, whatsapp_number=whatsapp_number)
+        tenant = create_tenant(
+            business_name, owner_email, password, raw_slug=raw_slug,
+            plan=plan, module_type=module_type, whatsapp_number=whatsapp_number,
+        )
     except Exception as exc:
         app.logger.error("Kayit hatasi: %s", exc)
         return redirect(url_for("index", err="Kayıt sırasında bir hata oluştu, lütfen tekrar deneyin.") + "#saas-basla")
@@ -1736,14 +1782,20 @@ def field_agent_ping(slug):
                 cur.execute(
                     """UPDATE field_agents SET active_package=%s, target_customer=%s, battery_level=%s, is_charging=%s,
                        latitude=%s, longitude=%s, status_text=%s, updated_at=%s WHERE id=%s""",
-                    (active_package, target_customer, battery_level, is_charging, lat, lng, status_text, now, existing["id"]),
+                    (
+                        active_package, target_customer, battery_level, is_charging,
+                        lat, lng, status_text, now, existing["id"],
+                    ),
                 )
             else:
                 cur.execute(
                     """INSERT INTO field_agents (tenant_id, agent_name, active_package, target_customer,
                        battery_level, is_charging, latitude, longitude, status_text, updated_at)
                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                    (tenant["id"], agent_name, active_package, target_customer, battery_level, is_charging, lat, lng, status_text, now),
+                    (
+                        tenant["id"], agent_name, active_package, target_customer,
+                        battery_level, is_charging, lat, lng, status_text, now,
+                    ),
                 )
     return jsonify({"ok": True})
 
@@ -1875,7 +1927,10 @@ def tenant_public(slug):
 
     if mod_type == "masa-qr":
         masa_param = request.args.get("masa", "").strip()
-        return redirect(url_for("tenant_qr_order_page", slug=slug, masa=masa_param) if masa_param else url_for("tenant_qr_order_page", slug=slug))
+        return redirect(
+            url_for("tenant_qr_order_page", slug=slug, masa=masa_param)
+            if masa_param else url_for("tenant_qr_order_page", slug=slug)
+        )
 
     today = today_tr()
     max_date = today + timedelta(days=90)
@@ -1901,7 +1956,10 @@ def tenant_public(slug):
         if mod_type in ("kafe-randevu", "berber-randevu"):
             res_date = parse_date(request.form.get("res_date"))
             slot_time = request.form.get("slot_time", "").strip()
-            if not res_date or res_date < today or res_date > max_date or slot_time not in TIME_SLOTS or slot_time in past_slots_for(res_date):
+            if (
+                not res_date or res_date < today or res_date > max_date
+                or slot_time not in TIME_SLOTS or slot_time in past_slots_for(res_date)
+            ):
                 return fail("invalid")
             selected = res_date
 
@@ -2085,7 +2143,7 @@ def tenant_save_bot_config(slug):
         return val
 
     def secret_field(name):
-        return clean_text(request.form.get(name), 400) or old.get(name, "")  # bos birakilirsa eski deger korunur
+        return clean_text(request.form.get(name), 400) or old.get(name, "")
 
     hour = request.form.get("report_hour", "21:00").strip()
     cfg = {
@@ -2125,7 +2183,7 @@ def tenant_run_bot_action(slug):
         results = send_report_to_channels(tenant, cfg, text)
         for ok, info in results:
             bot_log(tenant["id"], f"Rapor gönderimi → {info}", "info" if ok else "error")
-        msg = ("Rapor hazırlandı ve kanallara gönderildi." if results else "Rapor hazırlandı (bağlı Telegram/Webhook kanalı yok).")
+        msg = "Rapor hazırlandı ve kanallara gönderildi." if results else "Rapor hazırlandı (bağlı Telegram/Webhook kanalı yok)."
         cfg["last_sync_note"] = f"[{stamp}] {text.splitlines()[-1][:200]}"
     else:
         text = f"✅ {tenant['business_name']} — test bildirimi ({stamp})"
@@ -2200,7 +2258,7 @@ def tenant_pos_scan(slug):
                 msg = f"⚠️ Yetersiz stok: {prod['name']} (kalan {prod['stock']}, istenen {qty})."
             else:
                 cur.execute("UPDATE pos_products SET stock = stock - %s WHERE id = %s", (qty, prod["id"]))
-                total = float(prod["price"]) * qty
+                total = round(float(prod["price"]) * qty, 2)
                 cur.execute(
                     """INSERT INTO pos_sales (tenant_id, product_id, barcode, name, qty, unit_price, total, sold_at)
                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
@@ -2261,11 +2319,15 @@ def tenant_update_settings(slug):
     with get_db() as conn:
         with conn.cursor() as cur:
             if new_logo:
-                cur.execute("UPDATE tenants SET whatsapp_number=%s, table_count=%s, logo_filename=%s WHERE id=%s",
-                            (wa_num, t_count, new_logo, tenant["id"]))
+                cur.execute(
+                    "UPDATE tenants SET whatsapp_number=%s, table_count=%s, logo_filename=%s WHERE id=%s",
+                    (wa_num, t_count, new_logo, tenant["id"]),
+                )
             else:
-                cur.execute("UPDATE tenants SET whatsapp_number=%s, table_count=%s WHERE id=%s",
-                            (wa_num, t_count, tenant["id"]))
+                cur.execute(
+                    "UPDATE tenants SET whatsapp_number=%s, table_count=%s WHERE id=%s",
+                    (wa_num, t_count, tenant["id"]),
+                )
     msg = "" if (new_logo or not request.files.get("logo") or not request.files["logo"].filename) else "⚠️ Logo kaydedilmedi: sadece JPG/PNG/WEBP ve en fazla 4 MB."
     return back_to_panel(slug, msg or "Ayarlar kaydedildi.", "pane-settings")
 
@@ -2359,6 +2421,7 @@ def superadmin_login():
         return render_template("superadmin_login.html", error=error)
     if session.get("superadmin_auth"):
         return redirect(url_for("superadmin_panel"))
+    next_url = safe_next(request.form.get("next") or request.args.get("next"), url_for("superadmin_panel"))
     if request.method == "POST":
         if rate_limited(f"adm:{request.remote_addr}", 6, 900):
             abort(429)
@@ -2368,7 +2431,7 @@ def superadmin_login():
         ok_p = hmac.compare_digest(p, SUPERADMIN_PASSWORD.encode("utf-8"))
         if ok_u and ok_p:
             session["superadmin_auth"] = True
-            return redirect(safe_next(request.args.get("next"), url_for("superadmin_panel")))
+            return redirect(next_url)
         error = "Kullanıcı adı veya şifre hatalı."
     return render_template("superadmin_login.html", error=error)
 
@@ -2446,7 +2509,10 @@ def superadmin_edit_tenant(tenant_id):
                     cur.execute(
                         """UPDATE tenants SET business_name=%s, owner_email=%s, plan=%s, module_type=%s,
                            table_count=%s, password_hash=%s WHERE id=%s""",
-                        (business_name, owner_email, plan, module_type, table_count, generate_password_hash(new_password), tenant_id),
+                        (
+                            business_name, owner_email, plan, module_type,
+                            table_count, generate_password_hash(new_password), tenant_id,
+                        ),
                     )
                 else:
                     cur.execute(
