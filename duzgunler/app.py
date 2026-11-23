@@ -4,7 +4,8 @@ from functools import wraps
 from urllib.parse import urlparse
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from flask import Blueprint, render_template, request, redirect, url_for, session, flash, jsonify
+from flask import Blueprint, request, redirect, url_for, session, flash, jsonify, get_flashed_messages
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 from werkzeug.security import generate_password_hash, check_password_hash
 
 duzgunler_bp = Blueprint(
@@ -15,6 +16,24 @@ duzgunler_bp = Blueprint(
     static_folder="static",
     static_url_path="/duzgunler/static"
 )
+
+_DZG_TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
+_dzg_env = Environment(
+    loader=FileSystemLoader(_DZG_TEMPLATE_DIR),
+    autoescape=select_autoescape(["html", "xml"]),
+)
+_dzg_env.globals.update({
+    "url_for": url_for,
+    "session": session,
+    "request": request,
+    "get_flashed_messages": get_flashed_messages,
+})
+
+
+def dzg_render(template_name, **context):
+    context.setdefault("get_flashed_messages", get_flashed_messages)
+    tmpl = _dzg_env.get_template(template_name)
+    return tmpl.render(**context)
 
 
 def _normalize_db_url(url: str) -> str:
@@ -203,7 +222,7 @@ def index():
             cur.close()
         if conn:
             conn.close()
-    return render_template("index.html", urunler=urunler)
+    return dzg_render("index.html", urunler=urunler)
 
 
 @duzgunler_bp.route("/b2b-giris", methods=["POST"])
@@ -365,7 +384,7 @@ def b2b_panel():
     siparisler = cur.fetchall()
     cur.close()
     conn.close()
-    return render_template("b2b_panel.html", urunler=urunler, siparisler=siparisler)
+    return dzg_render("b2b_panel.html", urunler=urunler, siparisler=siparisler)
 
 
 @duzgunler_bp.route("/plasiyer-panel")
@@ -386,7 +405,7 @@ def plasiyer_panel():
     siparisler = cur.fetchall()
     cur.close()
     conn.close()
-    return render_template("plasiyer_panel.html", bayiler=bayiler, urunler=urunler, siparisler=siparisler)
+    return dzg_render("plasiyer_panel.html", bayiler=bayiler, urunler=urunler, siparisler=siparisler)
 
 
 @duzgunler_bp.route("/api/siparis-ver", methods=["POST"])
@@ -457,7 +476,7 @@ def bayi_guncelle(bayi_id):
 def cikis():
     for k in [
         "dzg_user_id", "dzg_role", "dzg_firma_unvani", "dzg_yetkili",
-        "dzg_iskonto", "dzgunler_ad_soyad", "dzg_ad_soyad", "dzg_plasiyer_kodu", "dzg_bolge"
+        "dzg_iskonto", "dzg_ad_soyad", "dzg_plasiyer_kodu", "dzg_bolge"
     ]:
         session.pop(k, None)
     flash("Düzgünler B2B oturumunuz sonlandırıldı.", "info")
