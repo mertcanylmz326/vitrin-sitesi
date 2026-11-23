@@ -30,7 +30,7 @@
           ('siparisler', 'Siparişler (' ~ (siparisler|length) ~ ')'),
           ('musteriler', 'Müşteriler (' ~ (bayiler|length) ~ ')'),
           ('bayilik-basvurulari', 'Bayilik Başvuruları (' ~ (bekleyen_basvurular|length) ~ ')'),
-          ('odemeler', 'Ödeme Yöntemleri')
+          ('odemeler', 'Ödeme & Cari Mutabakat')
         ]),
         ('İÇERİK & KURUMSAL', [
           ('icerik', 'İçerik Yönetimi'),
@@ -320,23 +320,105 @@
         </div>
       </div>
 
-    <!-- 6. ÖDEME YÖNTEMLERİ -->
+    <!-- 6. ÖDEME ONAY, CARİ MUTABAKAT & ÖDEME YÖNTEMLERİ -->
     {% elif sekme == 'odemeler' %}
       <div class="space-y-6">
-        <h2 class="text-2xl font-bold text-white">Ödeme Yöntemleri</h2>
+        <h2 class="text-2xl font-bold text-white">Ödeme Onay & Cari Mutabakat</h2>
 
-        <form method="POST" action="{{ url_for('duzgunler.admin_odeme_ekle') }}"
-              class="dzg-card grid grid-cols-1 md:grid-cols-4 gap-3 p-5">
-          <input type="text" name="kod" placeholder="Kod (ORN: KREDI_KARTI)" required class="dzg-input px-3 py-2 text-sm">
-          <input type="text" name="baslik" placeholder="Başlık (Sanal POS)" required class="dzg-input px-3 py-2 text-sm">
-          <input type="text" name="aciklama" placeholder="Kısa açıklama" class="dzg-input px-3 py-2 text-sm">
-          <input type="text" name="iban_veya_detay" placeholder="IBAN / Hesap veya Ödeme Detayı" class="dzg-input px-3 py-2 text-sm">
-          <button type="submit" class="dzg-btn-primary md:col-span-4 py-2.5 text-sm">
-            + Ödeme Yöntemi Ekle
-          </button>
-        </form>
+        <!-- Bayi Ödeme Bildirimleri Onayı -->
+        <div class="dzg-card p-5 space-y-3">
+          <h3 class="text-base font-semibold text-amber-400">Gelen Bayi Ödeme Bildirimleri</h3>
+          <div class="overflow-x-auto">
+            <table class="dzg-table w-full text-sm text-left">
+              <thead>
+                <tr>
+                  <th>Bayi</th>
+                  <th>Yöntem</th>
+                  <th>Tutar</th>
+                  <th>Açıklama</th>
+                  <th>Durum / Onay</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for o in bayi_odemeleri %}
+                  <tr>
+                    <td>
+                      <div class="font-semibold text-white">{{ o.firma_unvani or 'Bayi #' ~ o.bayi_id }}</div>
+                      <div class="text-xs font-mono text-slate-400">{{ o.vergi_no or '-' }}</div>
+                    </td>
+                    <td class="text-xs">{{ o.odeme_yontemi }}</td>
+                    <td class="font-semibold text-emerald-400">{{ "%.2f"|format(o.tutar) }} ₺</td>
+                    <td class="text-xs text-slate-400 max-w-xs">{{ o.aciklama or '-' }}</td>
+                    <td>
+                      <form method="POST" action="{{ url_for('duzgunler.admin_bayi_odeme_durum', odeme_id=o.id) }}" class="flex items-center gap-2">
+                        <select name="durum" class="dzg-select px-2 py-1 text-xs">
+                          {% for st in ['Onay Bekliyor', 'Onaylandı', 'İptal'] %}
+                            <option value="{{ st }}" {% if o.durum == st %}selected{% endif %}>{{ st }}</option>
+                          {% endfor %}
+                        </select>
+                        <button type="submit" class="dzg-btn-primary px-2.5 py-1 text-xs">Kaydet</button>
+                      </form>
+                    </td>
+                  </tr>
+                {% else %}
+                  <tr><td colspan="5" class="py-5 text-center text-slate-500">Henüz bayi ödeme bildirimi yok.</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
 
+        <!-- Cari Mutabakat Özeti -->
+        <div class="dzg-card p-5 space-y-3">
+          <h3 class="text-base font-semibold text-sky-400">Bayi Cari Mutabakat Tablosu</h3>
+          <div class="overflow-x-auto">
+            <table class="dzg-table w-full text-sm text-left">
+              <thead>
+                <tr>
+                  <th>Bayi / Vergi No</th>
+                  <th>Toplam Sipariş</th>
+                  <th>Onaylanan Ödeme</th>
+                  <th>Bekleyen Ödeme</th>
+                  <th>Net Cari Bakiye</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for c in cari_mutabakat %}
+                  <tr>
+                    <td>
+                      <div class="font-semibold text-white">{{ c.firma_unvani }}</div>
+                      <div class="text-xs font-mono text-slate-400">{{ c.vergi_no }}</div>
+                    </td>
+                    <td>{{ "%.2f"|format(c.toplam_siparis) }} ₺</td>
+                    <td class="text-emerald-400 font-semibold">{{ "%.2f"|format(c.onaylanan_odeme) }} ₺</td>
+                    <td class="text-amber-300">{{ "%.2f"|format(c.bekleyen_odeme) }} ₺</td>
+                    <td class="font-bold {{ 'text-rose-400' if c.net_bakiye > 0 else 'text-emerald-400' }}">
+                      {{ "%.2f"|format(c.net_bakiye) }} ₺
+                    </td>
+                  </tr>
+                {% else %}
+                  <tr><td colspan="5" class="py-5 text-center text-slate-500">Cari kaydı bulunmuyor.</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Ödeme Yöntemi Tanımları -->
         <div class="space-y-4">
+          <h3 class="text-base font-semibold text-white">Ödeme Yöntemi Tanımları</h3>
+
+          <form method="POST" action="{{ url_for('duzgunler.admin_odeme_ekle') }}"
+                class="dzg-card grid grid-cols-1 md:grid-cols-4 gap-3 p-5">
+            <input type="text" name="kod" placeholder="Kod (ORN: KREDI_KARTI)" required class="dzg-input px-3 py-2 text-sm">
+            <input type="text" name="baslik" placeholder="Başlık (Sanal POS)" required class="dzg-input px-3 py-2 text-sm">
+            <input type="text" name="aciklama" placeholder="Kısa açıklama" class="dzg-input px-3 py-2 text-sm">
+            <input type="text" name="iban_veya_detay" placeholder="IBAN / Hesap veya Ödeme Detayı" class="dzg-input px-3 py-2 text-sm">
+            <button type="submit" class="dzg-btn-primary md:col-span-4 py-2.5 text-sm">
+              + Ödeme Yöntemi Ekle
+            </button>
+          </form>
+
           {% for o in odeme_yontemleri %}
             <form method="POST" action="{{ url_for('duzgunler.admin_odeme_guncelle', odeme_id=o.id) }}"
                   class="dzg-card p-5 grid grid-cols-1 md:grid-cols-4 gap-3 items-center">
