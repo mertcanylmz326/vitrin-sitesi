@@ -402,21 +402,77 @@ def _admin_redirect(sekme="gosterge"):
 @duzgunler_bp.route("/")
 def index():
     urunler = []
+    icerik_map = {}
+    sozlesmeler = []
+    sayfalar = []
     conn = None
     cur = None
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("SELECT * FROM b2b_urunler ORDER BY id ASC LIMIT 6")
+        cur.execute("SELECT * FROM b2b_urunler ORDER BY id ASC")
         urunler = cur.fetchall()
+
+        cur.execute("SELECT * FROM b2b_icerikler ORDER BY id ASC")
+        tum_icerikler = cur.fetchall()
+        for ic in tum_icerikler:
+            icerik_map[ic["slug"]] = ic
+            if ic["bolum"] == "sozlesme":
+                sozlesmeler.append(ic)
+            elif ic["bolum"] == "sayfa":
+                sayfalar.append(ic)
     except Exception as e:
-        print("Ürün çekme hatası:", e)
+        print("Vitrin verisi çekme hatası:", e)
     finally:
         if cur:
             cur.close()
         if conn:
             conn.close()
-    return dzg_render("index.html", urunler=urunler)
+
+    return dzg_render(
+        "index.html",
+        urunler=urunler,
+        icerik_map=icerik_map,
+        sozlesmeler=sozlesmeler,
+        sayfalar=sayfalar,
+    )
+
+
+@duzgunler_bp.route("/iletisim-gonder", methods=["POST"])
+def iletisim_gonder():
+    form_turu = request.form.get("form_turu", "İletişim / Teklif Formu").strip()
+    ad_soyad = request.form.get("ad_soyad", "").strip()
+    firma = request.form.get("firma", "").strip()
+    telefon = request.form.get("telefon", "").strip()
+    email = request.form.get("email", "").strip()
+    mesaj = request.form.get("mesaj", "").strip()
+
+    if not ad_soyad or not mesaj:
+        flash("Lütfen ad soyad ve mesaj alanlarını doldurunuz.", "danger")
+        return redirect(url_for("duzgunler.index") + "#iletisim")
+
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO b2b_iletisim_formlari (form_turu, ad_soyad, firma, telefon, email, mesaj, durum)
+            VALUES (%s, %s, %s, %s, %s, %s, 'yeni')
+        """, (form_turu, ad_soyad, firma, telefon, email, mesaj))
+        conn.commit()
+        flash("Talebiniz kaydedildi. Ekibimiz en kısa sürede sizinle iletişime geçecektir.", "success")
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        flash(f"Form gönderilirken hata oluştu: {e}", "danger")
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
+    return redirect(url_for("duzgunler.index") + "#iletisim")
 
 
 @duzgunler_bp.route("/b2b-giris", methods=["POST"])
