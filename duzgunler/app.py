@@ -75,7 +75,7 @@ def init_db():
         conn = get_db_connection()
         cur = conn.cursor()
 
-        # 1. Mevcut Ana B2B Tabloları
+        # 1. Ana B2B Tabloları
         cur.execute("""
             CREATE TABLE IF NOT EXISTS b2b_bayiler (
                 id SERIAL PRIMARY KEY,
@@ -136,7 +136,20 @@ def init_db():
             );
         """)
 
-        # 2. Yeni Admin Modülleri İçin Tablolar
+        # 2. Bayi Ödemeleri Tablosu
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS b2b_odemeler (
+                id SERIAL PRIMARY KEY,
+                bayi_id INTEGER REFERENCES b2b_bayiler(id) ON DELETE CASCADE,
+                tutar NUMERIC(12,2) NOT NULL,
+                odeme_yontemi VARCHAR(80) NOT NULL,
+                aciklama TEXT,
+                durum VARCHAR(40) DEFAULT 'Onay Bekliyor',
+                olusturma_tarihi TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        # 3. Admin Modülleri İçin Tablolar
         cur.execute("""
             CREATE TABLE IF NOT EXISTS b2b_odeme_yontemleri (
                 id SERIAL PRIMARY KEY,
@@ -186,7 +199,7 @@ def init_db():
             );
         """)
 
-        # 3. Varsayılan Plasiyer & Bayi & Ürün Verileri
+        # 4. Varsayılan Plasiyer, Bayi ve Ürün Verileri
         cur.execute("SELECT id FROM b2b_plasiyerler WHERE plasiyer_kodu = %s", ("PLS-001",))
         if not cur.fetchone():
             cur.execute("""
@@ -235,7 +248,7 @@ def init_db():
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, sample_products)
 
-        # 4. Varsayılan Ödeme Yöntemleri
+        # 5. Varsayılan Ödeme Yöntemleri
         default_payments = [
             ("HAVALE_EFT", "Havale / EFT", "Banka transferi ile sipariş onayı.", "TR00 0000 0000 0000 0000 0000 00 — Düzgünler Elektrik", True, 1),
             ("CARI_VADE", "Vadeli Cari / B2B Mutabakat", "Anlaşmalı bayilere tanımlı vade ve iskonto üzerinden.", "Onaylı bayilik hesabına işlenir.", True, 2),
@@ -248,7 +261,7 @@ def init_db():
                 ON CONFLICT (kod) DO NOTHING
             """, (kod, baslik, aciklama, detay, aktif, sira))
 
-        # 5. Varsayılan İçerikler (Hakkımızda, İletişim, Sayfalar, Sözleşmeler)
+        # 6. Varsayılan İçerikler
         default_contents = [
             ("hakkimizda", "hakkimizda", "Hakkımızda", "Düzgünler Elektrik; anahtar-priz, LED aydınlatma, şalt-pano, kablo grupları ve endüstriyel elektrik ürünlerinde bayi ve saha satış ağına hizmet verir."),
             ("iletisim", "iletisim-bilgileri", "İletişim Bilgileri", "Merkez: İstanbul | E-posta: info@duzgunlerelektrik.com | Telefon: 0216 000 00 00"),
@@ -475,15 +488,114 @@ def b2b_kayit():
 @duzgunler_bp.route("/b2b-panel")
 @login_required(role="bayi")
 def b2b_panel():
+    sekme = request.args.get("sekme", "ozet").strip()
+    bayi_id = session["dzg_user_id"]
+
     conn = get_db_connection()
     cur = conn.cursor()
+
+    cur.execute("SELECT * FROM b2b_bayiler WHERE id = %s", (bayi_id,))
+    bayi = cur.fetchone() or {}
+
     cur.execute("SELECT * FROM b2b_urunler ORDER BY kategori, id ASC")
     urunler = cur.fetchall()
-    cur.execute("SELECT * FROM b2b_siparisler WHERE bayi_id = %s ORDER BY olusturma_tarihi DESC", (session["dzg_user_id"],))
+
+    cur.execute("SELECT * FROM b2b_siparisler WHERE bayi_id = %s ORDER BY olusturma_tarihi DESC", (bayi_id,))
     siparisler = cur.fetchall()
+
+    cur.execute("SELECT * FROM b2b_odemeler WHERE bayi_id = %s ORDER BY olusturma_tarihi DESC", (bayi_id,))
+    odemeler = cur.fetchall()
+
+    cur.execute("SELECT * FROM b2b_odeme_yontemleri WHERE aktif = TRUE ORDER BY sira_no ASC, id ASC")
+    odeme_yontemleri = cur.fetchall()
+
     cur.close()
     conn.close()
-    return dzg_render("b2b_panel.html", urunler=urunler, siparisler=siparisler)
+
+    toplam_siparis = sum(float(s["toplam_tutar"] or 0) for s in siparisler if s["durum"] != "İptal")
+    toplam_odenen = sum(float(o["tutar"] or 0) for o in odemeler if o["durum"] != "İptal")
+    acik_bakiye = toplam_siparis - toplam_odenen
+
+    ekstre_hareketleri = []
+    for s in siparisler:
+        if s["durum"] != "İptal":
+            ekstre_hareketleri.append({
+                "tarih": s["olusturma_tarihi"],
+                "tur": "Sipariş",
+                "aciklama": f"Sipariş No: {s['siparis_no']} ({s['durum']})",
+                "borc": float(s["toplam_tutar"] or 0),
+                "alacak": 0.0,
+            })
+    for o in odemeler:
+        if o["durum"] != "İptal":
+            ekstre_hareketleri.append({
+                "tarih": o["olusturma_tarihi"],
+                "tur": "Ödeme",
+                "aciklama": f"{o['odeme_yontemi']} - {o['aciklama'] or 'Ödeme Bildirimi'} ({o['durum']})",
+                "borc": 0.0,
+                "alacak": float(o["tutar"] or 0),
+            })
+    ekstre_hareketleri.sort(key=lambda x: str(x["tarih"] or ""))
+
+    bakiye_kosu = 0.0
+    for h in ekstre_hareketleri:
+        bakiye_kosu += (h["borc"] - h["alacak"])
+        h["bakiye"] = bakiye_kosu
+    ekstre_hareketleri.reverse()
+
+    return dzg_render(
+        "b2b_panel.html",
+        sekme=sekme,
+        bayi=bayi,
+        urunler=urunler,
+        siparisler=siparisler,
+        odemeler=odemeler,
+        odeme_yontemleri=odeme_yontemleri,
+        ekstre_hareketleri=ekstre_hareketleri,
+        toplam_siparis=toplam_siparis,
+        toplam_odenen=toplam_odenen,
+        acik_bakiye=acik_bakiye,
+    )
+
+
+@duzgunler_bp.route("/b2b-panel/odeme-yap", methods=["POST"])
+@login_required(role="bayi")
+def b2b_odeme_yap():
+    tutar_raw = request.form.get("tutar", "0").strip().replace(",", ".")
+    odeme_yontemi = request.form.get("odeme_yontemi", "Havale / EFT").strip()
+    aciklama = request.form.get("aciklama", "").strip()
+
+    try:
+        tutar = float(tutar_raw)
+    except ValueError:
+        tutar = 0.0
+
+    if tutar <= 0:
+        flash("Lütfen geçerli bir ödeme tutarı giriniz.", "danger")
+        return redirect(url_for("duzgunler.b2b_panel", sekme="odeme-yap"))
+
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO b2b_odemeler (bayi_id, tutar, odeme_yontemi, aciklama, durum)
+            VALUES (%s, %s, %s, %s, 'Onay Bekliyor')
+        """, (session["dzg_user_id"], tutar, odeme_yontemi, aciklama))
+        conn.commit()
+        flash(f"{tutar:.2f} ₺ tutarındaki ödeme bildiriminiz kaydedildi.", "success")
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        flash(f"Ödeme kaydı sırasında hata oluştu: {e}", "danger")
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
+    return redirect(url_for("duzgunler.b2b_panel", sekme="gecmis-odemelerim"))
 
 
 @duzgunler_bp.route("/plasiyer-panel")
@@ -595,7 +707,6 @@ def admin_login():
         u_raw = request.form.get("username", "").strip()
         p_raw = request.form.get("password", "").strip()
 
-        # 1) Env üzerinden tanımlı yönetici kontrolü
         if DZG_ADMIN_ENABLED:
             ok_u = hmac.compare_digest(u_raw.encode("utf-8"), DZG_ADMIN_USER.encode("utf-8"))
             ok_p = hmac.compare_digest(p_raw.encode("utf-8"), DZG_ADMIN_PASS.encode("utf-8"))
@@ -604,7 +715,6 @@ def admin_login():
                 session["dzg_admin_name"] = u_raw
                 return redirect(url_for("duzgunler.admin_panel"))
 
-        # 2) Veritabanındaki b2b_yoneticiler tablosundan kontrol
         conn = None
         cur = None
         try:
@@ -701,7 +811,6 @@ def admin_panel():
     )
 
 
-# --- Müşteriler & Bayilik Başvuruları ---
 @duzgunler_bp.route("/admin/bayi/<int:bayi_id>/guncelle", methods=["POST"])
 @dzg_admin_required
 def admin_bayi_guncelle(bayi_id):
@@ -762,7 +871,6 @@ def admin_bayi_sil(bayi_id):
     return _admin_redirect(sekme)
 
 
-# --- Katalog ---
 @duzgunler_bp.route("/admin/urun/ekle", methods=["POST"])
 @dzg_admin_required
 def admin_urun_ekle():
@@ -854,7 +962,6 @@ def admin_urun_sil(urun_id):
     return _admin_redirect("katalog")
 
 
-# --- Siparişler ---
 @duzgunler_bp.route("/admin/siparis/<int:siparis_id>/durum", methods=["POST"])
 @dzg_admin_required
 def admin_siparis_durum(siparis_id):
@@ -879,7 +986,6 @@ def admin_siparis_durum(siparis_id):
     return _admin_redirect("siparisler")
 
 
-# --- Ödeme Yöntemleri ---
 @duzgunler_bp.route("/admin/odeme/ekle", methods=["POST"])
 @dzg_admin_required
 def admin_odeme_ekle():
@@ -945,7 +1051,6 @@ def admin_odeme_guncelle(odeme_id):
     return _admin_redirect("odemeler")
 
 
-# --- İçerik Yönetimi / Sayfalar / Sözleşmeler / İletişim / Hakkımızda ---
 @duzgunler_bp.route("/admin/icerik/kaydet", methods=["POST"])
 @dzg_admin_required
 def admin_icerik_kaydet():
@@ -987,7 +1092,6 @@ def admin_icerik_kaydet():
     return _admin_redirect(sekme)
 
 
-# --- Formlar & İletişim Formları ---
 @duzgunler_bp.route("/admin/form/ekle", methods=["POST"])
 @dzg_admin_required
 def admin_form_ekle():
@@ -1051,7 +1155,6 @@ def admin_form_durum(form_id):
     return _admin_redirect(sekme)
 
 
-# --- Satış Temsilcileri & Yöneticiler ---
 @duzgunler_bp.route("/admin/plasiyer/ekle", methods=["POST"])
 @dzg_admin_required
 def admin_plasiyer_ekle():
@@ -1170,7 +1273,6 @@ def admin_yonetici_durum(yonetici_id):
     return _admin_redirect("yoneticiler")
 
 
-# --- Yönetici Araçları ---
 @duzgunler_bp.route("/admin/araclar/db-yenile", methods=["POST"])
 @dzg_admin_required
 def admin_araclar_db_yenile():
