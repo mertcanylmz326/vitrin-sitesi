@@ -122,6 +122,26 @@ def hesapla_cari_ozet(siparisler, odemeler):
     }
 
 
+def siparislere_kalem_ekle(cur, siparisler):
+    if not siparisler:
+        return siparisler
+    ids = [s["id"] for s in siparisler]
+    cur.execute("""
+        SELECT k.*, u.birim
+        FROM b2b_siparis_kalemleri k
+        LEFT JOIN b2b_urunler u ON k.urun_id = u.id
+        WHERE k.siparis_id = ANY(%s)
+        ORDER BY k.id ASC
+    """, (ids,))
+    tum_kalemler = cur.fetchall()
+    kalem_map = {}
+    for k in tum_kalemler:
+        kalem_map.setdefault(k["siparis_id"], []).append(k)
+    for s in siparisler:
+        s["kalemler"] = kalem_map.get(s["id"], [])
+    return siparisler
+
+
 def init_db():
     """Supabase PostgreSQL üzerinde Düzgünler Elektrik B2B tablolarını ve varsayılan verileri oluşturur."""
     conn = None
@@ -187,6 +207,19 @@ def init_db():
                 durum VARCHAR(50) DEFAULT 'Onay Bekliyor',
                 notlar TEXT,
                 olusturma_tarihi TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS b2b_siparis_kalemleri (
+                id SERIAL PRIMARY KEY,
+                siparis_id INTEGER REFERENCES b2b_siparisler(id) ON DELETE CASCADE,
+                urun_id INTEGER REFERENCES b2b_urunler(id) ON DELETE SET NULL,
+                stok_kodu VARCHAR(60) NOT NULL,
+                urun_adi VARCHAR(255) NOT NULL,
+                adet INTEGER NOT NULL,
+                birim_fiyat NUMERIC(12,2) NOT NULL,
+                satir_tutari NUMERIC(12,2) NOT NULL
             );
         """)
 
@@ -550,7 +583,7 @@ def b2b_panel():
     urunler = cur.fetchall()
 
     cur.execute("SELECT * FROM b2b_siparisler WHERE bayi_id = %s ORDER BY olusturma_tarihi DESC", (bayi_id,))
-    siparisler = cur.fetchall()
+    siparisler = siparislere_kalem_ekle(cur, cur.fetchall())
 
     cur.execute("SELECT * FROM b2b_odemeler WHERE bayi_id = %s ORDER BY olusturma_tarihi DESC", (bayi_id,))
     odemeler = cur.fetchall()
@@ -634,7 +667,7 @@ def plasiyer_panel():
         LEFT JOIN b2b_bayiler b ON s.bayi_id = b.id
         ORDER BY s.olusturma_tarihi DESC
     """)
-    siparisler = cur.fetchall()
+    siparisler = siparislere_kalem_ekle(cur, cur.fetchall())
     cur.close()
     conn.close()
     return dzg_render("plasiyer_panel.html", bayiler=bayiler, urunler=urunler, siparisler=siparisler)
@@ -644,13 +677,13 @@ def plasiyer_panel():
 @login_required()
 def siparis_ver():
     data = request.get_json(silent=True) or {}
-    toplam_tutar = data.get("toplam_tutar", 0)
-    notlar = data.get("notlar", "")
+    notlar = (data.get("notlar") or "").strip()
+    kalemler_raw = data.get("kalemler") or []
     bayi_id = session["dzg_user_id"] if session.get("dzg_role") == "bayi" else data.get("bayi_id")
     plasiyer_id = session["dzg_user_id"] if session.get("dzg_role") == "plasiyer" else None
 
-    if not bayi_id or float(toplam_tutar) <= 0:
-        return jsonify({"ok": False, "mesaj": "Geçerli bir bayi ve sepet tutarı gereklidir."}), 400
+    if not bayi_id:
+        return jsonify({"ok": False, "mesaj": "Geçerli bir bayi seçilmelidir."}), 400
 
     siparis_no = f"DZG-{random.randint(100000, 999999)}"
 
@@ -659,12 +692,89 @@ def siparis_ver():
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+
+        cur.execute("SELECT iskonto_orani FROM b2b_bayiler WHERE id = %s", (bayi_id,))
+        bayi_row = cur.fetchone()
+        if not bayi_row:
+            return jsonify({"ok": False, "mesaj": "Bayi kaydı bulunamadı."}), 404
+
+        iskonto = float(bayi_row["iskonto_orani"] or 0)
+        carpan = (100.0 - iskonto) / 100.0
+
+        hazir_kalemler = []
+        toplam_tutar = 0.0
+
+        if isinstance(kalemler_raw, list) and len(kalemler_raw) > 0:
+            for item in kalemler_raw:
+                urun_id = item.get("urun_id")
+                adet = int(item.get("adet") or 0)
+                if adet <= 0:
+                    continue
+
+                if urun_id:
+                    cur.execute("SELECT * FROM b2b_urunler WHERE id = %s FOR UPDATE", (urun_id,))
+                    urun = cur.fetchone()
+                    if not urun:
+                        conn.rollback()
+                        return jsonify({"ok": False, "mesaj": f"Ürün bulunamadı (ID: {urun_id})."}), 400
+                    mevcut_stok = int(urun["stok_adedi"] or 0)
+                    if mevcut_stok < adet:
+                        conn.rollback()
+                        return jsonify({
+                            "ok": False,
+                            "mesaj": f"{urun['urun_adi']} için yeterli stok yok (Stok: {mevcut_stok})."
+                        }), 400
+
+                    cur.execute(
+                        "UPDATE b2b_urunler SET stok_adedi = stok_adedi - %s WHERE id = %s",
+                        (adet, urun["id"])
+                    )
+                    birim_fiyat = round(float(urun["liste_fiyati"] or 0) * carpan, 2)
+                    satir_tutari = round(birim_fiyat * adet, 2)
+                    toplam_tutar = round(toplam_tutar + satir_tutari, 2)
+                    hazir_kalemler.append({
+                        "urun_id": urun["id"],
+                        "stok_kodu": urun["stok_kodu"],
+                        "urun_adi": urun["urun_adi"],
+                        "adet": adet,
+                        "birim_fiyat": birim_fiyat,
+                        "satir_tutari": satir_tutari,
+                    })
+
+        if not hazir_kalemler:
+            toplam_tutar = round(float(data.get("toplam_tutar") or 0), 2)
+            if toplam_tutar <= 0:
+                conn.rollback()
+                return jsonify({"ok": False, "mesaj": "Geçerli bir sepet tutarı veya ürün kalemi gereklidir."}), 400
+
         cur.execute("""
             INSERT INTO b2b_siparisler (siparis_no, bayi_id, plasiyer_id, toplam_tutar, durum, notlar)
             VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING id
         """, (siparis_no, bayi_id, plasiyer_id, toplam_tutar, "Onaylandı - Hazırlanıyor", notlar))
+        siparis_id = cur.fetchone()["id"]
+
+        for k in hazir_kalemler:
+            cur.execute("""
+                INSERT INTO b2b_siparis_kalemleri
+                (siparis_id, urun_id, stok_kodu, urun_adi, adet, birim_fiyat, satir_tutari)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """, (
+                siparis_id,
+                k["urun_id"],
+                k["stok_kodu"],
+                k["urun_adi"],
+                k["adet"],
+                k["birim_fiyat"],
+                k["satir_tutari"],
+            ))
+
         conn.commit()
-        return jsonify({"ok": True, "siparis_no": siparis_no, "mesaj": f"{siparis_no} numaralı siparişiniz oluşturuldu."})
+        return jsonify({
+            "ok": True,
+            "siparis_no": siparis_no,
+            "mesaj": f"{siparis_no} numaralı siparişiniz oluşturuldu ({toplam_tutar:.2f} ₺)."
+        })
     except Exception as e:
         if conn:
             conn.rollback()
@@ -793,7 +903,7 @@ def admin_panel():
         LEFT JOIN b2b_plasiyerler p ON s.plasiyer_id = p.id
         ORDER BY s.olusturma_tarihi DESC
     """)
-    siparisler = cur.fetchall()
+    siparisler = siparislere_kalem_ekle(cur, cur.fetchall())
 
     cur.execute("""
         SELECT o.*, b.firma_unvani, b.vergi_no
