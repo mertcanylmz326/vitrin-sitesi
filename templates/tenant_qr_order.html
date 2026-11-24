@@ -60,12 +60,15 @@
     {% if sent %}
     <div class="ok">{{ sent_msg }}</div>
     {% endif %}
+    {% if err_msg %}
+    <div class="ok" style="background:rgba(239,68,68,0.14);border-color:rgba(239,68,68,0.4);color:#fca5a5;">{{ err_msg }}</div>
+    {% endif %}
 
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
         <div>
           <span style="font-size:0.74rem;color:#9ca3af;font-weight:700;">OTURDUĞUNUZ MASA</span>
-          <div style="font-size:1.2rem;font-weight:900;color:#34d399;">
+          <div id="activeMasaLabel" style="font-size:1.2rem;font-weight:900;color:#34d399;">
             {{ preselected_masa if preselected_masa else 'Masa 1' }}
           </div>
         </div>
@@ -160,6 +163,8 @@
 
     function syncMasaInputs(val) {
       document.querySelectorAll('.masa-hidden-input').forEach(el => el.value = val);
+      const lbl = document.getElementById('activeMasaLabel');
+      if (lbl) lbl.textContent = val;
     }
 
     function changeQty(id, delta) {
@@ -215,6 +220,22 @@
         document.getElementById('qrOrderForm').submit();
       }
     }
+
+    // Cift dokunusla ayni islemin iki kez gonderilmesini engelle
+    document.querySelectorAll('form').forEach(f => {
+      f.addEventListener('submit', () => {
+        if (f.dataset.sending === '1') return;
+        f.dataset.sending = '1';
+        setTimeout(() => f.querySelectorAll('button[type=submit]').forEach(b => { b.disabled = true; }), 0);
+      });
+    });
+    // Geri tusuyla donuldugunda butonlar kilitli kalmasin
+    window.addEventListener('pageshow', () => {
+      document.querySelectorAll('form').forEach(f => {
+        f.dataset.sending = '0';
+        f.querySelectorAll('button[type=submit]').forEach(b => { b.disabled = false; });
+      });
+    });
   </script>
 </body>
 </html>

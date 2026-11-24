@@ -168,8 +168,48 @@
       <button type="button" class="tab-btn {% if start_tab == 'pane-settings' %}active{% endif %}" onclick="switchTab('pane-settings', this)">Ayarlar</button>
     </div>
 
+    <div id="newTicketBanner" class="alert-ok" style="display:none;cursor:pointer;" onclick="reloadKeepTab()">🔔 Yeni talep/sipariş geldi — görmek için buraya dokunun.</div>
+
     <!-- TALEPLER -->
     <div id="pane-tickets" class="tab-pane {% if not start_tab or start_tab == 'pane-tickets' %}active{% endif %}">
+      {% if reservations and tenant.module_type in ['kafe-randevu', 'berber-randevu'] %}
+      <div class="panel-card">
+        <h3 style="margin-bottom:10px;font-size:1.05rem;">📅 Randevu / Rezervasyon Takvimi <span class="muted">(dünden itibaren)</span></h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Tarih</th><th>Saat</th>{% if tenant.module_type == 'kafe-randevu' %}<th>Masa</th><th>Kişi</th>{% endif %}<th>Müşteri</th><th>Durum</th><th>İşlem</th></tr>
+            </thead>
+            <tbody>
+              {% set res_labels = {'pending': 'Beklemede', 'confirmed': 'Onaylı', 'checked_in': 'Geldi', 'no_show': 'Gelmedi', 'cancelled': 'İptal'} %}
+              {% for rv in reservations %}
+              <tr>
+                <td style="white-space:nowrap;">{{ rv.res_date }}</td>
+                <td><strong>{{ rv.slot }}</strong></td>
+                {% if tenant.module_type == 'kafe-randevu' %}
+                <td>{% if rv.table_no %}Masa {{ rv.table_no }}{% else %}-{% endif %}</td>
+                <td>{{ rv.party_size }}</td>
+                {% endif %}
+                <td>{{ rv.cust_name or '-' }}{% if rv.cust_phone %}<div class="muted">{{ rv.cust_phone }}</div>{% endif %}</td>
+                <td><span class="badge-st {% if rv.res_status in ['checked_in', 'confirmed'] %}done{% endif %}">{{ res_labels.get(rv.res_status, rv.res_status) }}</span></td>
+                <td>
+                  <div style="display:flex;gap:5px;flex-wrap:wrap;">
+                    {% if rv.res_status in ['pending', 'confirmed'] %}
+                    <button type="button" class="btn-secondary" style="padding:4px 8px;font-size:0.76rem;" onclick="setResStatus({{ rv.id }}, 'checked_in')">Geldi</button>
+                    <button type="button" class="btn-secondary" style="padding:4px 8px;font-size:0.76rem;" onclick="setResStatus({{ rv.id }}, 'no_show')">Gelmedi</button>
+                    <button type="button" class="btn-danger" style="padding:4px 8px;font-size:0.76rem;" onclick="if(confirm('Randevu iptal edilsin mi?')) setResStatus({{ rv.id }}, 'cancelled')">İptal</button>
+                    {% else %}
+                    <button type="button" class="btn-secondary" style="padding:4px 8px;font-size:0.76rem;" onclick="setResStatus({{ rv.id }}, 'confirmed')">Geri Al</button>
+                    {% endif %}
+                  </div>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {% endif %}
       <div class="panel-card">
         <h3 style="margin-bottom:10px;font-size:1.05rem;">Gelen Talepler &amp; Randevular</h3>
         <div class="table-wrap">
@@ -266,7 +306,17 @@
                 {% if item.price %}<span class="chip">{{ item.price }}</span>{% endif %}
               </div>
               {% if item.description %}<div class="muted">{{ item.description }}</div>{% endif %}
-              <form method="POST" action="{{ url_for('tenant_delete_menu_item', slug=tenant.slug, item_id=item.id) }}" style="margin:0;">
+              <details>
+                <summary class="muted" style="cursor:pointer;">Düzenle</summary>
+                <form method="POST" action="{{ url_for('tenant_edit_menu_item', slug=tenant.slug, item_id=item.id) }}" enctype="multipart/form-data" style="display:grid;gap:6px;margin-top:8px;">
+                  <input type="text" name="name" value="{{ item.name }}" required />
+                  <input type="text" name="price" value="{{ item.price }}" placeholder="Fiyat" />
+                  <input type="text" name="description" value="{{ item.description }}" placeholder="Açıklama" />
+                  <input type="file" name="image" accept=".jpg,.jpeg,.png,.webp" />
+                  <button type="submit" class="btn-secondary" style="width:100%;padding:6px;">Kaydet</button>
+                </form>
+              </details>
+              <form method="POST" action="{{ url_for('tenant_delete_menu_item', slug=tenant.slug, item_id=item.id) }}" style="margin:0;" onsubmit="return confirm('Ürün menüden kaldırılsın mı?');">
                 <button type="submit" class="btn-danger" style="width:100%;padding:6px;">Kaldır</button>
               </form>
             </div>
@@ -332,7 +382,7 @@
                 </td>
                 <td>{{ ag.updated_str }}</td>
                 <td>
-                  <form method="POST" action="{{ url_for('panel_saha_delete', slug=tenant.slug, agent_id=ag.id) }}" style="margin:0;">
+                  <form method="POST" action="{{ url_for('panel_saha_delete', slug=tenant.slug, agent_id=ag.id) }}" style="margin:0;" onsubmit="return confirm('Saha elemanı kaydı silinsin mi?');">
                     <button type="submit" class="btn-danger" style="padding:5px 8px;font-size:0.78rem;">Sil</button>
                   </form>
                 </td>
@@ -355,7 +405,8 @@
           <h3 style="font-size:1.05rem;">Bot, Telegram &amp; Webhook Ayarları</h3>
           <div>
             <label for="tg_bot_token">Telegram Bot Token</label>
-            <input id="tg_bot_token" type="password" name="tg_bot_token" placeholder="Değiştirmek için girin (kayıtlıysa boş bırakılabilir)" />
+            <input id="tg_bot_token" type="password" name="tg_bot_token" autocomplete="new-password" placeholder="Değiştirmek için girin (kayıtlıysa boş bırakılabilir)" />
+            {% if bot_cfg.tg_bot_token %}<div class="muted" style="margin-top:4px;">✔ Token kayıtlı <label style="display:inline;margin-left:8px;"><input type="checkbox" name="clear_tg_bot_token" style="width:auto;" /> sil</label></div>{% endif %}
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
             <div>
@@ -364,7 +415,7 @@
             </div>
             <div>
               <label for="report_hour">Günlük Rapor Saati</label>
-              <input id="report_hour" type="text" name="report_hour" value="{{ bot_cfg.report_hour or '21:00' }}" />
+              <input id="report_hour" type="time" name="report_hour" value="{{ bot_cfg.report_hour or '21:00' }}" />
             </div>
           </div>
           <div>
@@ -379,6 +430,26 @@
             <input type="checkbox" name="tg_notify_enabled" style="width:auto;" {% if bot_cfg.tg_notify_enabled %}checked{% endif %} />
             <span>Yeni taleplerde Telegram bildirimi gönder</span>
           </label>
+          <div style="border-top:1px solid rgba(156,163,175,0.18);padding-top:10px;display:grid;gap:10px;">
+            <strong style="font-size:0.9rem;">WhatsApp Cloud / Business API</strong>
+            <div>
+              <label for="wa_api_url">API URL</label>
+              <input id="wa_api_url" type="url" name="wa_api_url" value="{{ bot_cfg.wa_api_url or '' }}" placeholder="https://graph.facebook.com/v19.0/NUMARA_ID/messages" />
+            </div>
+            <div>
+              <label for="wa_api_token">Erişim Token</label>
+              <input id="wa_api_token" type="password" name="wa_api_token" autocomplete="new-password" placeholder="Değiştirmek için girin (kayıtlıysa boş bırakılabilir)" />
+              {% if bot_cfg.wa_api_token %}<div class="muted" style="margin-top:4px;">✔ Token kayıtlı <label style="display:inline;margin-left:8px;"><input type="checkbox" name="clear_wa_api_token" style="width:auto;" /> sil</label></div>{% endif %}
+            </div>
+            <div>
+              <label for="wa_template_name">Şablon Adı (opsiyonel)</label>
+              <input id="wa_template_name" type="text" name="wa_template_name" value="{{ bot_cfg.wa_template_name or '' }}" placeholder="Boşsa düz metin gönderilir" />
+            </div>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+              <input type="checkbox" name="wa_auto_reply" style="width:auto;" {% if bot_cfg.wa_auto_reply %}checked{% endif %} />
+              <span>Yeni talepte müşteriye otomatik WhatsApp karşılama mesajı gönder</span>
+            </label>
+          </div>
           <button type="submit" class="btn-primary">Entegrasyonları Kaydet</button>
         </form>
 
@@ -397,6 +468,8 @@
             <div class="muted">Henüz log kaydı yok.</div>
             {% endfor %}
           </div>
+          <h3 style="font-size:0.98rem;margin-top:6px;">Webhook Gönderim Geçmişi</h3>
+          <div id="webhookLogs" class="muted" style="font-size:0.8rem;">Yükleniyor...</div>
         </div>
       </div>
     </div>
@@ -447,6 +520,10 @@
               <input id="p_stock" type="number" name="stock" value="0" required />
             </div>
           </div>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:0;">
+            <input type="checkbox" name="add_stock" style="width:auto;" />
+            <span>Girilen adedi mevcut stoğa <strong>ekle</strong> (işaretsizse stok bu değerle değiştirilir)</span>
+          </label>
           <button type="submit" class="btn-secondary">Ürünü Kaydet</button>
         </form>
       </div>
@@ -464,16 +541,45 @@
                 <td><code>{{ p.barcode }}</code></td>
                 <td><strong>{{ p.name }}</strong></td>
                 <td>{{ "%.2f"|format(p.price_num) }} TL</td>
-                <td>{{ p.stock }}</td>
+                <td>{% if p.stock <= 5 %}<span class="badge-st" style="color:#fca5a5;border-color:rgba(239,68,68,0.4);background:rgba(239,68,68,0.14);">{{ p.stock }} ⚠️ kritik</span>{% else %}{{ p.stock }}{% endif %}</td>
                 <td>{{ p.sold_today }}</td>
                 <td>
-                  <form method="POST" action="{{ url_for('tenant_pos_delete_product', slug=tenant.slug, product_id=p.id) }}" style="margin:0;">
+                  <form method="POST" action="{{ url_for('tenant_pos_delete_product', slug=tenant.slug, product_id=p.id) }}" style="margin:0;" onsubmit="return confirm('Ürün silinsin mi?');">
                     <button type="submit" class="btn-danger" style="padding:4px 8px;font-size:0.76rem;">Sil</button>
                   </form>
                 </td>
               </tr>
               {% else %}
               <tr><td colspan="6" class="muted" style="text-align:center;padding:18px;">Henüz ürün eklenmemiş.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel-card">
+        <h3 style="margin-bottom:10px;font-size:1.05rem;">Son Satışlar</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Zaman</th><th>Ürün</th><th>Adet</th><th>Tutar</th><th>Durum</th><th>İşlem</th></tr></thead>
+            <tbody>
+              {% for sl in pos_sales %}
+              <tr {% if sl.voided %}style="opacity:0.55;text-decoration:line-through;"{% endif %}>
+                <td style="white-space:nowrap;">{{ sl.time_str }}</td>
+                <td>{{ sl.name }}</td>
+                <td>{{ sl.qty }}</td>
+                <td>{{ "%.2f"|format(sl.total) }} TL</td>
+                <td>{% if sl.voided %}İptal{% else %}Satıldı{% endif %}</td>
+                <td>
+                  {% if not sl.voided %}
+                  <form method="POST" action="{{ url_for('tenant_pos_void_sale', slug=tenant.slug, sale_id=sl.id) }}" style="margin:0;" onsubmit="return confirm('Satış iptal edilsin ve stok iade edilsin mi?');">
+                    <button type="submit" class="btn-danger" style="padding:4px 8px;font-size:0.76rem;">İptal Et</button>
+                  </form>
+                  {% else %}-{% endif %}
+                </td>
+              </tr>
+              {% else %}
+              <tr><td colspan="6" class="muted" style="text-align:center;padding:18px;">Henüz satış yok.</td></tr>
               {% endfor %}
             </tbody>
           </table>
@@ -592,12 +698,68 @@
   </div>
 
   <script>
+    const SLUG = {{ tenant.slug | tojson }};
+    const CSRF = {{ csrf_token() | tojson }};
+    let currentPane = (document.querySelector(".tab-pane.active") || {}).id || "pane-tickets";
+
+    function esc(v) {
+      return String(v == null ? "" : v).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+    }
+
     function switchTab(paneId, btn) {
       document.querySelectorAll(".tab-pane").forEach(p => p.classList.remove("active"));
       document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
       const pane = document.getElementById(paneId);
       if (pane) pane.classList.add("active");
       if (btn) btn.classList.add("active");
+      currentPane = paneId;
+      if (paneId === "pane-bots") loadWebhookLogs();
+    }
+
+    function reloadKeepTab() {
+      const u = new URL(window.location.href);
+      u.searchParams.set("tab", currentPane);
+      u.searchParams.delete("bot_saved");
+      window.location.href = u.toString();
+    }
+
+    function apiHeaders() {
+      return { "Content-Type": "application/json", "X-CSRF-Token": CSRF };
+    }
+
+    async function setResStatus(id, status) {
+      try {
+        const res = await fetch(`/api/tenant/${SLUG}/reservations/${id}/status`, {
+          method: "POST", headers: apiHeaders(), body: JSON.stringify({ status })
+        });
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok || !d.ok) { alert(d.error || "İşlem yapılamadı."); return; }
+        reloadKeepTab();
+      } catch (e) { alert("Bağlantı hatası, tekrar deneyin."); }
+    }
+
+    async function loadWebhookLogs() {
+      const box = document.getElementById("webhookLogs");
+      if (!box) return;
+      try {
+        const res = await fetch(`/api/tenant/${SLUG}/webhooks/logs?limit=10`);
+        const d = await res.json();
+        if (!d.logs || !d.logs.length) { box.textContent = "Henüz webhook gönderimi yok."; return; }
+        box.innerHTML = d.logs.map(l => `
+          <div style="padding:7px 9px;margin-bottom:5px;border-radius:8px;background:rgba(8,13,11,0.7);border:1px solid rgba(16,185,129,0.14);display:flex;justify-content:space-between;gap:8px;align-items:center;">
+            <span>${l.success ? "✔" : "✖"} ${esc(l.event_name)} → HTTP ${esc(l.status_code)} <span class="muted">(${esc(l.attempt_count)}. deneme)</span></span>
+            ${l.success ? "" : `<button type="button" class="btn-secondary" style="padding:3px 8px;font-size:0.74rem;" onclick="retryWebhook(${Number(l.id)})">Tekrar Dene</button>`}
+          </div>`).join("");
+      } catch (e) { box.textContent = "Geçmiş yüklenemedi."; }
+    }
+
+    async function retryWebhook(id) {
+      try {
+        const res = await fetch(`/api/tenant/${SLUG}/webhooks/logs/${id}/retry`, { method: "POST", headers: apiHeaders(), body: "{}" });
+        const d = await res.json().catch(() => ({}));
+        alert(d.ok ? ((d.sent_ok ? "Gönderildi: " : "Başarısız: ") + (d.info || "")) : (d.error || "Hata"));
+        loadWebhookLogs();
+      } catch (e) { alert("Bağlantı hatası."); }
     }
 
     async function refreshSaha() {
@@ -612,23 +774,32 @@
           tbody.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;padding:20px;">Saha bağlantısından henüz ping gelmedi.</td></tr>';
           return;
         }
-        tbody.innerHTML = agents.map(ag => `
+        tbody.innerHTML = agents.map(ag => {
+          const hasLoc = ag.latitude && ag.longitude;
+          const mapUrl = hasLoc ? "https://maps.google.com/?q=" + encodeURIComponent(ag.latitude) + "," + encodeURIComponent(ag.longitude) : "";
+          return `
           <tr>
-            <td><strong>${ag.agent_name}</strong></td>
-            <td><span class="badge-st ${ag.online ? 'done' : ''}">${ag.status_text || (ag.online ? 'Aktif' : 'Çevrimdışı')}</span></td>
-            <td>${ag.active_package || '-'}${ag.target_customer ? ' / ' + ag.target_customer : ''}</td>
-            <td>${ag.battery_level >= 0 ? ag.battery_level + '%' + (ag.is_charging ? ' ⚡' : '') : '-'}</td>
-            <td>${(ag.latitude && ag.longitude) ? '<a href="https://maps.google.com/?q=' + ag.latitude + ',' + ag.longitude + '" target="_blank" style="color:#34d399;">Harita</a>' : '-'}</td>
-            <td>${ag.updated_str}</td>
+            <td><strong>${esc(ag.agent_name)}</strong></td>
+            <td><span class="badge-st ${ag.online ? 'done' : ''}">${esc(ag.status_text || (ag.online ? 'Aktif' : 'Çevrimdışı'))}</span></td>
+            <td>${esc(ag.active_package || '-')}${ag.target_customer ? ' / ' + esc(ag.target_customer) : ''}</td>
+            <td>${ag.battery_level >= 0 ? esc(ag.battery_level) + '%' + (ag.is_charging ? ' ⚡' : '') : '-'}</td>
+            <td>${hasLoc ? '<a href="' + mapUrl + '" target="_blank" rel="noopener" style="color:#34d399;">Harita</a>' : '-'}</td>
+            <td>${esc(ag.updated_str)}</td>
             <td>
-              <form method="POST" action="/i/{{ tenant.slug }}/panel/saha/${ag.id}/delete" style="margin:0;">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+              <form method="POST" action="/i/${encodeURIComponent(SLUG)}/panel/saha/${Number(ag.id)}/delete" style="margin:0;" onsubmit="return confirm('Saha elemanı kaydı silinsin mi?');">
+                <input type="hidden" name="csrf_token" value="${esc(CSRF)}" />
                 <button type="submit" class="btn-danger" style="padding:5px 8px;font-size:0.78rem;">Sil</button>
               </form>
             </td>
-          </tr>
-        `).join("");
+          </tr>`;
+        }).join("");
       } catch (_) {}
+    }
+
+    window.__lastTicketId = {{ latest_id | tojson }};
+    function userIsTyping() {
+      const a = document.activeElement;
+      return a && ["INPUT", "TEXTAREA", "SELECT"].includes(a.tagName) && a.type !== "button" && a.type !== "submit";
     }
 
     setInterval(() => {
@@ -636,16 +807,22 @@
         .then(r => r.ok ? r.json() : null)
         .then(d => {
           if (!d) return;
-          if (window.__lastTicketId && d.latest_id && d.latest_id !== window.__lastTicketId) {
-            location.reload();
+          if (d.latest_id && d.latest_id !== window.__lastTicketId) {
+            window.__lastTicketId = d.latest_id;
+            if (userIsTyping()) {
+              document.getElementById("newTicketBanner").style.display = "block";
+            } else {
+              reloadKeepTab();
+            }
           }
-          window.__lastTicketId = d.latest_id || "";
         })
         .catch(() => {});
       if (document.getElementById("sahaTableBody") && document.getElementById("pane-saha")?.classList.contains("active")) {
         refreshSaha();
       }
     }, 8000);
+
+    if (currentPane === "pane-bots") loadWebhookLogs();
   </script>
 </body>
 </html>

@@ -21,16 +21,21 @@
     .btn { padding:11px 10px; border-radius:10px; border:none; font-weight:800; font-size:0.84rem; cursor:pointer; width:100%; text-align:center; text-decoration:none; display:inline-block; }
     .btn-prep { background:rgba(245,158,11,0.2); border:1px solid rgba(245,158,11,0.45); color:#fcd34d; }
     .btn-done { background:linear-gradient(135deg,#34d399,#10b981); color:#04130d; }
+    .kind-pill { padding:3px 9px; border-radius:999px; font-size:0.74rem; font-weight:900; }
+    .kind-garson { background:rgba(59,130,246,0.2); color:#93c5fd; }
+    .kind-hesap { background:rgba(168,85,247,0.2); color:#d8b4fe; }
+    .kind-siparis { background:rgba(16,185,129,0.18); color:#6ee7b7; }
   </style>
 </head>
 <body>
   <div class="topbar">
     <div>
       <div style="font-size:0.74rem;color:#34d399;font-weight:800;letter-spacing:0.06em;">CANLI MUTFAK EKRANI (KDS)</div>
-      <h1 style="font-size:1.25rem;">👨‍🍳 {{ tenant.business_name }} — Aktif Siparişler ({{ active_orders|length }})</h1>
+      <h1 style="font-size:1.25rem;">👨‍🍳 {{ tenant.business_name }} — Aktif Çağrı &amp; Siparişler ({{ active_orders|length }})</h1>
     </div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
       <span style="font-size:0.78rem;color:#9ca3af;">🟢 &lt;8 dk &nbsp; 🟡 8-14 dk &nbsp; 🔴 15+ dk</span>
+      <button type="button" class="btn btn-prep" id="soundBtn" style="width:auto;padding:9px 14px;" onclick="enableKdsSound()">🔕 Sesi Aç</button>
       <button type="button" class="btn btn-prep" style="width:auto;padding:9px 14px;" onclick="window.location.reload()">🔄 Yenile</button>
       <a href="{{ url_for('tenant_panel', slug=tenant.slug) }}" class="btn btn-done" style="width:auto;padding:9px 14px;">İşletme Paneli</a>
     </div>
@@ -46,7 +51,8 @@
           <span class="time-pill">⏱️ {{ o.elapsed_mins }} dk ({{ o.created_at.split(' ')[-1] }})</span>
         </div>
         <div style="font-size:0.78rem;color:#9ca3af;margin-bottom:8px;">
-          Durum: <strong style="color:#fcd34d;">{{ o.status }}</strong> • {{ o.service or 'QR Sipariş' }}
+          <span class="kind-pill kind-{{ o.kind }}">{{ o.service or 'QR Sipariş' }}</span>
+          &nbsp;Durum: <strong style="color:#fcd34d;">{{ o.status }}</strong>
         </div>
         <div class="order-body">{{ o.message }}</div>
       </div>
@@ -73,33 +79,56 @@
 
   <script>
     let kdsCount = {{ active_orders|length }};
-    let kdsLatest = {{ latest_id | tojson }};
+    let kdsSig = {{ sig | tojson }};
+    let audioCtx = null;
+    let soundOn = false;
 
-    function playKdsBeep() {
+    function enableKdsSound() {
       try {
         const AudioCtx = window.AudioContext || window.webkitAudioContext;
         if (!AudioCtx) return;
-        const ctx = new AudioCtx(), osc = ctx.createOscillator(), gain = ctx.createGain();
-        osc.type = 'triangle';
-        osc.frequency.setValueAtTime(987.77, ctx.currentTime);
-        gain.gain.setValueAtTime(0.25, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.45);
-        osc.connect(gain); gain.connect(ctx.destination);
-        osc.start(); osc.stop(ctx.currentTime + 0.46);
+        if (!audioCtx) audioCtx = new AudioCtx();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        soundOn = true;
+        sessionStorage.setItem('kdsSound', '1');
+        const b = document.getElementById('soundBtn');
+        if (b) b.textContent = '🔔 Ses Açık';
+        playKdsBeep();
       } catch (e) {}
     }
 
+    function playKdsBeep() {
+      try {
+        if (!audioCtx || !soundOn) return;
+        const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(987.77, audioCtx.currentTime);
+        gain.gain.setValueAtTime(0.25, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.45);
+        osc.connect(gain); gain.connect(audioCtx.destination);
+        osc.start(); osc.stop(audioCtx.currentTime + 0.46);
+      } catch (e) {}
+    }
+
+    // Sayfa yenilendiyse ve ses daha once acildiysa, ilk dokunusta tekrar etkinlestir
+    if (sessionStorage.getItem('kdsSound') === '1') {
+      const b = document.getElementById('soundBtn');
+      if (b) b.textContent = '🔔 Sesi Tekrar Aç (1 dokunuş)';
+    }
+
+    let pollFails = 0;
     setInterval(async () => {
       try {
         const res = await fetch("{{ url_for('kds_poll', slug=tenant.slug, k=k) }}", { cache: 'no-store' });
-        if (!res.ok) return;
+        if (!res.ok) { pollFails++; return; }
+        pollFails = 0;
         const d = await res.json();
-        if (d.active_count !== kdsCount || d.latest_id !== kdsLatest) {
-          if (d.active_count > kdsCount) playKdsBeep();
-          setTimeout(() => window.location.reload(), 500);
+        if (d.active_count !== kdsCount || d.sig !== kdsSig) {
+          if (d.active_count > kdsCount) { playKdsBeep(); }
+          setTimeout(() => window.location.reload(), soundOn ? 700 : 300);
         }
-      } catch (e) {}
-    }, 9000);
+      } catch (e) { pollFails++; }
+    }, 8000);
   </script>
 </body>
 </html>

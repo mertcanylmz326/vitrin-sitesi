@@ -61,6 +61,7 @@
         <div>🔋 Şarj Durumu: <strong id="batLabel">Ölçülmedi</strong></div>
         <div>📍 Konum: <strong id="locLabel">İzin bekleniyor</strong></div>
         <div>🕒 Son Gönderim: <strong id="timeLabel">-</strong></div>
+        <div id="errLabel" style="display:none;color:#fca5a5;font-weight:700;"></div>
       </div>
     </div>
   </div>
@@ -72,6 +73,38 @@
     let latestLng = "";
     let batteryPct = -1;
     let isCharging = false;
+    let wakeLock = null;
+    const SAVED_FIELDS = ["agentName", "activePackage", "targetCustomer", "statusText"];
+
+    // Sayfa yenilense bile bilgiler tekrar yazilmasin
+    SAVED_FIELDS.forEach(id => {
+      try {
+        const v = localStorage.getItem("saha_" + id);
+        if (v !== null && document.getElementById(id)) document.getElementById(id).value = v;
+      } catch (e) {}
+      const el = document.getElementById(id);
+      if (el) el.addEventListener("input", () => { try { localStorage.setItem("saha_" + id, el.value); } catch (e) {} });
+      if (el) el.addEventListener("change", () => { try { localStorage.setItem("saha_" + id, el.value); } catch (e) {} });
+    });
+
+    async function requestWakeLock() {
+      try {
+        if ("wakeLock" in navigator) {
+          wakeLock = await navigator.wakeLock.request("screen");
+          wakeLock.addEventListener("release", () => { wakeLock = null; });
+        }
+      } catch (e) {}
+    }
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible" && watchId !== null && !wakeLock) requestWakeLock();
+    });
+
+    function showErr(msg) {
+      const el = document.getElementById("errLabel");
+      if (!el) return;
+      el.textContent = msg || "";
+      el.style.display = msg ? "block" : "none";
+    }
 
     async function readBattery() {
       try {
@@ -95,7 +128,7 @@
       lastSend = Date.now();
       await readBattery();
       try {
-        await fetch("{{ url_for('field_agent_ping', slug=tenant.slug, k=k) }}", {
+        const resp = await fetch("{{ url_for('field_agent_ping', slug=tenant.slug, k=k) }}", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -109,8 +142,17 @@
             longitude: latestLng
           })
         });
+        if (!resp.ok) {
+          showErr(resp.status === 403 ? "Bağlantı anahtarı geçersiz veya üyelik pasif. Yeni linki isteyin." :
+                  resp.status === 429 ? "Çok sık gönderim, birazdan tekrar denenecek." :
+                  "Gönderim hatası (" + resp.status + "), tekrar denenecek.");
+          return;
+        }
+        showErr("");
         document.getElementById("timeLabel").textContent = new Date().toLocaleTimeString("tr-TR");
-      } catch (err) {}
+      } catch (err) {
+        showErr("İnternet bağlantısı yok, bağlantı gelince tekrar gönderilecek.");
+      }
     }
 
     async function activateFieldMode() {
@@ -125,6 +167,7 @@
       }
 
       await readBattery();
+      requestWakeLock();
 
       if (!navigator.geolocation) {
         alert("Cihazınızda konum servisi bulunamadı.");
@@ -144,8 +187,15 @@
           sendTelemetry();
         },
         (err) => {
-          alert("Konum izni reddedildi veya alınamadı: " + err.message);
-          document.getElementById("stateLabel").textContent = "Konum İzni Gerekli";
+          if (err.code === 1) {
+            alert("Konum izni reddedildi. Tarayıcı ayarlarından konuma izin verip tekrar deneyin.");
+            document.getElementById("stateLabel").textContent = "Konum İzni Gerekli";
+          } else {
+            document.getElementById("stateLabel").textContent = "SAHA AKTİF — Konum bekleniyor...";
+            document.getElementById("locLabel").textContent = "Sinyal zayıf, son bilinen konum korunuyor";
+            document.getElementById("startBtn").style.display = "none";
+            document.getElementById("stopBtn").style.display = "block";
+          }
         },
         { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
       );
@@ -159,6 +209,7 @@
       if (pushTimer) clearInterval(pushTimer);
       watchId = null;
       pushTimer = null;
+      try { if (wakeLock) wakeLock.release(); } catch (e) {}
       document.getElementById("liveDot").classList.remove("live");
       document.getElementById("stateLabel").textContent = "Durduruldu (Pasif)";
       sendTelemetry("Çevrimdışı (saha durduruldu)");
