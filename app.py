@@ -1,6 +1,7 @@
 import functools
 import hashlib
 import hmac
+import io
 import ipaddress
 import json
 import os
@@ -19,9 +20,15 @@ import psycopg2
 import psycopg2.errors
 import psycopg2.pool
 import requests
+from psycopg2.extras import RealDictCursor
+from werkzeug.middleware.proxy_fix import ProxyFix
+from werkzeug.security import check_password_hash, generate_password_hash
+from werkzeug.utils import secure_filename
 from flask import (
     Flask,
+    Response,
     abort,
+    g,
     jsonify,
     redirect,
     render_template,
@@ -30,18 +37,13 @@ from flask import (
     session,
     url_for,
 )
-from psycopg2.extras import RealDictCursor
-from werkzeug.middleware.proxy_fix import ProxyFix
-from werkzeug.security import check_password_hash, generate_password_hash
-from werkzeug.utils import secure_filename
 
 from duzgunler import duzgunler_bp, init_db as init_duzgunler_db
 
 try:
-    import segno
-except ImportError:
+    import segno  # yerel QR uretimi (opsiyonel)
+except ImportError:  # pragma: no cover
     segno = None
-
 
 # ---------------------------------------------------------------------------
 # Yapilandirma
@@ -50,16 +52,16 @@ app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
 
-def _require_env(name: str) -> str:
-    val = os.environ.get(name, "").strip()
-    if not val:
+def _require_env(name):
+    value = os.environ.get(name, "").strip()
+    if not value:
         raise RuntimeError(f"{name} ortam degiskeni tanimli degil. Render > Environment kismina ekleyin.")
-    return val
+    return value
 
 
-def _normalize_db_url(url: str) -> str:
+def _normalize_db_url(url):
     if url.startswith("postgres://"):
-        return "postgresql://" + url[len("postgres://") :]
+        return "postgresql://" + url[len("postgres://"):]
     return url
 
 
@@ -82,28 +84,18 @@ LEGACY_JSON_FILE = BASE_DIR / "tickets.json"
 
 TR_TZ = ZoneInfo("Europe/Istanbul")
 ALLOWED_IMG_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
-IMG_MIME = {
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".png": "image/png",
-    ".webp": "image/webp",
-}
+IMG_MIME = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}
 MAX_IMG_BYTES = 4 * 1024 * 1024
-
 TIME_SLOTS = [
     "09:00", "10:00", "11:00", "12:00", "13:00", "14:00",
     "15:00", "16:00", "17:00", "18:00", "19:00", "20:00",
     "21:00", "22:00", "23:00",
 ]
 TICKET_STATUSES = {"Yeni", "İnceleniyor", "Tamamlandı", "İptal"}
+VALID_RES_STATUSES = {"pending", "confirmed", "checked_in", "no_show", "cancelled"}
 VALID_MODULES = {
-    "genel",
-    "kafe-randevu",
-    "berber-randevu",
-    "masa-qr",
-    "mobil-saha",
-    "web-otomasyon",
-    "masaustu-otomasyon",
+    "genel", "kafe-randevu", "berber-randevu", "masa-qr",
+    "mobil-saha", "web-otomasyon", "masaustu-otomasyon",
 }
 
 SUPERADMIN_USERNAME = os.environ.get("SUPERADMIN_USERNAME", "").strip()
@@ -125,19 +117,9 @@ MODULE_LABELS = {
     "berber-randevu": "Berber & Kuaför Saat Randevu",
     "masa-qr": "Masa QR Menü, Sipariş & Garson Çağır",
     "mobil-saha": "Mobil Uygulama & Saha Akışları",
-    "web-otomasyon": "Web Panelleri, Formlar & Webhook",
+    "web-otomasyon": "Web Panelleri, Formlar & Botlar",
     "masaustu-otomasyon": "Masaüstü Kasa, Barkod & Stok Otomasyonu",
     "genel": "Genel Talep & Müşteri Formu",
-}
-
-MODULE_PANEL_TITLES = {
-    "kafe-randevu": "Kafe & Restoran Masa Randevu Paneli",
-    "masa-qr": "Masa QR Sipariş & Garson Paneli",
-    "berber-randevu": "Berber & Kuaför Randevu Paneli",
-    "mobil-saha": "Mobil Saha & Canlı Takip Paneli",
-    "web-otomasyon": "Webhook & Veri Otomasyon Paneli",
-    "masaustu-otomasyon": "Kasa, Barkod & Stok Paneli",
-    "genel": "İşletme Talep Yönetim Paneli",
 }
 
 SERVICES_DATA = [
@@ -205,14 +187,14 @@ SERVICES_DATA = [
         "id": "web-otomasyon",
         "module_key": "web-otomasyon",
         "tag": "Web Otomasyon",
-        "title": "Web Panelleri, Formlar & Webhook",
+        "title": "Web Panelleri, Formlar & Botlar",
         "image": "webotom.jpg",
-        "short": "WhatsApp API, otomatik veri çekme (scraper/webhook) ve günlük raporlama entegrasyonları.",
-        "details": "İşletmenin WhatsApp API, harici Webhook ve otomatik veri çekme bağlantılarını tek panelden yönetip günlük rapor üreten altyapı.",
+        "short": "WhatsApp API, Telegram Bot Token, otomatik veri çekme (scraper/webhook) ve günlük raporlama entegrasyonları.",
+        "details": "İşletmenin WhatsApp API, Telegram Bot, harici Webhook ve otomatik veri çekme bağlantılarını tek panelden yönetip otomatik bildirim gönderen altyapı.",
         "features": [
             "WhatsApp Cloud/Business API & otomatik müşteri mesaj entegrasyonu",
+            "Telegram Bot Token & Chat ID ile anlık talep/sipariş bildirimi",
             "Otomatik veri çekme URL (API/Webhook) ve zamanlanmış raporlama",
-            "Webhook gönderim logları ve tek tıkla yeniden deneme",
             "Tek tıkla bağlantı testi ve canlı log takibi",
         ],
     },
@@ -237,7 +219,7 @@ SERVICES_DATA = [
 # ---------------------------------------------------------------------------
 # Yardimcilar
 # ---------------------------------------------------------------------------
-def now_tr() -> datetime:
+def now_tr():
     return datetime.now(TR_TZ).replace(tzinfo=None)
 
 
@@ -245,14 +227,14 @@ def today_tr():
     return now_tr().date()
 
 
-def slugify(text: str) -> str:
+def slugify(text):
     tr_map = str.maketrans("çğıöşüÇĞİÖŞÜ", "cgiosuCGIOSU")
     cleaned = (text or "").translate(tr_map).lower()
     cleaned = re.sub(r"[^a-z0-9]+", "-", cleaned).strip("-")[:60]
     return cleaned or f"isletme-{uuid.uuid4().hex[:6]}"
 
 
-def normalize_phone(raw_phone: str) -> str:
+def normalize_phone(raw_phone):
     digits = re.sub(r"\D+", "", raw_phone or "")
     if not digits:
         return ""
@@ -263,7 +245,7 @@ def normalize_phone(raw_phone: str) -> str:
     return digits
 
 
-def parse_price_number(price_str) -> float:
+def parse_price_number(price_str):
     s = re.sub(r"[^0-9.,]", "", str(price_str or ""))
     if not s:
         return 0.0
@@ -282,28 +264,32 @@ def parse_price_number(price_str) -> float:
         return 0.0
 
 
-def parse_date(value: str):
+def parse_date(value):
     try:
         return datetime.strptime((value or "").strip(), "%Y-%m-%d").date()
     except ValueError:
         return None
 
 
-def safe_next(url: str, fallback: str) -> str:
+def safe_next(url, fallback):
     if url and url.startswith("/") and not url.startswith("//") and "\\" not in url and "\n" not in url and "\r" not in url:
         return url
     return fallback
 
 
-def clean_text(value: str, limit: int) -> str:
+def clean_text(value, limit):
     return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", (value or "").strip())[:limit]
 
 
-_rl_store: dict = {}
+def hash_pin(pin_code: str) -> str:
+    return hashlib.sha256(str(pin_code or "").strip().encode("utf-8")).hexdigest()
+
+
+_rl_store = {}
 _rl_lock = threading.Lock()
 
 
-def rate_limited(key: str, limit: int, window_sec: int) -> bool:
+def rate_limited(key, limit, window_sec):
     now = time.time()
     with _rl_lock:
         if len(_rl_store) > 5000:
@@ -323,7 +309,7 @@ def rate_limited(key: str, limit: int, window_sec: int) -> bool:
 # ---------------------------------------------------------------------------
 _pool = None
 _pool_lock = threading.Lock()
-_last_used: dict = {}
+_last_used = {}
 
 
 def _get_pool():
@@ -385,7 +371,7 @@ class get_db:
 # ---------------------------------------------------------------------------
 # Gorsel yukleme
 # ---------------------------------------------------------------------------
-def _sniff_ok(ext: str, raw: bytes) -> bool:
+def _sniff_ok(ext, raw):
     if ext in (".jpg", ".jpeg"):
         return raw[:3] == b"\xff\xd8\xff"
     if ext == ".png":
@@ -395,7 +381,7 @@ def _sniff_ok(ext: str, raw: bytes) -> bool:
     return False
 
 
-def save_uploaded_image(subdir: Path, tenant_id: int, file_storage) -> str:
+def save_uploaded_image(subdir, tenant_id, file_storage):
     if not file_storage or not file_storage.filename:
         return ""
     ext = Path(secure_filename(file_storage.filename)).suffix.lower()
@@ -425,7 +411,7 @@ def save_uploaded_image(subdir: Path, tenant_id: int, file_storage) -> str:
     return fname
 
 
-def get_stored_image_from_db(tenant_id: int, category: str, filename: str):
+def get_stored_image_from_db(tenant_id, category, filename):
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -631,6 +617,53 @@ def init_db():
 
             cur.execute(
                 """
+                CREATE TABLE IF NOT EXISTS dining_tables (
+                    id SERIAL PRIMARY KEY,
+                    tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                    table_name VARCHAR(80) NOT NULL,
+                    capacity INTEGER NOT NULL DEFAULT 4,
+                    status VARCHAR(32) NOT NULL DEFAULT 'empty',
+                    active_order_code VARCHAR(64) NULL,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE (tenant_id, table_name)
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS tenant_staff (
+                    id SERIAL PRIMARY KEY,
+                    tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                    staff_name VARCHAR(120) NOT NULL,
+                    role VARCHAR(32) NOT NULL DEFAULT 'cashier',
+                    pin_hash VARCHAR(128) NOT NULL,
+                    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS webhook_logs (
+                    id SERIAL PRIMARY KEY,
+                    tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                    event_name VARCHAR(80) NOT NULL,
+                    target_url TEXT NOT NULL,
+                    payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    status_code INTEGER NOT NULL DEFAULT 0,
+                    success BOOLEAN NOT NULL DEFAULT FALSE,
+                    response_snippet TEXT NOT NULL DEFAULT '',
+                    attempt_count INTEGER NOT NULL DEFAULT 1,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_dining_tables_tenant ON dining_tables(tenant_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_tenant_staff_tenant ON tenant_staff(tenant_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_webhook_logs_tenant ON webhook_logs(tenant_id, created_at DESC)")
+
+            cur.execute(
+                """
                 CREATE TABLE IF NOT EXISTS bot_logs (
                     id SERIAL PRIMARY KEY,
                     tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
@@ -662,12 +695,8 @@ def init_db():
                     VALUES (%s,%s,%s,%s,'pro','kafe-randevu',8,%s,%s,FALSE,TRUE,NOW(), NOW() + INTERVAL '3650 days', %s)
                     """,
                     (
-                        "kolay-vitrin",
-                        "KOLAY Ana Vitrin",
-                        "iletisim@kolayotomasyon.local",
-                        generate_password_hash(pw),
-                        WHATSAPP_NUMBER,
-                        "Varsayilan aktif vitrin hesabi",
+                        "kolay-vitrin", "KOLAY Ana Vitrin", "iletisim@kolayotomasyon.local",
+                        generate_password_hash(pw), WHATSAPP_NUMBER, "Varsayilan aktif vitrin hesabi",
                         secrets.token_urlsafe(24),
                     ),
                 )
@@ -676,6 +705,7 @@ def init_db():
             elif check_password_hash(vit["password_hash"], "kolay1234"):
                 pw = VITRIN_PASSWORD or secrets.token_urlsafe(12)
                 cur.execute("UPDATE tenants SET password_hash = %s WHERE id = %s", (generate_password_hash(pw), vit["id"]))
+                app.logger.warning("kolay-vitrin eski varsayilan sifresi degistirildi (VITRIN_PASSWORD veya rastgele).")
 
             _migrate_legacy(cur)
             _backfill_reservations(cur)
@@ -700,15 +730,10 @@ def _migrate_legacy(cur):
                 """INSERT INTO tickets (id, tenant_id, name, phone, service, message, status, created_at, created_ts)
                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (id) DO NOTHING""",
                 (
-                    str(item.get("id") or uuid.uuid4().hex[:8]),
-                    tid,
-                    str(item.get("name", "")).strip(),
-                    str(item.get("phone", "")).strip(),
-                    str(item.get("service", "")).strip(),
-                    str(item.get("message", "")).strip(),
-                    str(item.get("status") or "Yeni").strip(),
-                    created,
-                    now_tr(),
+                    str(item.get("id") or uuid.uuid4().hex[:8]), tid, str(item.get("name", "")).strip(),
+                    str(item.get("phone", "")).strip(), str(item.get("service", "")).strip(),
+                    str(item.get("message", "")).strip(), str(item.get("status") or "Yeni").strip(),
+                    created, now_tr(),
                 ),
             )
 
@@ -744,7 +769,7 @@ def _backfill_reservations(cur):
 
 
 # ---------------------------------------------------------------------------
-# Tenant & panel baglami
+# Tenant verisi
 # ---------------------------------------------------------------------------
 _TENANT_SELECT = """
     SELECT t.*, (t.is_active AND t.expires_at IS NOT NULL AND t.expires_at < NOW()) AS is_expired
@@ -752,11 +777,11 @@ _TENANT_SELECT = """
 """
 
 
-def tenant_usable(tenant) -> bool:
+def tenant_usable(tenant):
     return bool(tenant["is_active"]) and not tenant.get("is_expired")
 
 
-def tenant_has_qr_access(tenant) -> bool:
+def tenant_has_qr_access(tenant):
     mod = tenant.get("module_type") or "genel"
     if mod == "masa-qr":
         return True
@@ -765,27 +790,14 @@ def tenant_has_qr_access(tenant) -> bool:
     return False
 
 
-def resolve_panel_context(tenant) -> dict:
-    mod = (tenant.get("module_type") or "genel").strip()
-    if mod not in VALID_MODULES:
-        mod = "genel"
-    return {
-        "mod_key": mod,
-        "mod_label": MODULE_LABELS.get(mod, MODULE_LABELS["genel"]),
-        "panel_title": MODULE_PANEL_TITLES.get(mod, MODULE_PANEL_TITLES["genel"]),
-        "show_menu_tab": mod in {"kafe-randevu", "masa-qr"},
-        "qr_unlocked": tenant_has_qr_access(tenant),
-    }
-
-
-def get_tenant_by_slug(slug: str):
+def get_tenant_by_slug(slug):
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(_TENANT_SELECT + " WHERE t.slug = %s", (slug,))
             return cur.fetchone()
 
 
-def get_all_tenants() -> list[dict]:
+def get_all_tenants():
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -804,21 +816,20 @@ def get_all_tenants() -> list[dict]:
         exp = d.get("expires_at")
         d["expires_str"] = exp.strftime("%d.%m.%Y") if exp else "-"
         d["is_expired"] = bool(d.get("is_expired"))
-        d["mod_label"] = MODULE_LABELS.get(d.get("module_type") or "genel", MODULE_LABELS["genel"])
     return rows
 
 
 def create_tenant(
-    business_name: str,
-    owner_email: str,
-    password: str,
-    raw_slug: str = "",
-    plan: str = "starter",
-    module_type: str = "genel",
-    whatsapp_number: str = "",
-    company_legal_name: str = "",
-    tax_office: str = "",
-    tax_number: str = "",
+    business_name,
+    owner_email,
+    password,
+    raw_slug="",
+    plan="starter",
+    module_type="genel",
+    whatsapp_number="",
+    company_legal_name="",
+    tax_office="",
+    tax_number="",
 ):
     base_slug = slugify(raw_slug or business_name)
     mod = module_type if module_type in VALID_MODULES else "genel"
@@ -842,25 +853,18 @@ def create_tenant(
                 RETURNING *
                 """,
                 (
-                    candidate,
-                    business_name.strip()[:120],
-                    owner_email.strip().lower()[:160],
-                    generate_password_hash(password),
-                    chosen_plan,
-                    mod,
-                    default_tables,
+                    candidate, business_name.strip()[:120], owner_email.strip().lower()[:160],
+                    generate_password_hash(password), chosen_plan, mod, default_tables,
                     whatsapp_number.strip()[:30],
                     (company_legal_name or business_name).strip()[:160],
-                    tax_office.strip()[:100],
-                    tax_number.strip()[:40],
-                    chosen_plan == "pro",
-                    secrets.token_urlsafe(24),
+                    tax_office.strip()[:100], tax_number.strip()[:40],
+                    chosen_plan == "pro", secrets.token_urlsafe(24),
                 ),
             )
             return cur.fetchone()
 
 
-def get_menu_items(tenant_id: int) -> list[dict]:
+def get_menu_items(tenant_id):
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -879,7 +883,7 @@ def get_menu_items(tenant_id: int) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Saha elemanlari
 # ---------------------------------------------------------------------------
-def get_field_agents(tenant_id: int) -> list[dict]:
+def get_field_agents(tenant_id):
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -892,33 +896,31 @@ def get_field_agents(tenant_id: int) -> list[dict]:
     for r in rows:
         upd = r.get("updated_at")
         age = max(0, int((now - upd).total_seconds())) if upd else 10**9
-        out.append(
-            {
-                "id": r["id"],
-                "agent_name": r["agent_name"],
-                "status_text": r["status_text"] or "",
-                "battery_level": r["battery_level"] if r["battery_level"] is not None else -1,
-                "is_charging": bool(r["is_charging"]),
-                "active_package": r["active_package"] or "",
-                "target_customer": r["target_customer"] or "",
-                "latitude": r["latitude"] or "",
-                "longitude": r["longitude"] or "",
-                "updated_str": upd.strftime("%d.%m.%Y %H:%M:%S") if upd else "-",
-                "age_sec": age,
-                "online": age < 150,
-            }
-        )
+        out.append({
+            "id": r["id"],
+            "agent_name": r["agent_name"],
+            "status_text": r["status_text"] or "",
+            "battery_level": r["battery_level"] if r["battery_level"] is not None else -1,
+            "is_charging": bool(r["is_charging"]),
+            "active_package": r["active_package"] or "",
+            "target_customer": r["target_customer"] or "",
+            "latitude": r["latitude"] or "",
+            "longitude": r["longitude"] or "",
+            "updated_str": upd.strftime("%d.%m.%Y %H:%M:%S") if upd else "-",
+            "age_sec": age,
+            "online": age < 150,
+        })
     return out
 
 
 # ---------------------------------------------------------------------------
 # Kasa / barkod
 # ---------------------------------------------------------------------------
-def pos_day_start() -> datetime:
+def pos_day_start():
     return now_tr().replace(hour=0, minute=0, second=0, microsecond=0)
 
 
-def get_pos_overview(tenant_id: int):
+def get_pos_overview(tenant_id):
     start = pos_day_start()
     with get_db() as conn:
         with conn.cursor() as cur:
@@ -965,7 +967,7 @@ class SlotTaken(Exception):
     pass
 
 
-def _urgency(minutes: int) -> str:
+def _urgency(minutes):
     if minutes >= 15:
         return "urgent"
     if minutes >= 8:
@@ -973,7 +975,7 @@ def _urgency(minutes: int) -> str:
     return "ok"
 
 
-def load_tickets(tenant_id: int, limit: int = 300, statuses=None) -> list[dict]:
+def load_tickets(tenant_id, limit=300, statuses=None):
     sql = """SELECT id, tenant_id, name, phone, service, message, status, created_at, created_ts
              FROM tickets WHERE tenant_id = %s"""
     params = [tenant_id]
@@ -1001,7 +1003,7 @@ def load_tickets(tenant_id: int, limit: int = 300, statuses=None) -> list[dict]:
     return result
 
 
-def ticket_stats(tenant_id: int) -> dict:
+def ticket_stats(tenant_id):
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -1026,16 +1028,13 @@ def ticket_stats(tenant_id: int) -> dict:
             )
             latest_active = cur.fetchone()
     return {
-        "total": int(row["total"]),
-        "yeni": int(row["yeni"]),
-        "tamam": int(row["tamam"]),
+        "total": int(row["total"]), "yeni": int(row["yeni"]), "tamam": int(row["tamam"]),
         "active": int(row["active"]),
-        "latest": latest,
-        "latest_active_id": latest_active["id"] if latest_active else "",
+        "latest": latest, "latest_active_id": latest_active["id"] if latest_active else "",
     }
 
 
-def recent_duplicate(tenant_id: int, name: str, service: str, seconds: int = 60) -> bool:
+def recent_duplicate(tenant_id, name, service, seconds=60):
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -1046,7 +1045,7 @@ def recent_duplicate(tenant_id: int, name: str, service: str, seconds: int = 60)
             return cur.fetchone() is not None
 
 
-def add_ticket(tenant, name: str, phone: str, service: str, message: str, reservation=None) -> str:
+def add_ticket(tenant, name, phone, service, message, reservation=None):
     ticket_id = uuid.uuid4().hex[:8]
     ts = now_tr()
     created_at = ts.strftime("%d.%m.%Y %H:%M")
@@ -1060,32 +1059,26 @@ def add_ticket(tenant, name: str, phone: str, service: str, message: str, reserv
                 )
                 if reservation:
                     cur.execute(
-                        """INSERT INTO reservations (tenant_id, ticket_id, kind, res_date, slot, table_no)
-                           VALUES (%s,%s,%s,%s,%s,%s)""",
+                        """INSERT INTO reservations (tenant_id, ticket_id, kind, res_date, slot, table_no, res_status, duration_minutes, party_size)
+                           VALUES (%s,%s,%s,%s,%s,%s,'confirmed',%s,%s)""",
                         (
-                            tenant["id"],
-                            ticket_id,
-                            reservation["kind"],
-                            reservation["res_date"],
-                            reservation["slot"],
-                            reservation.get("table_no"),
+                            tenant["id"], ticket_id, reservation["kind"], reservation["res_date"],
+                            reservation["slot"], reservation.get("table_no"),
+                            int(reservation.get("duration_minutes") or 90),
+                            int(reservation.get("party_size") or 2),
                         ),
                     )
     except psycopg2.errors.UniqueViolation:
         raise SlotTaken()
     ticket = {
-        "id": ticket_id,
-        "name": name,
-        "phone": phone,
-        "service": service,
-        "message": message,
-        "created_at": created_at,
+        "id": ticket_id, "name": name, "phone": phone,
+        "service": service, "message": message, "created_at": created_at,
     }
     run_async(notify_new_ticket, dict(tenant), ticket)
     return ticket_id
 
 
-def update_ticket_status(tenant_id: int, ticket_id: str, new_status: str) -> bool:
+def update_ticket_status(tenant_id, ticket_id, new_status):
     try:
         with get_db() as conn:
             with conn.cursor() as cur:
@@ -1094,27 +1087,31 @@ def update_ticket_status(tenant_id: int, ticket_id: str, new_status: str) -> boo
                     (new_status, ticket_id, tenant_id),
                 )
                 cur.execute(
-                    "UPDATE reservations SET is_active = %s WHERE ticket_id = %s AND tenant_id = %s",
-                    (new_status != "İptal", ticket_id, tenant_id),
+                    """UPDATE reservations
+                       SET is_active = %s,
+                           res_status = CASE WHEN %s = 'İptal' THEN 'cancelled' ELSE res_status END
+                       WHERE ticket_id = %s AND tenant_id = %s""",
+                    (new_status != "İptal", new_status, ticket_id, tenant_id),
                 )
         return True
     except psycopg2.errors.UniqueViolation:
         return False
 
 
-def delete_ticket_by_id(tenant_id: int, ticket_id: str):
+def delete_ticket_by_id(tenant_id, ticket_id):
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM tickets WHERE id = %s AND tenant_id = %s", (ticket_id, tenant_id))
 
 
-def get_booked_tables_by_slot(tenant_id: int, res_date) -> dict:
+def get_booked_tables_by_slot(tenant_id, res_date):
     booked = {sl: set() for sl in TIME_SLOTS}
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """SELECT slot, table_no FROM reservations
-                   WHERE tenant_id = %s AND res_date = %s AND kind = 'table' AND is_active""",
+                   WHERE tenant_id = %s AND res_date = %s AND kind = 'table' AND is_active
+                     AND COALESCE(res_status, 'confirmed') NOT IN ('cancelled', 'no_show')""",
                 (tenant_id, res_date),
             )
             for r in cur.fetchall():
@@ -1123,18 +1120,19 @@ def get_booked_tables_by_slot(tenant_id: int, res_date) -> dict:
     return booked
 
 
-def get_booked_barber_slots(tenant_id: int, res_date) -> set:
+def get_booked_barber_slots(tenant_id, res_date):
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """SELECT slot FROM reservations
-                   WHERE tenant_id = %s AND res_date = %s AND kind = 'barber' AND is_active""",
+                   WHERE tenant_id = %s AND res_date = %s AND kind = 'barber' AND is_active
+                     AND COALESCE(res_status, 'confirmed') NOT IN ('cancelled', 'no_show')""",
                 (tenant_id, res_date),
             )
             return {r["slot"] for r in cur.fetchall()}
 
 
-def past_slots_for(res_date) -> set:
+def past_slots_for(res_date):
     if res_date != today_tr():
         return set()
     hhmm = now_tr().strftime("%H:%M")
@@ -1142,7 +1140,7 @@ def past_slots_for(res_date) -> set:
 
 
 # ---------------------------------------------------------------------------
-# Entegrasyonlar (Webhook / WhatsApp / Veri Cekme - Telegram Yok)
+# Entegrasyonlar (Telegram / Webhook / WhatsApp / veri cekme + Webhook Log)
 # ---------------------------------------------------------------------------
 def run_async(fn, *args, **kwargs):
     t = threading.Thread(target=_safe_call, args=(fn, args, kwargs), daemon=True)
@@ -1156,7 +1154,7 @@ def _safe_call(fn, args, kwargs):
         app.logger.error("Arka plan gorevi hatasi (%s): %s", getattr(fn, "__name__", fn), exc)
 
 
-def get_bot_config(tenant) -> dict:
+def get_bot_config(tenant):
     raw = tenant.get("bot_config_json") or "{}"
     try:
         data = json.loads(raw) if isinstance(raw, str) else dict(raw)
@@ -1167,13 +1165,17 @@ def get_bot_config(tenant) -> dict:
         "wa_api_token": data.get("wa_api_token", ""),
         "wa_template_name": data.get("wa_template_name", ""),
         "wa_auto_reply": bool(data.get("wa_auto_reply", False)),
+        "tg_bot_token": data.get("tg_bot_token", ""),
+        "tg_chat_id": data.get("tg_chat_id", ""),
+        "tg_notify_enabled": bool(data.get("tg_notify_enabled", False)),
         "scraper_url": data.get("scraper_url", ""),
         "report_hour": data.get("report_hour", "21:00") or "21:00",
         "webhook_url": data.get("webhook_url", ""),
+        "last_sync_note": data.get("last_sync_note", ""),
     }
 
 
-def save_bot_config(tenant_id: int, cfg: dict):
+def save_bot_config(tenant_id, cfg):
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -1182,7 +1184,7 @@ def save_bot_config(tenant_id: int, cfg: dict):
             )
 
 
-def bot_log(tenant_id: int, message: str, level: str = "info"):
+def bot_log(tenant_id, message, level="info"):
     try:
         with get_db() as conn:
             with conn.cursor() as cur:
@@ -1199,7 +1201,7 @@ def bot_log(tenant_id: int, message: str, level: str = "info"):
         app.logger.warning("bot_log hatasi: %s", exc)
 
 
-def get_bot_logs(tenant_id: int, limit: int = 20) -> list[dict]:
+def get_bot_logs(tenant_id, limit=20):
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -1209,7 +1211,7 @@ def get_bot_logs(tenant_id: int, limit: int = 20) -> list[dict]:
             return [dict(r, time_str=r["created_at"].strftime("%d.%m %H:%M:%S")) for r in cur.fetchall()]
 
 
-def is_safe_public_url(url: str) -> bool:
+def is_safe_public_url(url):
     try:
         p = urlparse((url or "").strip())
         if p.scheme not in ("http", "https") or not p.hostname:
@@ -1224,7 +1226,7 @@ def is_safe_public_url(url: str) -> bool:
         return False
 
 
-def safe_request(method: str, url: str, **kwargs):
+def safe_request(method, url, **kwargs):
     if not is_safe_public_url(url):
         raise ValueError("URL güvenli değil veya erişilemiyor")
     kwargs.setdefault("timeout", 8)
@@ -1232,18 +1234,85 @@ def safe_request(method: str, url: str, **kwargs):
     return requests.request(method, url.strip(), **kwargs)
 
 
-def send_webhook(cfg: dict, payload: dict):
+def log_webhook_attempt(tenant_id, event_name, target_url, payload, status_code, success, snippet, attempt_count=1):
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO webhook_logs
+                        (tenant_id, event_name, target_url, payload_json, status_code, success, response_snippet, attempt_count)
+                    VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s, %s)
+                    RETURNING id, event_name, target_url, status_code, success, response_snippet, attempt_count, created_at;
+                    """,
+                    (
+                        tenant_id,
+                        event_name[:80],
+                        target_url,
+                        json.dumps(payload, ensure_ascii=False),
+                        int(status_code or 0),
+                        bool(success),
+                        (snippet or "")[:500],
+                        int(attempt_count or 1),
+                    ),
+                )
+                row = dict(cur.fetchone())
+                row["created_at"] = row["created_at"].isoformat() if row.get("created_at") else ""
+                return row
+    except Exception as exc:
+        app.logger.warning("webhook_logs kayit hatasi: %s", exc)
+        return None
+
+
+def send_telegram(cfg, text):
+    token, chat = (cfg.get("tg_bot_token") or "").strip(), (cfg.get("tg_chat_id") or "").strip()
+    if not token or not chat:
+        return False, "Telegram token/chat ID eksik"
+    try:
+        r = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat, "text": text[:3500]},
+            timeout=8,
+        )
+        return r.ok, f"Telegram HTTP {r.status_code}"
+    except Exception as exc:
+        return False, f"Telegram hatası: {type(exc).__name__}"
+
+
+def send_webhook(cfg, payload, tenant_id=None, event_name="webhook_event", attempt_count=1):
     url = (cfg.get("webhook_url") or "").strip()
     if not url:
         return False, "Webhook URL eksik"
     try:
         r = safe_request("POST", url, json=payload)
+        if tenant_id:
+            log_webhook_attempt(
+                tenant_id=tenant_id,
+                event_name=event_name,
+                target_url=url,
+                payload=payload,
+                status_code=r.status_code,
+                success=r.ok,
+                snippet=r.text or "",
+                attempt_count=attempt_count,
+            )
         return r.ok, f"Webhook HTTP {r.status_code}"
     except Exception as exc:
+        if tenant_id:
+            log_webhook_attempt(
+                tenant_id=tenant_id,
+                event_name=event_name,
+                target_url=url,
+                payload=payload,
+                status_code=0,
+                success=False,
+                snippet=str(exc),
+                attempt_count=attempt_count,
+            )
         return False, f"Webhook hatası: {exc}"
 
 
-def send_whatsapp(cfg: dict, to_phone: str, text: str):
+def send_whatsapp(cfg, to_phone, text):
     url, token = (cfg.get("wa_api_url") or "").strip(), (cfg.get("wa_api_token") or "").strip()
     to = normalize_phone(to_phone)
     if not url or not token:
@@ -1252,9 +1321,7 @@ def send_whatsapp(cfg: dict, to_phone: str, text: str):
         return False, "Alıcı telefon yok"
     if cfg.get("wa_template_name"):
         body = {
-            "messaging_product": "whatsapp",
-            "to": to,
-            "type": "template",
+            "messaging_product": "whatsapp", "to": to, "type": "template",
             "template": {"name": cfg["wa_template_name"], "language": {"code": "tr"}},
         }
     else:
@@ -1266,36 +1333,31 @@ def send_whatsapp(cfg: dict, to_phone: str, text: str):
         return False, f"WhatsApp hatası: {exc}"
 
 
-def notify_new_ticket(tenant, ticket: dict):
+def notify_new_ticket(tenant, ticket):
     cfg = get_bot_config(tenant)
+    title = f"{ticket['service']} ({ticket['name']})"
+    if cfg["tg_notify_enabled"] and cfg["tg_bot_token"] and cfg["tg_chat_id"]:
+        ok, info = send_telegram(cfg, f"🔔 {tenant['business_name']} — {title}\n{ticket['message']}")
+        bot_log(tenant["id"], f"Yeni talep → {info}", "info" if ok else "error")
     if cfg["webhook_url"]:
-        ok, info = send_webhook(
-            cfg,
-            {
-                "business": tenant["business_name"],
-                "slug": tenant["slug"],
-                "event": "new_ticket",
-                "ticket_id": ticket["id"],
-                "name": ticket["name"],
-                "phone": ticket["phone"],
-                "service": ticket["service"],
-                "message": ticket["message"],
-                "created_at": ticket["created_at"],
-                "timestamp": now_tr().isoformat(),
-            },
-        )
+        wh_payload = {
+            "business": tenant["business_name"], "slug": tenant["slug"], "event": "new_ticket",
+            "ticket_id": ticket["id"], "name": ticket["name"], "phone": ticket["phone"],
+            "service": ticket["service"], "message": ticket["message"],
+            "created_at": ticket["created_at"], "timestamp": now_tr().isoformat(),
+        }
+        ok, info = send_webhook(cfg, wh_payload, tenant_id=tenant["id"], event_name="new_ticket")
         bot_log(tenant["id"], f"Yeni talep → {info}", "info" if ok else "error")
     if cfg["wa_auto_reply"] and cfg["wa_api_url"] and cfg["wa_api_token"] and ticket.get("phone"):
         ok, info = send_whatsapp(
-            cfg,
-            ticket["phone"],
+            cfg, ticket["phone"],
             f"Merhaba {ticket['name']}, talebiniz {tenant['business_name']} tarafına ulaştı. En kısa sürede dönüş yapacağız.",
         )
         bot_log(tenant["id"], f"WhatsApp karşılama → {info}", "info" if ok else "error")
 
 
-def fetch_scraper_summary(url: str) -> str:
-    r = safe_request("GET", url, stream=True, headers={"User-Agent": "KolayWeb/1.0"})
+def fetch_scraper_summary(url):
+    r = safe_request("GET", url, stream=True, headers={"User-Agent": "KolayBot/1.0"})
     if not r.ok:
         raise ValueError(f"Kaynak HTTP {r.status_code} döndü")
     raw = r.raw.read(1_000_001, decode_content=True)
@@ -1316,7 +1378,7 @@ def fetch_scraper_summary(url: str) -> str:
         return f"Metin ({len(text)} karakter): {plain[:250]}"
 
 
-def build_daily_report(tenant, cfg: dict) -> str:
+def build_daily_report(tenant, cfg):
     start = now_tr().replace(hour=0, minute=0, second=0, microsecond=0)
     with get_db() as conn:
         with conn.cursor() as cur:
@@ -1330,7 +1392,7 @@ def build_daily_report(tenant, cfg: dict) -> str:
             )
             c = cur.fetchone()
     lines = [
-        f"Günlük Rapor — {tenant['business_name']} ({now_tr().strftime('%d.%m.%Y')})",
+        f"📊 {tenant['business_name']} — Günlük Rapor ({now_tr().strftime('%d.%m.%Y')})",
         f"Bugünkü talep: {c['total']} (Yeni: {c['yeni']}, Tamamlanan: {c['tamam']}, İptal: {c['iptal']})",
     ]
     if cfg.get("scraper_url"):
@@ -1341,25 +1403,24 @@ def build_daily_report(tenant, cfg: dict) -> str:
     return "\n".join(lines)
 
 
-def send_report_to_channels(tenant, cfg: dict, text: str) -> list:
+def send_report_to_channels(tenant, cfg, text):
     results = []
+    if cfg["tg_bot_token"] and cfg["tg_chat_id"]:
+        results.append(send_telegram(cfg, text))
     if cfg["webhook_url"]:
-        results.append(
-            send_webhook(
-                cfg,
-                {
-                    "business": tenant["business_name"],
-                    "slug": tenant["slug"],
-                    "event": "daily_report",
-                    "message": text,
-                    "timestamp": now_tr().isoformat(),
-                },
-            )
-        )
+        results.append(send_webhook(
+            cfg,
+            {
+                "business": tenant["business_name"], "slug": tenant["slug"],
+                "event": "daily_report", "message": text, "timestamp": now_tr().isoformat(),
+            },
+            tenant_id=tenant["id"],
+            event_name="daily_report",
+        ))
     return results
 
 
-def run_due_reports() -> int:
+def run_due_reports():
     now = now_tr()
     with get_db() as conn:
         with conn.cursor() as cur:
@@ -1372,7 +1433,7 @@ def run_due_reports() -> int:
     sent = 0
     for tenant in tenants:
         cfg = get_bot_config(tenant)
-        if not cfg["webhook_url"]:
+        if not ((cfg["tg_bot_token"] and cfg["tg_chat_id"]) or cfg["webhook_url"]):
             continue
         if now.strftime("%H:%M") < cfg["report_hour"]:
             continue
@@ -1436,7 +1497,7 @@ CSRF_EXEMPT_ENDPOINTS = {"field_agent_ping"}
 _FORM_POST_RE = re.compile(r"(<form\b[^>]*\bmethod\s*=\s*[\"']?post[\"']?[^>]*>)", re.IGNORECASE)
 
 
-def csrf_token() -> str:
+def csrf_token():
     tok = session.get("_csrf")
     if not tok:
         tok = secrets.token_urlsafe(24)
@@ -1468,1040 +1529,1472 @@ def harden_response(resp):
         if "<form" in body.lower() and 'name="csrf_token"' not in body.lower():
             hidden = f'<input type="hidden" name="csrf_token" value="{csrf_token()}">'
             resp.set_data(_FORM_POST_RE.sub(lambda m: m.group(1) + hidden, body))
-        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        resp.headers["Cache-Control"] = "no-store"
     return resp
 
 
-def is_superadmin() -> bool:
-    return SUPERADMIN_ENABLED and session.get("superadmin") is True
+def _simple_page(title, text, code):
+    html = (
+        '<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1.0">'
+        f"<title>{title}</title></head>"
+        '<body style="background:#080d0b;color:#f8fafc;font-family:system-ui,sans-serif;'
+        'display:grid;place-items:center;min-height:100vh;margin:0;padding:20px;text-align:center">'
+        f'<div><h1 style="font-size:1.4rem">{title}</h1><p style="color:#9ca3af;margin:10px 0 18px">{text}</p>'
+        '<a href="/" style="color:#34d399">Ana sayfaya dön</a></div></body></html>'
+    )
+    return Response(html, status=code, mimetype="text/html")
 
 
-def has_tenant_access(tenant) -> bool:
-    return is_superadmin() or session.get("tenant_id") == tenant["id"]
+@app.errorhandler(400)
+def err_400(e):
+    return _simple_page("İstek doğrulanamadı", "Oturum süreniz dolmuş olabilir. Sayfayı yenileyip tekrar deneyin.", 400)
 
 
-def login_required_for_tenant(fn):
-    @functools.wraps(fn)
-    def wrapper(slug: str, *args, **kwargs):
+@app.errorhandler(403)
+def err_403(e):
+    return _simple_page("Erişim yok", "Bu sayfaya erişim yetkiniz bulunmuyor veya bağlantı anahtarı geçersiz.", 403)
+
+
+@app.errorhandler(404)
+def err_404(e):
+    return _simple_page("Sayfa bulunamadı", "Aradığınız sayfa mevcut değil.", 404)
+
+
+@app.errorhandler(413)
+def err_413(e):
+    return _simple_page("Dosya çok büyük", "Görsel boyutu en fazla 4 MB olabilir.", 413)
+
+
+@app.errorhandler(429)
+def err_429(e):
+    return _simple_page("Çok fazla deneme", "Lütfen birkaç dakika sonra tekrar deneyin.", 429)
+
+
+def tenant_login_required(view_func):
+    @functools.wraps(view_func)
+    def wrapped(slug, *args, **kwargs):
         tenant = get_tenant_by_slug(slug)
         if not tenant:
             abort(404)
-        if not has_tenant_access(tenant):
-            return redirect(url_for("tenant_login", slug=slug, next=request.full_path.rstrip("?")))
-        if not tenant_usable(tenant) and not is_superadmin():
-            return redirect(url_for("tenant_pending", slug=slug))
-        return fn(tenant, *args, **kwargs)
+        if slug not in session.get("tenant_auth_slugs", []):
+            return redirect(url_for("tenant_login", slug=slug, next=request.path))
+        g.tenant = tenant
+        return view_func(slug, *args, **kwargs)
 
-    return wrapper
-
-
-# ---------------------------------------------------------------------------
-# Ana vitrin ve hizmetler
-# ---------------------------------------------------------------------------
-@app.route("/")
-def index():
-    return render_template(
-        "index.html",
-        services=SERVICES_DATA,
-        wa_number=WHATSAPP_NUMBER,
-        price_starter=PLAN_PRICE_STARTER,
-        price_pro=PLAN_PRICE_PRO,
-        qr_addon_price=QR_ADDON_PRICE,
-    )
+    return wrapped
 
 
-@app.route("/hizmet/<service_id>")
-def service_detail(service_id: str):
-    service = next((s for s in SERVICES_DATA if s["id"] == service_id), None)
-    if not service:
-        abort(404)
-    return render_template("service_detail.html", service=service, wa_number=WHATSAPP_NUMBER)
+def tenant_panel_required(view_func):
+    @tenant_login_required
+    @functools.wraps(view_func)
+    def wrapped(slug, *args, **kwargs):
+        if not tenant_usable(g.tenant):
+            return redirect(url_for("tenant_panel", slug=slug))
+        return view_func(slug, *args, **kwargs)
+
+    return wrapped
 
 
-@app.route("/isletme-kayit", methods=["GET", "POST"])
-def business_register():
-    error = None
-    form_data = {
-        "business_name": "",
-        "company_legal_name": "",
-        "tax_office": "",
-        "tax_number": "",
-        "owner_email": "",
-        "whatsapp_number": "",
-        "slug": "",
-        "module_type": "kafe-randevu",
-        "plan": "starter",
-    }
-    if request.method == "POST":
-        ip = request.remote_addr or "0.0.0.0"
-        if rate_limited(f"reg:{ip}", 10, 3600):
-            error = "Çok fazla kayıt denemesi yapıldı. Lütfen daha sonra tekrar deneyin."
-        else:
-            for k in form_data:
-                form_data[k] = clean_text(request.form.get(k, ""), 160)
-            password = request.form.get("password", "")
-            if form_data["module_type"] not in VALID_MODULES:
-                form_data["module_type"] = "genel"
-            if form_data["plan"] not in {"starter", "pro"}:
-                form_data["plan"] = "starter"
+def superadmin_required(view_func):
+    @functools.wraps(view_func)
+    def wrapped(*args, **kwargs):
+        if not SUPERADMIN_ENABLED or not session.get("superadmin_auth"):
+            return redirect(url_for("superadmin_login", next=request.path))
+        return view_func(*args, **kwargs)
 
-            if not form_data["business_name"] or not form_data["owner_email"] or len(password) < 4:
-                error = "İşletme adı, e-posta ve en az 4 karakterli panel şifresi zorunludur."
-            else:
-                tenant = create_tenant(
-                    business_name=form_data["business_name"],
-                    owner_email=form_data["owner_email"],
-                    password=password,
-                    raw_slug=form_data["slug"],
-                    plan=form_data["plan"],
-                    module_type=form_data["module_type"],
-                    whatsapp_number=form_data["whatsapp_number"],
-                    company_legal_name=form_data["company_legal_name"],
-                    tax_office=form_data["tax_office"],
-                    tax_number=form_data["tax_number"],
-                )
-                session["tenant_id"] = tenant["id"]
-                return redirect(url_for("tenant_pending", slug=tenant["slug"]))
-
-    return render_template(
-        "business_register.html",
-        error=error,
-        form_data=form_data,
-        module_labels=MODULE_LABELS,
-        price_starter=PLAN_PRICE_STARTER,
-        price_pro=PLAN_PRICE_PRO,
-        qr_addon_price=QR_ADDON_PRICE,
-    )
+    return wrapped
 
 
-# ---------------------------------------------------------------------------
-# Isletme giris, bekleme / odeme ve panel
-# ---------------------------------------------------------------------------
-@app.route("/i/<slug>/giris", methods=["GET", "POST"])
-def tenant_login(slug: str):
+def device_authorized(tenant):
+    if tenant["slug"] in session.get("tenant_auth_slugs", []):
+        return True
+    k = request.args.get("k", "") or request.headers.get("X-Device-Key", "")
+    tok = tenant.get("access_token") or ""
+    return bool(k and tok and hmac.compare_digest(k.encode("utf-8"), tok.encode("utf-8")))
+
+
+def device_tenant(slug, module_check=None):
     tenant = get_tenant_by_slug(slug)
     if not tenant:
         abort(404)
-    next_url = safe_next(request.args.get("next") or request.form.get("next") or "", url_for("tenant_panel", slug=slug))
-    error = None
-
-    if request.method == "POST":
-        ip = request.remote_addr or "0.0.0.0"
-        if rate_limited(f"tlogin:{slug}:{ip}", 12, 300):
-            error = "Çok fazla giriş denemesi. Lütfen birkaç dakika bekleyin."
-        else:
-            password = request.form.get("password", "")
-            if check_password_hash(tenant["password_hash"], password):
-                session["tenant_id"] = tenant["id"]
-                if not tenant_usable(tenant):
-                    return redirect(url_for("tenant_pending", slug=slug))
-                return redirect(next_url)
-            error = "Panel şifresi hatalı."
-
-    return render_template("tenant_login.html", tenant=tenant, error=error, next_url=next_url)
+    if not device_authorized(tenant) or not tenant_usable(tenant):
+        abort(403)
+    if module_check and not module_check(tenant):
+        abort(403)
+    return tenant
 
 
-@app.route("/i/<slug>/cikis", methods=["POST"])
-def tenant_logout(slug: str):
-    session.pop("tenant_id", None)
-    return redirect(url_for("index"))
-
-
-@app.route("/i/<slug>/beklemede")
-def tenant_pending(slug: str):
-    tenant = get_tenant_by_slug(slug)
-    if not tenant:
-        abort(404)
-    if tenant_usable(tenant) and has_tenant_access(tenant):
-        return redirect(url_for("tenant_panel", slug=slug))
-
-    mod = tenant.get("module_type") or "genel"
+def render_pending(tenant, notified=False):
+    mod_type = tenant.get("module_type") or "genel"
+    is_logged_in = tenant["slug"] in session.get("tenant_auth_slugs", [])
     return render_template(
         "tenant_pending.html",
         tenant=tenant,
-        is_logged_in=has_tenant_access(tenant),
+        is_logged_in=is_logged_in,
+        mod_label=MODULE_LABELS.get(mod_type, MODULE_LABELS["genel"]),
         module_labels=MODULE_LABELS,
-        mod_label=MODULE_LABELS.get(mod, MODULE_LABELS["genel"]),
-        iban_holder=IBAN_HOLDER,
-        iban_bank=IBAN_BANK,
-        iban_number=IBAN_NUMBER,
-        price_starter=PLAN_PRICE_STARTER,
-        price_pro=PLAN_PRICE_PRO,
-        qr_addon_price=QR_ADDON_PRICE,
-        wa_number=WHATSAPP_NUMBER,
-        notified=request.args.get("notified") == "1",
+        services=SERVICES_DATA,
+        notified=notified or request.args.get("notified") == "1",
         saved_mod=request.args.get("saved_mod") == "1",
+        iban_holder=IBAN_HOLDER, iban_bank=IBAN_BANK, iban_number=IBAN_NUMBER,
+        price_starter=PLAN_PRICE_STARTER, price_pro=PLAN_PRICE_PRO, qr_addon_price=QR_ADDON_PRICE,
+        wa_number=WHATSAPP_NUMBER,
     )
 
 
-@app.route("/i/<slug>/odeme-bildir", methods=["POST"])
-def notify_iban_payment(slug: str):
+def back_to_panel(slug, msg="", tab=""):
+    kw = {}
+    if msg:
+        kw["bot_saved"] = msg
+    if tab:
+        kw["tab"] = tab
+    return redirect(url_for("tenant_panel", slug=slug, **kw))
+
+
+def login_session(slug):
+    authed = set(session.get("tenant_auth_slugs", []))
+    authed.add(slug)
+    session["tenant_auth_slugs"] = list(authed)
+    session.setdefault("tenant_role", "owner")
+    session.permanent = True
+
+
+# ---------------------------------------------------------------------------
+# Faz 4 Yardimcilari: Rezervasyon Saat/Kapasite Cakisma, Check-in & Webhook Log
+# ---------------------------------------------------------------------------
+def _parse_slot_window(date_str: str, time_str: str, duration_minutes: int = 90):
+    dt_start = datetime.strptime(f"{date_str.strip()} {time_str.strip()}", "%Y-%m-%d %H:%M")
+    dur = max(15, min(int(duration_minutes or 90), 480))
+    return dt_start, dt_start + timedelta(minutes=dur)
+
+
+def _intervals_overlap(start_a: datetime, end_a: datetime, start_b: datetime, end_b: datetime) -> bool:
+    return start_a < end_b and end_a > start_b
+
+
+@app.post("/api/tenant/<slug>/reservations/check-availability")
+@tenant_panel_required
+def api_check_reservation_availability(slug):
+    data = request.get_json(silent=True) or request.form
+    date_str = (data.get("date") or "").strip()
+    time_str = (data.get("time") or "").strip()
+    party_size = max(1, int(data.get("party_size") or 2))
+    duration_minutes = int(data.get("duration_minutes") or 90)
+
+    try:
+        req_start, req_end = _parse_slot_window(date_str, time_str, duration_minutes)
+    except ValueError:
+        return jsonify({"ok": False, "error": "Gecerli tarih (YYYY-MM-DD) ve saat (HH:MM) giriniz."}), 400
+
+    tid = g.tenant["id"]
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT table_name, capacity, status
+                  FROM dining_tables
+                 WHERE tenant_id = %s AND capacity >= %s
+                 ORDER BY capacity ASC, id ASC;
+                """,
+                (tid, party_size),
+            )
+            candidate_tables = [dict(r) for r in cur.fetchall()]
+
+            cur.execute(
+                """
+                SELECT res_date, slot, table_no, duration_minutes
+                  FROM reservations
+                 WHERE tenant_id = %s AND kind = 'table' AND is_active
+                   AND COALESCE(res_status, 'confirmed') NOT IN ('cancelled', 'no_show');
+                """,
+                (tid,),
+            )
+            busy_table_nos = set()
+            for r in cur.fetchall():
+                r_date = r["res_date"].isoformat() if hasattr(r["res_date"], "isoformat") else str(r["res_date"] or "")
+                r_slot = str(r.get("slot") or "").strip()
+                r_tno = r.get("table_no")
+                r_dur = int(r.get("duration_minutes") or 90)
+                if not r_date or not r_slot or r_tno is None:
+                    continue
+                try:
+                    ex_start, ex_end = _parse_slot_window(r_date, r_slot, r_dur)
+                except ValueError:
+                    continue
+                if _intervals_overlap(req_start, req_end, ex_start, ex_end):
+                    busy_table_nos.add(int(r_tno))
+
+            available_tables = []
+            for t in candidate_tables:
+                m = re.search(r"(\d+)", str(t.get("table_name") or ""))
+                t_num = int(m.group(1)) if m else None
+                if t_num is None or t_num not in busy_table_nos:
+                    available_tables.append(t)
+
+            return jsonify({
+                "ok": True,
+                "date": date_str,
+                "time": time_str,
+                "party_size": party_size,
+                "available_tables": available_tables,
+                "recommended_table": available_tables[0]["table_name"] if available_tables else None,
+            })
+
+
+@app.post("/api/tenant/<slug>/reservations/<int:res_id>/status")
+@tenant_panel_required
+def api_update_reservation_status(slug, res_id):
+    data = request.get_json(silent=True) or request.form
+    new_status = (data.get("status") or "").strip().lower()
+    if new_status not in VALID_RES_STATUSES:
+        return jsonify({"ok": False, "error": "Gecersiz rezervasyon durumu."}), 400
+
+    tid = g.tenant["id"]
+    is_active = new_status not in {"cancelled", "no_show"}
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE reservations
+                   SET res_status = %s, is_active = %s
+                 WHERE id = %s AND tenant_id = %s
+                RETURNING id, ticket_id, res_date, slot, table_no, res_status, is_active;
+                """,
+                (new_status, is_active, res_id, tid),
+            )
+            updated = cur.fetchone()
+            if not updated:
+                return jsonify({"ok": False, "error": "Rezervasyon bulunamadi."}), 404
+
+            table_no = updated.get("table_no")
+            if table_no is not None:
+                table_name = f"Masa {int(table_no)}"
+                if new_status == "checked_in":
+                    cur.execute(
+                        """
+                        UPDATE dining_tables
+                           SET status = 'occupied', updated_at = CURRENT_TIMESTAMP
+                         WHERE tenant_id = %s AND table_name = %s;
+                        """,
+                        (tid, table_name),
+                    )
+                elif new_status in {"cancelled", "no_show"}:
+                    cur.execute(
+                        """
+                        UPDATE dining_tables
+                           SET status = CASE WHEN status = 'reserved' THEN 'empty' ELSE status END,
+                               updated_at = CURRENT_TIMESTAMP
+                         WHERE tenant_id = %s AND table_name = %s;
+                        """,
+                        (tid, table_name),
+                    )
+
+            row_dict = dict(updated)
+            if hasattr(row_dict.get("res_date"), "isoformat"):
+                row_dict["res_date"] = row_dict["res_date"].isoformat()
+            return jsonify({"ok": True, "reservation": row_dict})
+
+
+@app.post("/api/tenant/<slug>/staff/add")
+@tenant_panel_required
+def api_add_staff_member(slug):
+    role_curr = (session.get("tenant_role") or "owner").lower()
+    if role_curr not in {"owner", "manager"}:
+        return jsonify({"ok": False, "error": "Personel ekleme yetkiniz yok."}), 403
+
+    data = request.get_json(silent=True) or request.form
+    staff_name = clean_text(str(data.get("staff_name") or ""), 120)
+    role = (data.get("role") or "cashier").strip().lower()
+    pin_code = (data.get("pin_code") or "").strip()
+
+    if role not in {"manager", "cashier", "waiter"}:
+        return jsonify({"ok": False, "error": "Gecersiz personel rolu."}), 400
+    if not staff_name or len(pin_code) < 4:
+        return jsonify({"ok": False, "error": "Personel adi ve en az 4 haneli PIN zorunludur."}), 400
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO tenant_staff (tenant_id, staff_name, role, pin_hash, is_active)
+                VALUES (%s, %s, %s, %s, TRUE)
+                RETURNING id, staff_name, role, is_active, created_at;
+                """,
+                (g.tenant["id"], staff_name, role, hash_pin(pin_code)),
+            )
+            row = dict(cur.fetchone())
+            if hasattr(row.get("created_at"), "isoformat"):
+                row["created_at"] = row["created_at"].isoformat()
+            return jsonify({"ok": True, "staff": row})
+
+
+@app.post("/api/tenant/<slug>/staff/pin-login")
+@tenant_panel_required
+def api_staff_pin_login(slug):
+    data = request.get_json(silent=True) or request.form
+    pin_code = (data.get("pin_code") or "").strip()
+    if not pin_code:
+        return jsonify({"ok": False, "error": "PIN kodu giriniz."}), 400
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, staff_name, role
+                  FROM tenant_staff
+                 WHERE tenant_id = %s AND pin_hash = %s AND is_active = TRUE
+                 LIMIT 1;
+                """,
+                (g.tenant["id"], hash_pin(pin_code)),
+            )
+            staff = cur.fetchone()
+            if not staff:
+                return jsonify({"ok": False, "error": "Hatali PIN kodu."}), 401
+
+            session["tenant_role"] = staff["role"]
+            session["tenant_staff_name"] = staff["staff_name"]
+            return jsonify({
+                "ok": True,
+                "staff_name": staff["staff_name"],
+                "role": staff["role"],
+            })
+
+
+@app.get("/api/tenant/<slug>/webhooks/logs")
+@tenant_panel_required
+def api_list_webhook_logs(slug):
+    limit = max(1, min(int(request.args.get("limit") or 30), 100))
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, event_name, target_url, status_code, success, response_snippet, attempt_count, created_at
+                  FROM webhook_logs
+                 WHERE tenant_id = %s
+                 ORDER BY id DESC
+                 LIMIT %s;
+                """,
+                (g.tenant["id"], limit),
+            )
+            logs = []
+            for r in cur.fetchall():
+                d = dict(r)
+                if hasattr(d.get("created_at"), "isoformat"):
+                    d["created_at"] = d["created_at"].isoformat()
+                logs.append(d)
+            return jsonify({"ok": True, "logs": logs})
+
+
+@app.post("/api/tenant/<slug>/webhooks/logs/<int:log_id>/retry")
+@tenant_panel_required
+def api_retry_webhook_log(slug, log_id):
+    tid = g.tenant["id"]
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT event_name, target_url, payload_json, attempt_count
+                  FROM webhook_logs
+                 WHERE id = %s AND tenant_id = %s;
+                """,
+                (log_id, tid),
+            )
+            orig = cur.fetchone()
+            if not orig:
+                return jsonify({"ok": False, "error": "Webhook kaydi bulunamadi."}), 404
+
+    payload_data = orig["payload_json"]
+    if isinstance(payload_data, str):
+        payload_data = json.loads(payload_data or "{}")
+
+    next_attempt = int(orig.get("attempt_count") or 1) + 1
+    cfg = {"webhook_url": orig["target_url"]}
+    ok, info = send_webhook(
+        cfg,
+        payload_data or {},
+        tenant_id=tid,
+        event_name=orig["event_name"],
+        attempt_count=next_attempt,
+    )
+    return jsonify({"ok": True, "sent_ok": ok, "info": info, "attempt_count": next_attempt})
+
+
+# ---------------------------------------------------------------------------
+# Genel / gorseller
+# ---------------------------------------------------------------------------
+@app.route("/healthz")
+def healthz():
+    return "ok", 200
+
+
+@app.route("/cron/daily-reports")
+def cron_daily_reports():
+    key = request.args.get("key", "")
+    if not CRON_SECRET or not hmac.compare_digest(key.encode("utf-8"), CRON_SECRET.encode("utf-8")):
+        abort(404)
+    return jsonify({"ok": True, "sent": run_due_reports()})
+
+
+def _img_response(data, ext):
+    resp = Response(data, mimetype=IMG_MIME[ext])
+    resp.headers["Cache-Control"] = "public, max-age=86400"
+    return resp
+
+
+@app.route("/logo.png")
+def serve_root_logo():
+    for candidate in (IMAGES_DIR / "logo.png", BASE_DIR / "logo.png"):
+        if candidate.exists() and candidate.is_file():
+            return send_from_directory(candidate.parent, candidate.name)
+    abort(404)
+
+
+def _serve_tenant_image(tenant_id, category, folder, filename):
+    safe_name = Path(filename).name
+    ext = Path(safe_name).suffix.lower()
+    if ext not in IMG_MIME:
+        abort(404)
+    stored = get_stored_image_from_db(tenant_id, category, safe_name)
+    if stored:
+        return _img_response(bytes(stored["data"]), ext)
+    target_dir = folder / str(tenant_id)
+    if (target_dir / safe_name).is_file():
+        return send_from_directory(target_dir, safe_name)
+    abort(404)
+
+
+@app.route("/images/logos/<int:tenant_id>/<path:filename>")
+def serve_tenant_logo(tenant_id, filename):
+    return _serve_tenant_image(tenant_id, "logos", LOGO_IMAGES_DIR, filename)
+
+
+@app.route("/images/menu/<int:tenant_id>/<path:filename>")
+def serve_menu_image(tenant_id, filename):
+    return _serve_tenant_image(tenant_id, "menu", MENU_IMAGES_DIR, filename)
+
+
+@app.route("/images/<path:filename>")
+def serve_image(filename):
+    if not IMAGES_DIR.exists():
+        abort(404)
+    if Path(filename).suffix.lower() in ALLOWED_IMG_EXTS and (IMAGES_DIR / filename).is_file():
+        return send_from_directory(IMAGES_DIR, filename)
+    stem = Path(filename).stem
+    for ext in (".jpg", ".jpeg", ".png", ".webp"):
+        candidate = IMAGES_DIR / f"{stem}{ext}"
+        if candidate.is_file():
+            return send_from_directory(IMAGES_DIR, candidate.name)
+    abort(404)
+
+
+@app.route("/", methods=["GET"])
+def index():
+    created_slug = request.args.get("created", "").strip()
+    created_tenant = None
+    if created_slug and created_slug in session.get("tenant_auth_slugs", []):
+        created_tenant = get_tenant_by_slug(created_slug)
+    return render_template(
+        "index.html",
+        services=SERVICES_DATA, wa_number=WHATSAPP_NUMBER,
+        iban_holder=IBAN_HOLDER, iban_bank=IBAN_BANK, iban_number=IBAN_NUMBER,
+        price_starter=PLAN_PRICE_STARTER, price_pro=PLAN_PRICE_PRO, qr_addon_price=QR_ADDON_PRICE,
+        created_tenant=created_tenant, saas_error=request.args.get("err", "").strip()[:200] or None,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Kayit / giris (B2B Uyelik -> Panelde Modul Secimi & Odeme)
+# ---------------------------------------------------------------------------
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+@app.route("/saas/register", methods=["POST"])
+def register_tenant():
+    if rate_limited(f"reg:{request.remote_addr}", 5, 3600):
+        abort(429)
+    business_name = clean_text(request.form.get("business_name"), 120)
+    raw_slug = clean_text(request.form.get("slug"), 60)
+    owner_email = clean_text(request.form.get("owner_email"), 160)
+    whatsapp_number = clean_text(request.form.get("whatsapp_number"), 30)
+    company_legal_name = clean_text(request.form.get("company_legal_name") or business_name, 160)
+    tax_office = clean_text(request.form.get("tax_office"), 100)
+    tax_number = clean_text(request.form.get("tax_number"), 40)
+    password = request.form.get("password", "").strip()
+    plan = request.form.get("plan", "starter").strip()
+    module_type = request.form.get("module_type", "genel").strip()
+
+    if not business_name or not _EMAIL_RE.match(owner_email) or len(password) < 8:
+        return redirect(url_for("index", err="İşletme/firma adı, geçerli e-posta ve en az 8 karakter şifre zorunlu.") + "#saas-basla")
+    try:
+        tenant = create_tenant(
+            business_name,
+            owner_email,
+            password,
+            raw_slug=raw_slug,
+            plan=plan,
+            module_type=module_type,
+            whatsapp_number=whatsapp_number,
+            company_legal_name=company_legal_name,
+            tax_office=tax_office,
+            tax_number=tax_number,
+        )
+    except Exception as exc:
+        app.logger.error("Kayit hatasi: %s", exc)
+        return redirect(url_for("index", err="Kayıt sırasında bir hata oluştu, lütfen tekrar deneyin.") + "#saas-basla")
+    login_session(tenant["slug"])
+    return redirect(url_for("tenant_panel", slug=tenant["slug"]))
+
+
+@app.route("/saas/login", methods=["POST"])
+def tenant_quick_login():
+    slug = slugify(request.form.get("slug", "").strip())
+    if rate_limited(f"ql:{request.remote_addr}", 10, 600):
+        abort(429)
+    password = request.form.get("password", "").strip()
+    tenant = get_tenant_by_slug(slug)
+    if tenant and check_password_hash(tenant["password_hash"], password):
+        login_session(tenant["slug"])
+        return redirect(url_for("tenant_panel", slug=tenant["slug"]))
+    return redirect(url_for("index", err="B2B slug veya şifre hatalı.") + "#saas-basla")
+
+
+@app.route("/i/<slug>/login", methods=["GET", "POST"])
+def tenant_login(slug):
     tenant = get_tenant_by_slug(slug)
     if not tenant:
         abort(404)
-    if not has_tenant_access(tenant):
-        return redirect(url_for("tenant_login", slug=slug, next=url_for("tenant_pending", slug=slug)))
+    fallback = url_for("tenant_panel", slug=slug)
+    next_url = safe_next(request.args.get("next"), fallback)
+    error = None
+    if request.method == "POST":
+        if rate_limited(f"tl:{request.remote_addr}:{slug}", 8, 600):
+            abort(429)
+        if check_password_hash(tenant["password_hash"], request.form.get("password", "").strip()):
+            login_session(slug)
+            return redirect(safe_next(request.form.get("next"), next_url))
+        error = "Şifre hatalı."
+    return render_template("tenant_login.html", tenant=tenant, error=error)
 
-    action_mode = (request.form.get("action_mode") or "payment").strip()
-    chosen_mod = (request.form.get("module_type") or tenant.get("module_type") or "genel").strip()
-    chosen_plan = (request.form.get("plan") or tenant.get("plan") or "starter").strip()
-    if chosen_mod not in VALID_MODULES:
-        chosen_mod = "genel"
-    if chosen_plan not in {"starter", "pro"}:
-        chosen_plan = "starter"
 
-    note = clean_text(request.form.get("payment_note", ""), 250)
-    default_tables = 8 if chosen_mod in {"kafe-randevu", "masa-qr"} else (tenant.get("table_count") or 4)
-    qr_included = chosen_plan == "pro"
+@app.route("/i/<slug>/logout", methods=["POST"])
+def tenant_logout(slug):
+    authed = set(session.get("tenant_auth_slugs", []))
+    authed.discard(slug)
+    session["tenant_auth_slugs"] = list(authed)
+    return redirect(url_for("tenant_login", slug=slug))
+
+
+@app.route("/i/<slug>/odeme-bildir", methods=["POST"])
+def notify_iban_payment(slug):
+    tenant = get_tenant_by_slug(slug)
+    if not tenant:
+        abort(404)
+    if rate_limited(f"pay:{request.remote_addr}", 15, 3600):
+        abort(429)
+
+    note = clean_text(request.form.get("payment_note"), 240)
+    action_mode = request.form.get("action_mode", "payment").strip()
+    is_logged_in = slug in session.get("tenant_auth_slugs", [])
+
+    # Henüz aktif olmamış hesapta modül & paket seçimi panelden yapılabilir
+    chosen_module = request.form.get("module_type", "").strip()
+    chosen_plan = request.form.get("plan", "").strip()
+
+    new_mod = tenant.get("module_type") or "genel"
+    new_plan = tenant.get("plan") or "starter"
+    if not tenant_usable(tenant) and is_logged_in:
+        if chosen_module in VALID_MODULES:
+            new_mod = chosen_module
+        if chosen_plan in {"starter", "pro"}:
+            new_plan = chosen_plan
+
+    default_tables = 8 if new_mod in {"kafe-randevu", "masa-qr"} else (tenant.get("table_count") or 4)
+    qr_active = (new_plan == "pro") or bool(tenant.get("qr_addon_active"))
 
     with get_db() as conn:
         with conn.cursor() as cur:
-            if action_mode == "save_module_only":
+            if action_mode == "save_module_only" and is_logged_in and not tenant_usable(tenant):
                 cur.execute(
-                    """UPDATE tenants SET module_type = %s, plan = %s, table_count = %s,
-                       qr_addon_active = CASE WHEN %s THEN TRUE ELSE qr_addon_active END
+                    """UPDATE tenants SET module_type = %s, plan = %s, table_count = %s, qr_addon_active = %s
                        WHERE id = %s""",
-                    (chosen_mod, chosen_plan, default_tables, qr_included, tenant["id"]),
+                    (new_mod, new_plan, default_tables, qr_active, tenant["id"]),
                 )
-                return redirect(url_for("tenant_pending", slug=slug, saved_mod="1"))
+                return redirect(url_for("tenant_panel", slug=slug, saved_mod="1"))
 
             cur.execute(
-                """UPDATE tenants SET module_type = %s, plan = %s, table_count = %s,
-                   payment_note = %s, payment_requested = TRUE,
-                   qr_addon_active = CASE WHEN %s THEN TRUE ELSE qr_addon_active END
-                   WHERE id = %s""",
-                (
-                    chosen_mod,
-                    chosen_plan,
-                    default_tables,
-                    note or f"{MODULE_LABELS.get(chosen_mod, chosen_mod)} ({chosen_plan.upper()}) IBAN ödemesi bildirildi.",
-                    qr_included,
-                    tenant["id"],
-                ),
+                """UPDATE tenants
+                      SET module_type = %s,
+                          plan = %s,
+                          table_count = %s,
+                          qr_addon_active = %s,
+                          payment_requested = TRUE,
+                          payment_note = %s
+                    WHERE id = %s""",
+                (new_mod, new_plan, default_tables, qr_active, note, tenant["id"]),
             )
-    return redirect(url_for("tenant_pending", slug=slug, notified="1"))
+
+    if is_logged_in:
+        return redirect(url_for("tenant_panel", slug=slug, notified="1"))
+    return redirect(url_for("tenant_public", slug=slug, notified="1"))
 
 
-def _build_qr_list(tenant, request_root: str) -> list[dict]:
-    count = max(1, min(int(tenant.get("table_count") or 8), 60))
-    base = request_root.rstrip("/")
-    items = []
-    for n in range(1, count + 1):
-        target = f"{base}/i/{tenant['slug']}?masa={n}"
-        qr_img = f"https://api.qrserver.com/v1/create-qr-code/?size=220x220&data={quote(target, safe='')}"
-        items.append({"table_no": n, "label": f"Masa {n}", "target_url": target, "qr_img_url": qr_img})
-    return items
-
-
-@app.route("/i/<slug>/panel")
-@login_required_for_tenant
-def tenant_panel(tenant):
-    ctx = resolve_panel_context(tenant)
-    mod = ctx["mod_key"]
-    tickets = load_tickets(tenant["id"])
-    stats = ticket_stats(tenant["id"])
-    menu_items = get_menu_items(tenant["id"]) if ctx["show_menu_tab"] else []
-    qr_list = _build_qr_list(tenant, request.host_url) if ctx["qr_unlocked"] else []
-
-    token = tenant.get("access_token") or ""
-    base = request.host_url.rstrip("/")
-    kds_url = f"{base}/i/{tenant['slug']}/mutfak?t={token}"
-    saha_url = f"{base}/i/{tenant['slug']}/saha?t={token}"
-
-    agents = get_field_agents(tenant["id"]) if mod == "mobil-saha" else []
-    bot_cfg = get_bot_config(tenant) if mod == "web-otomasyon" else {}
-    bot_logs = get_bot_logs(tenant["id"], 20) if mod == "web-otomasyon" else []
-    pos_products, pos_sold, pos_rev, pos_sales = get_pos_overview(tenant["id"]) if mod == "masaustu-otomasyon" else ([], 0, 0.0, [])
-
+# ---------------------------------------------------------------------------
+# Mutfak ekrani (KDS)
+# ---------------------------------------------------------------------------
+@app.route("/i/<slug>/mutfak", methods=["GET"])
+def kitchen_kds_screen(slug):
+    tenant = device_tenant(slug, tenant_has_qr_access)
+    active_orders = load_tickets(tenant["id"], limit=100, statuses=["Yeni", "İnceleniyor"])
     return render_template(
-        "tenant_panel.html",
-        tenant=tenant,
-        tickets=tickets,
-        total_count=stats["total"],
-        yeni_count=stats["yeni"],
-        tamam_count=stats["tamam"],
-        mod_label=ctx["mod_label"],
-        panel_title=ctx["panel_title"],
-        show_menu_tab=ctx["show_menu_tab"],
-        qr_unlocked=ctx["qr_unlocked"],
-        qr_addon_price=QR_ADDON_PRICE,
-        iban_holder=IBAN_HOLDER,
-        iban_number=IBAN_NUMBER,
-        addon_notified=request.args.get("addon_notified") == "1",
-        bot_saved=request.args.get("bot_saved") or "",
-        menu_items=menu_items,
-        qr_list=qr_list,
-        kds_url=kds_url,
-        saha_url=saha_url,
-        agents=agents,
-        bot_cfg=bot_cfg,
-        bot_logs=bot_logs,
-        pos_products=pos_products,
-        pos_total_sold=pos_sold,
-        pos_total_revenue=pos_rev,
-        pos_sales=pos_sales,
-        start_tab=request.args.get("tab") or "",
+        "kitchen_kds.html", tenant=tenant, active_orders=active_orders,
+        k=request.args.get("k", ""),
+        latest_id=active_orders[0]["id"] if active_orders else "",
     )
 
 
-@app.route("/i/<slug>/panel/poll")
-@login_required_for_tenant
-def tenant_panel_poll(tenant):
-    stats = ticket_stats(tenant["id"])
-    latest = stats["latest"]
-    return jsonify(
-        {
-            "total": stats["total"],
-            "yeni": stats["yeni"],
-            "tamam": stats["tamam"],
-            "latest_id": latest["id"] if latest else "",
-            "latest_name": latest["name"] if latest else "",
-            "latest_service": latest["service"] if latest else "",
-        }
-    )
+@app.route("/i/<slug>/mutfak/poll", methods=["GET"])
+def kds_poll(slug):
+    tenant = device_tenant(slug, tenant_has_qr_access)
+    st = ticket_stats(tenant["id"])
+    return jsonify({"active_count": st["active"], "latest_id": st["latest_active_id"]})
 
 
-@app.route("/i/<slug>/panel/ayarlar", methods=["POST"])
-@login_required_for_tenant
-def tenant_update_settings(tenant):
-    company_legal_name = clean_text(request.form.get("company_legal_name", ""), 160)
-    tax_office = clean_text(request.form.get("tax_office", ""), 100)
-    tax_number = clean_text(request.form.get("tax_number", ""), 40)
-    wa_num = clean_text(request.form.get("whatsapp_number", ""), 30)
-    try:
-        table_count = max(1, min(int(request.form.get("table_count") or 8), 200))
-    except ValueError:
-        table_count = 8
-
-    logo_file = request.files.get("logo")
-    new_logo = save_uploaded_image(LOGO_IMAGES_DIR, tenant["id"], logo_file) if logo_file and logo_file.filename else ""
-
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            if new_logo:
-                cur.execute(
-                    """UPDATE tenants SET company_legal_name = %s, tax_office = %s, tax_number = %s,
-                       whatsapp_number = %s, table_count = %s, logo_filename = %s WHERE id = %s""",
-                    (company_legal_name, tax_office, tax_number, wa_num, table_count, new_logo, tenant["id"]),
-                )
-            else:
-                cur.execute(
-                    """UPDATE tenants SET company_legal_name = %s, tax_office = %s, tax_number = %s,
-                       whatsapp_number = %s, table_count = %s WHERE id = %s""",
-                    (company_legal_name, tax_office, tax_number, wa_num, table_count, tenant["id"]),
-                )
-    return redirect(url_for("tenant_panel", slug=tenant["slug"], tab="pane-settings"))
-
-
-@app.route("/i/<slug>/panel/qr-eklenti-talep", methods=["POST"])
-@login_required_for_tenant
-def tenant_request_qr_addon(tenant):
-    note = clean_text(request.form.get("qr_addon_note", ""), 200) or "Masa QR eklenti ödemesi bildirildi."
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE tenants SET qr_addon_requested = TRUE, qr_addon_note = %s WHERE id = %s",
-                (note, tenant["id"]),
-            )
-    return redirect(url_for("tenant_panel", slug=tenant["slug"], tab="pane-settings", addon_notified="1"))
-
-
-@app.route("/i/<slug>/panel/token-yenile", methods=["POST"])
-@login_required_for_tenant
-def tenant_regen_token(tenant):
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("UPDATE tenants SET access_token = %s WHERE id = %s", (secrets.token_urlsafe(24), tenant["id"]))
-    return redirect(url_for("tenant_panel", slug=tenant["slug"], tab="pane-settings"))
+@app.route("/i/<slug>/mutfak/update/<ticket_id>", methods=["POST"])
+def kds_update_order(slug, ticket_id):
+    tenant = device_tenant(slug, tenant_has_qr_access)
+    new_status = request.form.get("status", "Tamamlandı").strip()
+    if new_status not in TICKET_STATUSES:
+        new_status = "Tamamlandı"
+    update_ticket_status(tenant["id"], ticket_id, new_status)
+    return redirect(url_for("kitchen_kds_screen", slug=slug, k=request.args.get("k", "")))
 
 
 # ---------------------------------------------------------------------------
-# Menu, QR yazdirma ve mutfak ekrani (KDS)
+# Saha ekibi
 # ---------------------------------------------------------------------------
-@app.route("/i/<slug>/panel/menu/ekle", methods=["POST"])
-@login_required_for_tenant
-def tenant_add_menu_item(tenant):
-    name = clean_text(request.form.get("name", ""), 120)
-    price = clean_text(request.form.get("price", ""), 40)
-    description = clean_text(request.form.get("description", ""), 240)
-    img_file = request.files.get("image")
-    img_name = save_uploaded_image(MENU_IMAGES_DIR, tenant["id"], img_file) if img_file and img_file.filename else ""
-    if name:
-        with get_db() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """INSERT INTO tenant_menu_items (tenant_id, name, price, description, image_filename)
-                       VALUES (%s,%s,%s,%s,%s)""",
-                    (tenant["id"], name, price, description, img_name),
-                )
-    return redirect(url_for("tenant_panel", slug=tenant["slug"], tab="pane-menu"))
+def _is_saha(tenant):
+    return (tenant.get("module_type") or "") == "mobil-saha"
 
 
-@app.route("/i/<slug>/panel/menu/<int:item_id>/sil", methods=["POST"])
-@login_required_for_tenant
-def tenant_delete_menu_item(tenant, item_id: int):
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM tenant_menu_items WHERE id = %s AND tenant_id = %s", (item_id, tenant["id"]))
-    return redirect(url_for("tenant_panel", slug=tenant["slug"], tab="pane-menu"))
-
-
-@app.route("/i/<slug>/qr-yazdir")
-@login_required_for_tenant
-def tenant_qr_print(tenant):
-    if not tenant_has_qr_access(tenant):
-        abort(403)
-    return render_template("qr_print.html", tenant=tenant, qr_list=_build_qr_list(tenant, request.host_url))
-
-
-def _token_ok(tenant) -> bool:
-    if has_tenant_access(tenant):
-        return True
-    tok = (request.args.get("t") or request.form.get("t") or request.headers.get("X-Access-Token") or "").strip()
-    saved = tenant.get("access_token") or ""
-    return bool(tok and saved and hmac.compare_digest(tok.encode("utf-8"), saved.encode("utf-8")))
-
-
-@app.route("/i/<slug>/mutfak")
-def kitchen_display(slug: str):
-    tenant = get_tenant_by_slug(slug)
-    if not tenant or not tenant_usable(tenant) or not tenant_has_qr_access(tenant):
-        abort(404)
-    if not _token_ok(tenant):
-        return redirect(url_for("tenant_login", slug=slug, next=request.full_path.rstrip("?")))
-    tok = (request.args.get("t") or tenant.get("access_token") or "").strip()
-    return render_template(
-        "kds.html",
-        tenant=tenant,
-        token=tok,
-        tickets=load_tickets(tenant["id"], limit=100, statuses=("Yeni", "İnceleniyor")),
-    )
-
-
-@app.route("/i/<slug>/mutfak/veri")
-def kitchen_data(slug: str):
-    tenant = get_tenant_by_slug(slug)
-    if not tenant or not tenant_usable(tenant) or not tenant_has_qr_access(tenant):
-        abort(404)
-    if not _token_ok(tenant):
-        abort(403)
-    rows = load_tickets(tenant["id"], limit=100, statuses=("Yeni", "İnceleniyor"))
-    stats = ticket_stats(tenant["id"])
-    return jsonify(
-        {
-            "active_count": stats["active"],
-            "latest_active_id": stats["latest_active_id"],
-            "tickets": [
-                {
-                    "id": r["id"],
-                    "name": r["name"],
-                    "phone": r["phone"] or "",
-                    "service": r["service"] or "",
-                    "message": r["message"] or "",
-                    "status": r["status"],
-                    "created_at": r["created_at"],
-                    "elapsed_mins": r["elapsed_mins"],
-                    "urgency_level": r["urgency_level"],
-                }
-                for r in rows
-            ],
-        }
-    )
-
-
-@app.route("/i/<slug>/mutfak/durum/<ticket_id>", methods=["POST"])
-def kitchen_set_status(slug: str, ticket_id: str):
-    tenant = get_tenant_by_slug(slug)
-    if not tenant or not tenant_usable(tenant) or not tenant_has_qr_access(tenant):
-        abort(404)
-    if not _token_ok(tenant):
-        abort(403)
-    new_status = (request.form.get("status") or "").strip()
-    if new_status in TICKET_STATUSES:
-        update_ticket_status(tenant["id"], ticket_id, new_status)
-    tok = (request.form.get("t") or request.args.get("t") or "").strip()
-    return redirect(url_for("kitchen_display", slug=slug, t=tok) if tok else url_for("kitchen_display", slug=slug))
-
-
-# ---------------------------------------------------------------------------
-# Saha elemani canli takip
-# ---------------------------------------------------------------------------
-@app.route("/i/<slug>/saha")
-def field_agent_view(slug: str):
-    tenant = get_tenant_by_slug(slug)
-    if not tenant or not tenant_usable(tenant) or tenant.get("module_type") != "mobil-saha":
-        abort(404)
-    if not _token_ok(tenant):
-        return redirect(url_for("tenant_login", slug=slug, next=request.full_path.rstrip("?")))
-    tok = (request.args.get("t") or tenant.get("access_token") or "").strip()
-    return render_template("saha_agent.html", tenant=tenant, token=tok)
+@app.route("/i/<slug>/saha", methods=["GET"])
+def field_agent_terminal(slug):
+    tenant = device_tenant(slug, _is_saha)
+    return render_template("field_agent.html", tenant=tenant, k=request.args.get("k", ""))
 
 
 @app.route("/i/<slug>/saha/ping", methods=["POST"])
-def field_agent_ping(slug: str):
+def field_agent_ping(slug):
     tenant = get_tenant_by_slug(slug)
-    if not tenant or not tenant_usable(tenant) or tenant.get("module_type") != "mobil-saha":
-        abort(404)
-    if not _token_ok(tenant):
-        return jsonify({"ok": False, "error": "Yetkisiz cihaz anahtarı"}), 403
-    data = request.get_json(silent=True) or request.form or {}
+    if not tenant or not device_authorized(tenant) or not tenant_usable(tenant) or not _is_saha(tenant):
+        return jsonify({"ok": False}), 403
+    if rate_limited(f"ping:{request.remote_addr}:{slug}", 60, 60):
+        return jsonify({"ok": False}), 429
+    data = request.get_json(silent=True) or {}
     agent_name = clean_text(str(data.get("agent_name") or ""), 80)
     if not agent_name:
-        return jsonify({"ok": False, "error": "Personel adı gerekli"}), 400
-    status_text = clean_text(str(data.get("status_text") or "Sahada Aktif"), 80)
-    active_package = clean_text(str(data.get("active_package") or ""), 120)
-    target_customer = clean_text(str(data.get("target_customer") or ""), 120)
-    lat = clean_text(str(data.get("latitude") or ""), 32)
-    lng = clean_text(str(data.get("longitude") or ""), 32)
-    charging = str(data.get("is_charging") or "").lower() in ("1", "true", "yes", "on")
-    try:
-        bat = int(data.get("battery_level"))
-        if bat < 0 or bat > 100:
-            bat = -1
-    except (TypeError, ValueError):
-        bat = -1
+        return jsonify({"ok": False, "err": "agent_name required"}), 400
 
+    active_package = clean_text(str(data.get("active_package") or ""), 140)
+    target_customer = clean_text(str(data.get("target_customer") or ""), 160)
+    status_text = clean_text(str(data.get("status_text") or "Sahada Aktif"), 80)
+    try:
+        battery_level = max(-1, min(100, int(data.get("battery_level", -1))))
+    except (TypeError, ValueError):
+        battery_level = -1
+    is_charging = bool(data.get("is_charging", False))
+
+    def coord(v, lo, hi):
+        try:
+            f = float(v)
+            return f"{f:.6f}" if lo <= f <= hi else ""
+        except (TypeError, ValueError):
+            return ""
+
+    lat, lng = coord(data.get("latitude"), -90, 90), coord(data.get("longitude"), -180, 180)
     now = now_tr()
+
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id FROM field_agents WHERE tenant_id = %s AND LOWER(agent_name) = LOWER(%s) ORDER BY id DESC LIMIT 1",
+                "SELECT id FROM field_agents WHERE tenant_id = %s AND LOWER(agent_name) = LOWER(%s)",
                 (tenant["id"], agent_name),
             )
             existing = cur.fetchone()
             if existing:
                 cur.execute(
-                    """UPDATE field_agents
-                       SET agent_name=%s, status_text=%s, active_package=%s, target_customer=%s,
-                           battery_level=%s, is_charging=%s, latitude=%s, longitude=%s, updated_at=%s
-                       WHERE id=%s AND tenant_id=%s""",
+                    """UPDATE field_agents SET active_package=%s, target_customer=%s, battery_level=%s, is_charging=%s,
+                       latitude=%s, longitude=%s, status_text=%s, updated_at=%s WHERE id=%s""",
                     (
-                        agent_name, status_text, active_package, target_customer,
-                        bat, charging, lat, lng, now, existing["id"], tenant["id"],
+                        active_package, target_customer, battery_level, is_charging,
+                        lat, lng, status_text, now, existing["id"],
                     ),
                 )
             else:
                 cur.execute(
-                    """INSERT INTO field_agents
-                       (tenant_id, agent_name, status_text, active_package, target_customer,
-                        battery_level, is_charging, latitude, longitude, updated_at)
+                    """INSERT INTO field_agents (tenant_id, agent_name, active_package, target_customer,
+                       battery_level, is_charging, latitude, longitude, status_text, updated_at)
                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                     (
-                        tenant["id"], agent_name, status_text, active_package, target_customer,
-                        bat, charging, lat, lng, now,
+                        tenant["id"], agent_name, active_package, target_customer,
+                        battery_level, is_charging, lat, lng, status_text, now,
                     ),
                 )
-    return jsonify({"ok": True, "updated_at": now.strftime("%H:%M:%S")})
+    return jsonify({"ok": True})
 
 
-@app.route("/i/<slug>/panel/saha/veri")
-@login_required_for_tenant
-def panel_saha_data(tenant):
-    return jsonify({"agents": get_field_agents(tenant["id"])})
+@app.route("/i/<slug>/panel/saha/data")
+@tenant_panel_required
+def panel_saha_data(slug):
+    return jsonify({"agents": get_field_agents(g.tenant["id"])})
 
 
-@app.route("/i/<slug>/panel/saha/<int:agent_id>/sil", methods=["POST"])
-@login_required_for_tenant
-def panel_saha_delete(tenant, agent_id: int):
+@app.route("/i/<slug>/panel/saha/<int:agent_id>/delete", methods=["POST"])
+@tenant_panel_required
+def panel_saha_delete(slug, agent_id):
     with get_db() as conn:
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM field_agents WHERE id = %s AND tenant_id = %s", (agent_id, tenant["id"]))
-    return redirect(url_for("tenant_panel", slug=tenant["slug"], tab="pane-saha"))
+            cur.execute("DELETE FROM field_agents WHERE id = %s AND tenant_id = %s", (agent_id, g.tenant["id"]))
+    return back_to_panel(slug, "Saha elemanı kaydı silindi.", "pane-saha")
 
 
 # ---------------------------------------------------------------------------
-# Web otomasyon (Webhook / WhatsApp / veri cekme - Telegram yok)
+# Musteri tarafi: Masa QR
 # ---------------------------------------------------------------------------
-@app.route("/i/<slug>/panel/bot/kaydet", methods=["POST"])
-@login_required_for_tenant
-def tenant_save_bot_config(tenant):
-    prev = get_bot_config(tenant)
-    new_token = (request.form.get("wa_api_token") or "").strip()
-    hour = (request.form.get("report_hour") or "21:00").strip()
-    if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", hour):
-        hour = "21:00"
-    cfg = {
-        "wa_api_url": clean_text(request.form.get("wa_api_url", ""), 300),
-        "wa_api_token": new_token if new_token else prev["wa_api_token"],
-        "wa_template_name": clean_text(request.form.get("wa_template_name", ""), 100),
-        "wa_auto_reply": bool(request.form.get("wa_auto_reply")),
-        "scraper_url": clean_text(request.form.get("scraper_url", ""), 300),
-        "report_hour": hour,
-        "webhook_url": clean_text(request.form.get("webhook_url", ""), 300),
-    }
-    save_bot_config(tenant["id"], cfg)
-    bot_log(tenant["id"], f"Entegrasyon ayarları güncellendi (Rapor saati: {hour}).")
-    return redirect(url_for("tenant_panel", slug=tenant["slug"], tab="pane-bots", bot_saved="Ayarlar kaydedildi."))
+def sanitize_masa(raw, cap):
+    m = re.fullmatch(r"Masa (\d{1,3})", (raw or "").strip())
+    if m and 1 <= int(m.group(1)) <= cap:
+        return f"Masa {int(m.group(1))}"
+    return ""
 
 
-@app.route("/i/<slug>/panel/bot/calistir", methods=["POST"])
-@login_required_for_tenant
-def tenant_run_bot_action(tenant):
-    action = (request.form.get("bot_action") or "").strip()
-    cfg = get_bot_config(tenant)
-    msg = "İşlem tamamlandı."
-    if action == "test":
-        sample = f"Test bildirimi — {tenant['business_name']} ({now_tr().strftime('%d.%m.%Y %H:%M')})"
-        res = send_report_to_channels(tenant, cfg, sample)
-        if not res:
-            msg = "Webhook URL tanımlanmamış."
-            bot_log(tenant["id"], "Test bildirimi gönderilemedi: Webhook URL eksik.", "warn")
-        else:
-            for ok, info in res:
-                bot_log(tenant["id"], f"Test → {info}", "info" if ok else "error")
-            msg = "Test bildirimi gönderildi: " + ", ".join(info for _, info in res)
-    elif action == "pull_data":
-        report_text = build_daily_report(tenant, cfg)
-        res = send_report_to_channels(tenant, cfg, report_text)
-        if res:
-            for ok, info in res:
-                bot_log(tenant["id"], f"Rapor → {info}", "info" if ok else "error")
-        bot_log(tenant["id"], "Rapor üretildi: " + report_text.replace("\n", " | "))
-        msg = "Rapor oluşturuldu ve loglara işlendi."
-    return redirect(url_for("tenant_panel", slug=tenant["slug"], tab="pane-bots", bot_saved=msg))
-
-
-@app.route("/cron/gunluk-rapor")
-def cron_daily_reports():
-    secret = request.args.get("key") or request.headers.get("X-Cron-Key") or ""
-    if not CRON_SECRET or not hmac.compare_digest(secret.encode("utf-8"), CRON_SECRET.encode("utf-8")):
-        abort(403)
-    return jsonify({"ok": True, "sent_tenants": run_due_reports(), "time": now_tr().strftime("%Y-%m-%d %H:%M")})
-
-
-# ---------------------------------------------------------------------------
-# Masaustu / barkod kasa
-# ---------------------------------------------------------------------------
-@app.route("/i/<slug>/panel/kasa/urun-ekle", methods=["POST"])
-@login_required_for_tenant
-def tenant_pos_add_product(tenant):
-    barcode = clean_text(request.form.get("barcode", ""), 64)
-    name = clean_text(request.form.get("name", ""), 140)
+def build_order_summary(cart_json, menu_items):
     try:
-        price = max(0.0, float((request.form.get("price") or "0").replace(",", ".")))
-        stock = int(float(request.form.get("stock") or "0"))
+        cart = json.loads(cart_json or "{}")
+        if not isinstance(cart, dict):
+            return ""
     except ValueError:
-        price, stock = 0.0, 0
-    if barcode and name:
-        with get_db() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """INSERT INTO pos_products (tenant_id, barcode, name, price, stock) VALUES (%s,%s,%s,%s,%s)
-                       ON CONFLICT (tenant_id, barcode) DO UPDATE
-                       SET name = EXCLUDED.name, price = EXCLUDED.price, stock = EXCLUDED.stock""",
-                    (tenant["id"], barcode, name, price, stock),
-                )
-    return redirect(url_for("tenant_panel", slug=tenant["slug"], tab="pane-pos"))
+        return ""
+    by_id = {str(i["id"]): i for i in menu_items}
+    lines, total = [], 0.0
+    for key, qty in cart.items():
+        try:
+            qty = max(0, min(50, int(qty)))
+        except (TypeError, ValueError):
+            continue
+        item = by_id.get(str(key))
+        if item and qty:
+            lines.append(f"{qty}x {item['name']}" + (f" ({item['price']})" if item["price"] else ""))
+            total += qty * item["numeric_price"]
+    summary = ", ".join(lines)
+    if summary and total > 0:
+        summary += f" | Toplam: {total:.0f} TL"
+    return summary
 
 
-@app.route("/i/<slug>/panel/kasa/okut", methods=["POST"])
-@login_required_for_tenant
-def tenant_pos_scan(tenant):
-    barcode = clean_text(request.form.get("barcode", ""), 64)
-    try:
-        qty = max(1, int(request.form.get("qty") or "1"))
-    except ValueError:
-        qty = 1
-    msg = ""
-    if barcode:
-        with get_db() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT * FROM pos_products WHERE tenant_id = %s AND barcode = %s FOR UPDATE",
-                    (tenant["id"], barcode),
-                )
-                prod = cur.fetchone()
-                if not prod:
-                    msg = f"Barkod bulunamadı: {barcode}"
-                else:
-                    unit = float(prod["price"])
-                    tot = round(unit * qty, 2)
-                    cur.execute(
-                        "UPDATE pos_products SET stock = stock - %s, sold_today = sold_today + %s WHERE id = %s",
-                        (qty, qty, prod["id"]),
-                    )
-                    cur.execute(
-                        """INSERT INTO pos_sales (tenant_id, product_id, barcode, name, qty, unit_price, total, sold_at)
-                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
-                        (tenant["id"], prod["id"], prod["barcode"], prod["name"], qty, unit, tot, now_tr()),
-                    )
-                    msg = f"Satış işlendi: {prod['name']} x{qty} ({tot:.2f} TL)"
-    return redirect(url_for("tenant_panel", slug=tenant["slug"], tab="pane-pos", bot_saved=msg))
-
-
-@app.route("/i/<slug>/panel/kasa/urun/<int:product_id>/sil", methods=["POST"])
-@login_required_for_tenant
-def tenant_pos_delete_product(tenant, product_id: int):
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM pos_products WHERE id = %s AND tenant_id = %s", (product_id, tenant["id"]))
-    return redirect(url_for("tenant_panel", slug=tenant["slug"], tab="pane-pos"))
-
-
-# ---------------------------------------------------------------------------
-# Musteri vitrini, QR menu ve randevu/talep formlari
-# ---------------------------------------------------------------------------
-@app.route("/i/<slug>")
-def tenant_public(slug: str):
+@app.route("/i/<slug>/qr", methods=["GET", "POST"])
+def tenant_qr_order_page(slug):
     tenant = get_tenant_by_slug(slug)
     if not tenant:
         abort(404)
     if not tenant_usable(tenant):
-        return redirect(url_for("tenant_pending", slug=slug))
+        return render_pending(tenant)
+    if not tenant_has_qr_access(tenant):
+        abort(403)
 
-    mod = tenant.get("module_type") or "genel"
-    raw_masa = (request.args.get("masa") or "").strip()
-    table_no = None
-    if raw_masa.isdigit() and 1 <= int(raw_masa) <= 200:
-        table_no = int(raw_masa)
+    cap = max(1, int(tenant.get("table_count") or 8))
+    preselected_masa = sanitize_masa(request.args.get("masa"), cap)
+    menu_items = get_menu_items(tenant["id"])
 
-    res_date = parse_date(request.args.get("date", "")) or today_tr()
-    if res_date < today_tr():
-        res_date = today_tr()
+    if request.method == "POST":
+        if rate_limited(f"qr:{request.remote_addr}:{slug}", 40, 600):
+            abort(429)
+        action_type = request.form.get("action_type", "siparis").strip()
+        masa_name = sanitize_masa(request.form.get("masa_name"), cap) or preselected_masa or "Masa 1"
 
-    table_count = max(1, min(int(tenant.get("table_count") or 8), 200))
-    booked_by_slot = get_booked_tables_by_slot(tenant["id"], res_date) if mod == "kafe-randevu" else {}
-    booked_barber = get_booked_barber_slots(tenant["id"], res_date) if mod == "berber-randevu" else set()
-    past_slots = past_slots_for(res_date)
-    qr_access = tenant_has_qr_access(tenant)
-    menu_items = get_menu_items(tenant["id"]) if (qr_access or mod in {"kafe-randevu", "masa-qr"}) else []
+        if action_type in ("garson", "hesap"):
+            service = "🔔 Garson Çağır" if action_type == "garson" else "💳 Hesap İste"
+            text = f"{masa_name} garson çağırıyor." if action_type == "garson" else f"{masa_name} hesap istiyor."
+            if not recent_duplicate(tenant["id"], masa_name, service, 60):
+                add_ticket(tenant, masa_name, "", service, text)
+            return redirect(url_for("tenant_qr_order_page", slug=slug, masa=masa_name, sent="1", stype=action_type))
+
+        parts = []
+        summary = build_order_summary(request.form.get("cart_json"), menu_items)
+        if summary:
+            parts.append(summary)
+        note = clean_text(request.form.get("message"), 400)
+        if note:
+            parts.append(f"Not: {note}")
+        if parts:
+            add_ticket(tenant, masa_name, "", "🍽️ QR Masa Siparişi", " | ".join(parts))
+        return redirect(url_for("tenant_qr_order_page", slug=slug, masa=masa_name, sent="1", stype="siparis"))
+
+    sent_msg = ""
+    if request.args.get("sent") == "1":
+        label = preselected_masa or "Masanız"
+        stype = request.args.get("stype", "")
+        if stype == "garson":
+            sent_msg = f"🔔 {label} için garson çağrısı iletildi, hemen ilgileniyoruz!"
+        elif stype == "hesap":
+            sent_msg = f"💳 {label} için hesap isteği iletildi!"
+        else:
+            sent_msg = f"🍽️ {label} için siparişiniz alındı ve hazırlanmaya başlandı!"
 
     return render_template(
-        "tenant_public.html",
-        tenant=tenant,
-        mod_label=MODULE_LABELS.get(mod, MODULE_LABELS["genel"]),
-        qr_access=qr_access,
-        table_no=table_no,
-        table_count=table_count,
-        res_date=res_date.isoformat(),
-        today_iso=today_tr().isoformat(),
-        time_slots=TIME_SLOTS,
-        booked_by_slot={k: sorted(v) for k, v in booked_by_slot.items()},
-        booked_barber=sorted(booked_barber),
-        past_slots=sorted(past_slots),
-        menu_items=menu_items,
-        sent=request.args.get("sent") == "1",
-        error=request.args.get("err") or "",
+        "tenant_qr_order.html", tenant=tenant, menu_items=menu_items,
+        preselected_masa=preselected_masa, sent=bool(sent_msg), sent_msg=sent_msg,
     )
 
 
-@app.route("/i/<slug>/talep", methods=["POST"])
-def tenant_submit_ticket(slug: str):
-    tenant = get_tenant_by_slug(slug)
-    if not tenant or not tenant_usable(tenant):
-        abort(404)
-
-    ip = request.remote_addr or "0.0.0.0"
-    if rate_limited(f"tkt:{slug}:{ip}", 25, 600):
-        return redirect(url_for("tenant_public", slug=slug, err="Çok fazla istek gönderildi. Lütfen kısa süre sonra tekrar deneyin."))
-
-    mod = tenant.get("module_type") or "genel"
-    raw_masa = (request.form.get("table_no") or "").strip()
-    table_no = int(raw_masa) if raw_masa.isdigit() and 1 <= int(raw_masa) <= 200 else None
-    action_type = (request.form.get("action_type") or "").strip()
-
-    name = clean_text(request.form.get("name", ""), 100)
-    if not name and table_no:
-        name = f"Masa {table_no}"
-    if not name and action_type == "garson_cagir":
-        name = "Masa Müşterisi"
-    phone = clean_text(request.form.get("phone", ""), 40)
-    message = clean_text(request.form.get("message", ""), 1000)
-
-    reservation = None
-    if mod == "kafe-randevu" and not table_no:
-        res_date = parse_date(request.form.get("res_date", ""))
-        slot = (request.form.get("slot") or "").strip()
-        try:
-            t_no = int(request.form.get("res_table") or "0")
-        except ValueError:
-            t_no = 0
-        max_t = max(1, min(int(tenant.get("table_count") or 8), 200))
-        if not name or not res_date or res_date < today_tr() or slot not in TIME_SLOTS or slot in past_slots_for(res_date) or not (1 <= t_no <= max_t):
-            return redirect(url_for("tenant_public", slug=slug, date=(res_date or today_tr()).isoformat(), err="Lütfen ad, tarih, saat ve masa seçin."))
-        service = f"Randevu {res_date.isoformat()} {slot} — Masa {t_no}"
-        message = message or f"{res_date.strftime('%d.%m.%Y')} saat {slot} için Masa {t_no} rezervasyonu."
-        reservation = {"kind": "table", "res_date": res_date, "slot": slot, "table_no": t_no}
-    elif mod == "berber-randevu":
-        res_date = parse_date(request.form.get("res_date", ""))
-        slot = (request.form.get("slot") or "").strip()
-        hizmet = clean_text(request.form.get("barber_service") or "Randevu", 80)
-        if not name or not res_date or res_date < today_tr() or slot not in TIME_SLOTS or slot in past_slots_for(res_date):
-            return redirect(url_for("tenant_public", slug=slug, date=(res_date or today_tr()).isoformat(), err="Lütfen ad, tarih ve müsait saat seçin."))
-        service = f"{hizmet} ({res_date.isoformat()} {slot})"
-        message = message or f"{res_date.strftime('%d.%m.%Y')} saat {slot} için {hizmet} randevusu."
-        reservation = {"kind": "barber", "res_date": res_date, "slot": slot, "table_no": None}
-    else:
-        if action_type == "garson_cagir":
-            service = f"Garson Çağır (Masa {table_no})" if table_no else "Garson Çağır"
-            message = message or "Masaya garson çağrıldı."
-        elif action_type == "hesap_iste":
-            service = f"Hesap İste (Masa {table_no})" if table_no else "Hesap İste"
-            message = message or "Hesap talep edildi."
-        else:
-            service = clean_text(request.form.get("service") or (f"Masa {table_no} Sipariş" if table_no else "Genel Talep"), 120)
-            if not name or not message:
-                return redirect(url_for("tenant_public", slug=slug, masa=table_no or "", err="Lütfen adınızı ve talebinizi yazın."))
-
-    if recent_duplicate(tenant["id"], name, service):
-        return redirect(url_for("tenant_public", slug=slug, masa=table_no or "", sent="1"))
-
-    try:
-        add_ticket(tenant, name, phone, service, message, reservation=reservation)
-    except SlotTaken:
-        return redirect(url_for("tenant_public", slug=slug, date=request.form.get("res_date", ""), err="Seçilen saat veya masa az önce doldu. Lütfen başka bir seçim yapın."))
-
-    return redirect(url_for("tenant_public", slug=slug, masa=table_no or "", sent="1"))
-
-
-@app.route("/i/<slug>/panel/talep/<ticket_id>/durum", methods=["POST"])
-@login_required_for_tenant
-def tenant_update_ticket(tenant, ticket_id: str):
-    new_status = (request.form.get("status") or "").strip()
-    if new_status in TICKET_STATUSES:
-        if not update_ticket_status(tenant["id"], ticket_id, new_status):
-            return redirect(url_for("tenant_panel", slug=tenant["slug"], bot_saved="Bu saat/masa için aktif başka bir randevu var."))
-    return redirect(url_for("tenant_panel", slug=tenant["slug"]))
-
-
-@app.route("/i/<slug>/panel/talep/<ticket_id>/sil", methods=["POST"])
-@login_required_for_tenant
-def tenant_delete_ticket(tenant, ticket_id: str):
-    delete_ticket_by_id(tenant["id"], ticket_id)
-    return redirect(url_for("tenant_panel", slug=tenant["slug"]))
-
-
 # ---------------------------------------------------------------------------
-# Gorsel servisi
+# Musteri tarafi: ana sayfa (randevu / talep)
 # ---------------------------------------------------------------------------
-@app.route("/images/<path:filename>")
-def serve_public_image(filename: str):
-    p = (IMAGES_DIR / filename).resolve()
-    if IMAGES_DIR.resolve() not in p.parents or not p.is_file():
-        abort(404)
-    return send_from_directory(IMAGES_DIR, filename)
+ERR_MESSAGES = {
+    "taken": "Seçtiğiniz masa/saat az önce doldu. Lütfen başka bir seçim yapın.",
+    "invalid": "Bilgiler eksik veya geçersiz. Ad, telefon, tarih ve saati kontrol edin.",
+    "rate": "Çok fazla deneme yaptınız. Lütfen birkaç dakika sonra tekrar deneyin.",
+}
 
 
-def _serve_tenant_stored_image(tenant_id: int, category: str, filename: str):
-    clean = Path(secure_filename(filename)).name
-    if not clean:
-        abort(404)
-    row = get_stored_image_from_db(tenant_id, category, clean)
-    if row and row.get("data"):
-        return Response(bytes(row["data"]), mimetype=row.get("content_type") or "image/jpeg")
-    disk_dir = MENU_IMAGES_DIR if category == "menu" else LOGO_IMAGES_DIR
-    disk_file = (disk_dir / str(tenant_id) / clean).resolve()
-    if (disk_dir / str(tenant_id)).resolve() in disk_file.parents and disk_file.is_file():
-        return send_from_directory(disk_file.parent, disk_file.name)
-    abort(404)
-
-
-@app.route("/i/<slug>/menu-gorsel/<filename>")
-def serve_tenant_public_menu_image(slug: str, filename: str):
+@app.route("/i/<slug>", methods=["GET", "POST"])
+def tenant_public(slug):
     tenant = get_tenant_by_slug(slug)
     if not tenant:
         abort(404)
-    return _serve_tenant_stored_image(tenant["id"], "menu", filename)
+    mod_type = tenant.get("module_type") or "genel"
+    mod_label = MODULE_LABELS.get(mod_type, MODULE_LABELS["genel"])
 
+    if not tenant_usable(tenant):
+        return render_pending(tenant)
 
-@app.route("/panel/menu-gorsel/<int:tenant_id>/<filename>")
-def serve_menu_image(tenant_id: int, filename: str):
-    if not is_superadmin() and session.get("tenant_id") != tenant_id:
-        abort(403)
-    return _serve_tenant_stored_image(tenant_id, "menu", filename)
+    if mod_type == "masa-qr":
+        masa_param = request.args.get("masa", "").strip()
+        return redirect(
+            url_for("tenant_qr_order_page", slug=slug, masa=masa_param)
+            if masa_param else url_for("tenant_qr_order_page", slug=slug)
+        )
 
+    today = today_tr()
+    max_date = today + timedelta(days=90)
+    selected = parse_date(request.args.get("date")) or today
+    if selected < today or selected > max_date:
+        selected = today
+    table_cap = max(1, int(tenant.get("table_count") or 8))
 
-@app.route("/panel/logo/<int:tenant_id>/<filename>")
-def serve_tenant_logo(tenant_id: int, filename: str):
-    return _serve_tenant_stored_image(tenant_id, "logos", filename)
-
-
-# ---------------------------------------------------------------------------
-# Super Admin
-# ---------------------------------------------------------------------------
-@app.route("/admin/giris", methods=["GET", "POST"])
-def superadmin_login():
-    if not SUPERADMIN_ENABLED:
-        abort(404)
-    error = None
     if request.method == "POST":
-        ip = request.remote_addr or "0.0.0.0"
-        if rate_limited(f"sadmin:{ip}", 10, 300):
-            error = "Çok fazla giriş denemesi. Lütfen bekleyin."
-        else:
-            u = (request.form.get("username") or "").strip()
-            p = request.form.get("password") or ""
-            if hmac.compare_digest(u.encode("utf-8"), SUPERADMIN_USERNAME.encode("utf-8")) and hmac.compare_digest(
-                p.encode("utf-8"), SUPERADMIN_PASSWORD.encode("utf-8")
+        def fail(code):
+            return redirect(url_for("tenant_public", slug=slug, date=selected.isoformat(), err=code))
+
+        if rate_limited(f"pub:{request.remote_addr}:{slug}", 12, 600):
+            return fail("rate")
+        name = clean_text(request.form.get("name"), 80)
+        phone = clean_text(request.form.get("phone"), 30)
+        raw_service = clean_text(request.form.get("service"), 100)
+        raw_message = clean_text(request.form.get("message"), 500)
+        if not name or len(re.sub(r"\D", "", phone)) < 10:
+            return fail("invalid")
+
+        reservation, service = None, raw_service or "Genel Talep"
+        if mod_type in ("kafe-randevu", "berber-randevu"):
+            res_date = parse_date(request.form.get("res_date"))
+            slot_time = request.form.get("slot_time", "").strip()
+            if (
+                not res_date or res_date < today or res_date > max_date
+                or slot_time not in TIME_SLOTS or slot_time in past_slots_for(res_date)
             ):
-                session["superadmin"] = True
-                return redirect(url_for("superadmin_panel"))
-            error = "Super Admin kullanıcı adı veya şifresi hatalı."
-    return render_template("superadmin_login.html", error=error)
+                return fail("invalid")
+            selected = res_date
 
+            if mod_type == "kafe-randevu":
+                table_label = sanitize_masa(request.form.get("table_no"), table_cap)
+                if not table_label:
+                    return fail("invalid")
+                table_no = int(table_label.split()[1])
+                guest_count = clean_text(request.form.get("guest_count"), 40)
+                menu_pick = [clean_text(m, 120) for m in request.form.getlist("menu_order")[:30] if m.strip()]
+                service = f"Randevu {res_date.isoformat()} {slot_time} — {table_label}"
+                parts = [f"Tarih/Saat: {res_date.isoformat()} {slot_time}", f"Masa: {table_label}"]
+                if guest_count:
+                    parts.append(f"Kişi: {guest_count}")
+                if menu_pick:
+                    parts.append(f"Menü Seçimi: {', '.join(menu_pick)}")
+                if raw_message:
+                    parts.append(f"Not: {raw_message}")
+                message = " | ".join(parts)
+                reservation = {"kind": "table", "res_date": res_date, "slot": slot_time, "table_no": table_no}
+            else:
+                service = f"{raw_service or 'Salon Randevu'} ({res_date.isoformat()} {slot_time})"
+                parts = [f"Tarih: {res_date.isoformat()}", f"Saat: {slot_time}"]
+                if raw_message:
+                    parts.append(f"Not: {raw_message}")
+                message = " | ".join(parts)
+                reservation = {"kind": "barber", "res_date": res_date, "slot": slot_time}
+        else:
+            message = raw_message
+            if not message:
+                return fail("invalid")
 
-@app.route("/admin/cikis", methods=["POST"])
-def superadmin_logout():
-    session.pop("superadmin", None)
-    return redirect(url_for("index"))
+        try:
+            add_ticket(tenant, name, phone, service, message, reservation)
+        except SlotTaken:
+            return fail("taken")
+        return redirect(url_for("tenant_public", slug=slug, date=selected.isoformat(), sent="1"))
 
+    menu_items = get_menu_items(tenant["id"]) if mod_type == "kafe-randevu" else []
+    past = past_slots_for(selected)
+    slot_options, barber_slots = [], []
+    if mod_type == "kafe-randevu":
+        booked = get_booked_tables_by_slot(tenant["id"], selected)
+        for sl in TIME_SLOTS:
+            free = [] if sl in past else [n for n in range(1, table_cap + 1) if n not in booked.get(sl, set())]
+            slot_options.append({"time": sl, "free_tables": free, "available_count": len(free)})
+    elif mod_type == "berber-randevu":
+        taken = get_booked_barber_slots(tenant["id"], selected) | past
+        barber_slots = [{"time": sl, "is_free": sl not in taken} for sl in TIME_SLOTS]
 
-@app.route("/admin")
-def superadmin_panel():
-    if not SUPERADMIN_ENABLED:
-        abort(404)
-    if not is_superadmin():
-        return redirect(url_for("superadmin_login"))
     return render_template(
-        "superadmin.html",
-        tenants=get_all_tenants(),
-        module_labels=MODULE_LABELS,
-        price_starter=PLAN_PRICE_STARTER,
-        price_pro=PLAN_PRICE_PRO,
-        qr_addon_price=QR_ADDON_PRICE,
-        iban_holder=IBAN_HOLDER,
-        iban_bank=IBAN_BANK,
-        iban_number=IBAN_NUMBER,
+        "tenant_public.html",
+        tenant=tenant, services=SERVICES_DATA, mod_label=mod_label,
+        selected_date=selected.isoformat(), min_date=today.isoformat(), max_date=max_date.isoformat(),
+        slot_options=slot_options, barber_slots=barber_slots, menu_items=menu_items,
+        sent=request.args.get("sent") == "1", err_msg=ERR_MESSAGES.get(request.args.get("err", ""), ""),
     )
 
 
-@app.route("/admin/isletme-ekle", methods=["POST"])
-def superadmin_create_tenant():
-    if not is_superadmin():
-        abort(403)
-    b_name = clean_text(request.form.get("business_name", ""), 120)
-    legal_name = clean_text(request.form.get("company_legal_name", ""), 160)
-    tax_office = clean_text(request.form.get("tax_office", ""), 100)
-    tax_number = clean_text(request.form.get("tax_number", ""), 40)
-    email = clean_text(request.form.get("owner_email", ""), 160)
-    pw = request.form.get("password") or secrets.token_urlsafe(8)
-    slug_in = clean_text(request.form.get("slug", ""), 60)
-    plan = (request.form.get("plan") or "starter").strip()
-    mod = (request.form.get("module_type") or "genel").strip()
-    wa = clean_text(request.form.get("whatsapp_number", ""), 30)
-    activate_now = bool(request.form.get("activate_now"))
+# ---------------------------------------------------------------------------
+# Isletme / B2B paneli
+# ---------------------------------------------------------------------------
+def build_tenant_qr_list(tenant):
+    cap = max(1, int(tenant.get("table_count") or 8))
+    base_qr_url = url_for("tenant_qr_order_page", slug=tenant["slug"], _external=True)
+    out = []
+    for idx in range(1, cap + 1):
+        label = f"Masa {idx}"
+        target_url = f"{base_qr_url}?masa={quote(label)}"
+        if segno is not None:
+            img = url_for("tenant_qr_image", slug=tenant["slug"], n=idx)
+        else:
+            img = f"https://api.qrserver.com/v1/create-qr-code/?size=280x280&margin=6&data={quote(target_url, safe='')}"
+        out.append({"num": idx, "label": label, "target_url": target_url, "qr_img_url": img})
+    return out
 
-    if b_name and email:
-        t = create_tenant(
-            b_name,
-            email,
-            pw,
-            slug_in,
-            plan,
-            mod,
-            wa,
-            company_legal_name=legal_name,
-            tax_office=tax_office,
-            tax_number=tax_number,
-        )
-        if activate_now:
-            with get_db() as conn:
-                with conn.cursor() as cur:
+
+@app.route("/i/<slug>/panel/qr-img/<int:n>.svg")
+@tenant_panel_required
+def tenant_qr_image(slug, n):
+    tenant = g.tenant
+    cap = max(1, int(tenant.get("table_count") or 8))
+    if segno is None or not tenant_has_qr_access(tenant) or not 1 <= n <= cap:
+        abort(404)
+    target = url_for("tenant_qr_order_page", slug=slug, _external=True) + f"?masa={quote(f'Masa {n}')}"
+    buf = io.BytesIO()
+    segno.make(target, error="m").save(buf, kind="svg", scale=8, border=2)
+    resp = Response(buf.getvalue(), mimetype="image/svg+xml")
+    resp.headers["Cache-Control"] = "private, max-age=3600"
+    return resp
+
+
+@app.route("/i/<slug>/panel/poll")
+@tenant_panel_required
+def tenant_panel_poll(slug):
+    st = ticket_stats(g.tenant["id"])
+    latest, summary = st["latest"], ""
+    if latest:
+        summary = f"{latest['name']} — {latest.get('service') or 'Talep'}: {latest['message'][:80]}"
+    return jsonify({"total": st["total"], "latest_id": latest["id"] if latest else "", "latest_summary": summary})
+
+
+@app.route("/i/<slug>/panel")
+@tenant_login_required
+def tenant_panel(slug):
+    tenant = g.tenant
+    if not tenant_usable(tenant):
+        return render_pending(tenant)
+
+    mod_type = tenant.get("module_type") or "genel"
+    show_menu_tab = mod_type in {"kafe-randevu", "masa-qr"}
+    qr_unlocked = tenant_has_qr_access(tenant)
+    tid = tenant["id"]
+    tickets = load_tickets(tid, limit=300)
+    stats = ticket_stats(tid)
+    token = tenant.get("access_token") or ""
+
+    pos_products, pos_total_sold, pos_total_revenue, pos_sales = [], 0, 0.0, []
+    if mod_type == "masaustu-otomasyon":
+        pos_products, pos_total_sold, pos_total_revenue, pos_sales = get_pos_overview(tid)
+    bot_cfg = get_bot_config(tenant) if mod_type == "web-otomasyon" else {}
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, ticket_id, kind, res_date, slot, table_no, res_status, duration_minutes, party_size, is_active
+                  FROM reservations
+                 WHERE tenant_id = %s
+                 ORDER BY res_date DESC, slot DESC, id DESC
+                 LIMIT 50;
+                """,
+                (tid,),
+            )
+            reservations = [
+                dict(r, res_date=r["res_date"].isoformat() if hasattr(r.get("res_date"), "isoformat") else str(r.get("res_date") or ""))
+                for r in cur.fetchall()
+            ]
+
+    nav_count = 4 if show_menu_tab else (3 if mod_type in {"mobil-saha", "web-otomasyon", "masaustu-otomasyon"} else 2)
+    return render_template(
+        "tenant_panel.html",
+        tenant=tenant, mod_label=MODULE_LABELS.get(mod_type, MODULE_LABELS["genel"]),
+        show_menu_tab=show_menu_tab, qr_unlocked=qr_unlocked, qr_addon_price=QR_ADDON_PRICE,
+        iban_holder=IBAN_HOLDER, iban_bank=IBAN_BANK, iban_number=IBAN_NUMBER,
+        addon_notified=request.args.get("addon_notified") == "1",
+        bot_saved=request.args.get("bot_saved", "")[:300], start_tab=request.args.get("tab", ""),
+        selected_date=today_tr().isoformat(),
+        reservations=reservations,
+        menu_items=get_menu_items(tid) if show_menu_tab else [],
+        qr_list=build_tenant_qr_list(tenant) if (show_menu_tab and qr_unlocked) else [],
+        kds_url=url_for("kitchen_kds_screen", slug=slug, k=token, _external=True),
+        saha_url=url_for("field_agent_terminal", slug=slug, k=token, _external=True),
+        agents=get_field_agents(tid) if mod_type == "mobil-saha" else [],
+        bot_cfg=bot_cfg, bot_logs=get_bot_logs(tid) if mod_type == "web-otomasyon" else [],
+        pos_products=pos_products, pos_total_sold=pos_total_sold, pos_total_revenue=pos_total_revenue, pos_sales=pos_sales,
+        nav_count=nav_count, tickets=tickets, total_count=stats["total"],
+        yeni_count=stats["yeni"], tamam_count=stats["tamam"], latest_id=stats["latest"]["id"] if stats["latest"] else "",
+    )
+
+
+@app.route("/i/<slug>/panel/regen-token", methods=["POST"])
+@tenant_panel_required
+def tenant_regen_token(slug):
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE tenants SET access_token = %s WHERE id = %s", (secrets.token_urlsafe(24), g.tenant["id"]))
+    return back_to_panel(slug, "Mutfak/saha erişim anahtarı yenilendi. Eski linkler artık çalışmaz, yeni linkleri cihazlara dağıtın.", "pane-settings")
+
+
+@app.route("/i/<slug>/panel/qr-addon-request", methods=["POST"])
+@tenant_panel_required
+def tenant_request_qr_addon(slug):
+    note = clean_text(request.form.get("qr_addon_note"), 240)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE tenants SET qr_addon_requested = TRUE, qr_addon_note = %s WHERE id = %s", (note, g.tenant["id"]))
+    return redirect(url_for("tenant_panel", slug=slug, addon_notified="1"))
+
+
+# --- Bot / API -------------------------------------------------------------
+def _require_web_module(tenant):
+    if (tenant.get("module_type") or "") != "web-otomasyon":
+        abort(403)
+
+
+@app.route("/i/<slug>/panel/bot-config", methods=["POST"])
+@tenant_panel_required
+def tenant_save_bot_config(slug):
+    tenant = g.tenant
+    _require_web_module(tenant)
+    old = get_bot_config(tenant)
+    warnings = []
+
+    def url_field(name, label):
+        val = clean_text(request.form.get(name), 400)
+        if val and not is_safe_public_url(val):
+            warnings.append(f"{label} geçersiz/erişilemez olduğu için kaydedilmedi")
+            return old.get(name, "")
+        return val
+
+    def secret_field(name):
+        return clean_text(request.form.get(name), 400) or old.get(name, "")
+
+    hour = request.form.get("report_hour", "21:00").strip()
+    cfg = {
+        "wa_api_url": url_field("wa_api_url", "WhatsApp API URL"),
+        "wa_api_token": secret_field("wa_api_token"),
+        "wa_template_name": clean_text(request.form.get("wa_template_name"), 80),
+        "wa_auto_reply": bool(request.form.get("wa_auto_reply")),
+        "tg_bot_token": secret_field("tg_bot_token"),
+        "tg_chat_id": clean_text(request.form.get("tg_chat_id"), 60),
+        "tg_notify_enabled": bool(request.form.get("tg_notify_enabled")),
+        "scraper_url": url_field("scraper_url", "Veri çekme URL"),
+        "webhook_url": url_field("webhook_url", "Webhook URL"),
+        "report_hour": hour if re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", hour) else "21:00",
+        "last_sync_note": old.get("last_sync_note", ""),
+    }
+    save_bot_config(tenant["id"], cfg)
+    msg = "Bot ve API entegrasyon ayarları kaydedildi."
+    if warnings:
+        msg = "⚠️ " + "; ".join(warnings) + ". Diğer ayarlar kaydedildi."
+    return back_to_panel(slug, msg, "pane-bots")
+
+
+@app.route("/i/<slug>/panel/bot-action", methods=["POST"])
+@tenant_panel_required
+def tenant_run_bot_action(slug):
+    tenant = g.tenant
+    _require_web_module(tenant)
+    if rate_limited(f"botact:{tenant['id']}", 10, 300):
+        abort(429)
+    cfg = get_bot_config(tenant)
+    action = request.form.get("bot_action", "").strip()
+    stamp = now_tr().strftime("%d.%m.%Y %H:%M:%S")
+
+    if action == "pull_data":
+        text = build_daily_report(tenant, cfg)
+        bot_log(tenant["id"], "Veri çekme/rapor: " + text.splitlines()[-1][:300])
+        results = send_report_to_channels(tenant, cfg, text)
+        for ok, info in results:
+            bot_log(tenant["id"], f"Rapor gönderimi → {info}", "info" if ok else "error")
+        msg = "Rapor hazırlandı ve kanallara gönderildi." if results else "Rapor hazırlandı (bağlı Telegram/Webhook kanalı yok)."
+        cfg["last_sync_note"] = f"[{stamp}] {text.splitlines()[-1][:200]}"
+    else:
+        text = f"✅ {tenant['business_name']} — test bildirimi ({stamp})"
+        results = send_report_to_channels(tenant, cfg, text)
+        if cfg["wa_api_url"] and cfg["wa_api_token"] and tenant.get("whatsapp_number"):
+            results.append(send_whatsapp(cfg, tenant["whatsapp_number"], text))
+        if not results:
+            msg = "⚠️ Test için Telegram, Webhook veya WhatsApp bilgisi girilmemiş."
+        else:
+            for ok, info in results:
+                bot_log(tenant["id"], f"Test → {info}", "info" if ok else "error")
+            msg = "Test sonucu: " + " | ".join(("✔ " if ok else "✖ ") + info for ok, info in results)
+        cfg["last_sync_note"] = f"[{stamp}] Test bildirimi gönderildi."
+    save_bot_config(tenant["id"], cfg)
+    return back_to_panel(slug, msg, "pane-bots")
+
+
+# --- Kasa / barkod ---------------------------------------------------------
+def _require_pos_module(tenant):
+    if (tenant.get("module_type") or "") != "masaustu-otomasyon":
+        abort(403)
+
+
+@app.route("/i/<slug>/panel/pos/add", methods=["POST"])
+@tenant_panel_required
+def tenant_pos_add_product(slug):
+    tenant = g.tenant
+    _require_pos_module(tenant)
+    barcode = clean_text(request.form.get("barcode"), 64)
+    name = clean_text(request.form.get("name"), 120)
+    try:
+        price = round(max(0.0, float(request.form.get("price", 0))), 2)
+        stock = max(0, int(request.form.get("stock", 0)))
+    except ValueError:
+        return back_to_panel(slug, "⚠️ Fiyat/stok geçersiz.", "pane-pos")
+    if not barcode or not name or price > 10_000_000:
+        return back_to_panel(slug, "⚠️ Barkod ve ürün adı zorunlu.", "pane-pos")
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO pos_products (tenant_id, barcode, name, price, stock) VALUES (%s,%s,%s,%s,%s)
+                   ON CONFLICT (tenant_id, barcode)
+                   DO UPDATE SET name = EXCLUDED.name, price = EXCLUDED.price, stock = EXCLUDED.stock""",
+                (tenant["id"], barcode, name, price, stock),
+            )
+    return back_to_panel(slug, f"Ürün kaydedildi: {name} ({barcode})", "pane-pos")
+
+
+@app.route("/i/<slug>/panel/pos/scan", methods=["POST"])
+@tenant_panel_required
+def tenant_pos_scan(slug):
+    tenant = g.tenant
+    _require_pos_module(tenant)
+    barcode = clean_text(request.form.get("barcode"), 64)
+    try:
+        qty = max(1, min(500, int(request.form.get("qty", 1))))
+    except ValueError:
+        qty = 1
+    if not barcode:
+        return back_to_panel(slug, "⚠️ Barkod boş.", "pane-pos")
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, name, price, stock FROM pos_products WHERE tenant_id = %s AND barcode = %s FOR UPDATE",
+                (tenant["id"], barcode),
+            )
+            prod = cur.fetchone()
+            if not prod:
+                msg = f"⚠️ '{barcode}' barkodlu ürün bulunamadı, önce tanımlayın."
+            elif prod["stock"] < qty:
+                msg = f"⚠️ Yetersiz stok: {prod['name']} (kalan {prod['stock']}, istenen {qty})."
+            else:
+                cur.execute("UPDATE pos_products SET stock = stock - %s WHERE id = %s", (qty, prod["id"]))
+                total = round(float(prod["price"]) * qty, 2)
+                cur.execute(
+                    """INSERT INTO pos_sales (tenant_id, product_id, barcode, name, qty, unit_price, total, sold_at)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    (tenant["id"], prod["id"], barcode, prod["name"], qty, prod["price"], total, now_tr()),
+                )
+                msg = f"Satış işlendi: {qty}x {prod['name']} = {total:.2f} TL (kalan stok: {prod['stock'] - qty})"
+    return back_to_panel(slug, msg, "pane-pos")
+
+
+@app.route("/i/<slug>/panel/pos/sale/<int:sale_id>/void", methods=["POST"])
+@tenant_panel_required
+def tenant_pos_void_sale(slug, sale_id):
+    tenant = g.tenant
+    _require_pos_module(tenant)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE pos_sales SET voided = TRUE WHERE id = %s AND tenant_id = %s AND NOT voided
+                   RETURNING product_id, qty""",
+                (sale_id, tenant["id"]),
+            )
+            row = cur.fetchone()
+            if row and row["product_id"]:
+                cur.execute("UPDATE pos_products SET stock = stock + %s WHERE id = %s", (row["qty"], row["product_id"]))
+    return back_to_panel(slug, "Satış iptal edildi, stok iade edildi." if row else "⚠️ Satış bulunamadı veya zaten iptal.", "pane-pos")
+
+
+@app.route("/i/<slug>/panel/pos/<int:product_id>/delete", methods=["POST"])
+@tenant_panel_required
+def tenant_pos_delete_product(slug, product_id):
+    _require_pos_module(g.tenant)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM pos_products WHERE id = %s AND tenant_id = %s", (product_id, g.tenant["id"]))
+    return back_to_panel(slug, "Ürün silindi.", "pane-pos")
+
+
+# --- QR yazdir / ayarlar / menu / talepler ----------------------------------
+@app.route("/i/<slug>/panel/qr-print")
+@tenant_panel_required
+def tenant_qr_print(slug):
+    if not tenant_has_qr_access(g.tenant):
+        abort(403)
+    return render_template("qr_print.html", tenant=g.tenant, qr_list=build_tenant_qr_list(g.tenant))
+
+
+@app.route("/i/<slug>/panel/settings", methods=["POST"])
+@tenant_panel_required
+def tenant_update_settings(slug):
+    tenant = g.tenant
+    wa_num = clean_text(request.form.get("whatsapp_number"), 30)
+    legal_name = clean_text(request.form.get("company_legal_name") or tenant.get("company_legal_name") or tenant.get("business_name"), 160)
+    tax_office = clean_text(request.form.get("tax_office") or tenant.get("tax_office"), 100)
+    tax_number = clean_text(request.form.get("tax_number") or tenant.get("tax_number"), 40)
+    new_logo = save_uploaded_image(LOGO_IMAGES_DIR, tenant["id"], request.files.get("logo"))
+    try:
+        t_count = int(request.form.get("table_count", tenant.get("table_count") or 8))
+    except ValueError:
+        t_count = tenant.get("table_count") or 8
+    t_count = max(1, min(200, t_count))
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            if new_logo:
+                cur.execute(
+                    """UPDATE tenants SET whatsapp_number=%s, table_count=%s, logo_filename=%s,
+                       company_legal_name=%s, tax_office=%s, tax_number=%s WHERE id=%s""",
+                    (wa_num, t_count, new_logo, legal_name, tax_office, tax_number, tenant["id"]),
+                )
+            else:
+                cur.execute(
+                    """UPDATE tenants SET whatsapp_number=%s, table_count=%s,
+                       company_legal_name=%s, tax_office=%s, tax_number=%s WHERE id=%s""",
+                    (wa_num, t_count, legal_name, tax_office, tax_number, tenant["id"]),
+                )
+    msg = "" if (new_logo or not request.files.get("logo") or not request.files["logo"].filename) else "⚠️ Logo kaydedilmedi: sadece JPG/PNG/WEBP ve en fazla 4 MB."
+    return back_to_panel(slug, msg or "Ayarlar kaydedildi.", "pane-settings")
+
+
+def _require_menu_module(tenant):
+    if (tenant.get("module_type") or "genel") not in {"kafe-randevu", "masa-qr"}:
+        abort(403)
+
+
+@app.route("/i/<slug>/panel/menu/add", methods=["POST"])
+@tenant_panel_required
+def tenant_add_menu_item(slug):
+    tenant = g.tenant
+    _require_menu_module(tenant)
+    name = clean_text(request.form.get("name"), 120)
+    price = clean_text(request.form.get("price"), 40)
+    desc = clean_text(request.form.get("description"), 300)
+    img = save_uploaded_image(MENU_IMAGES_DIR, tenant["id"], request.files.get("image"))
+    if name:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO tenant_menu_items (tenant_id, name, price, description, image_filename) VALUES (%s,%s,%s,%s,%s)",
+                    (tenant["id"], name, price, desc, img),
+                )
+    return back_to_panel(slug, "", "pane-menu")
+
+
+@app.route("/i/<slug>/panel/menu/<int:item_id>/edit", methods=["POST"])
+@tenant_panel_required
+def tenant_edit_menu_item(slug, item_id):
+    tenant = g.tenant
+    _require_menu_module(tenant)
+    name = clean_text(request.form.get("name"), 120)
+    price = clean_text(request.form.get("price"), 40)
+    desc = clean_text(request.form.get("description"), 300)
+    new_img = save_uploaded_image(MENU_IMAGES_DIR, tenant["id"], request.files.get("image"))
+    if name:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                if new_img:
                     cur.execute(
-                        """UPDATE tenants SET is_active = TRUE, payment_requested = FALSE,
-                           activated_at = NOW(), expires_at = NOW() + INTERVAL '30 days' WHERE id = %s""",
-                        (t["id"],),
+                        """UPDATE tenant_menu_items SET name=%s, price=%s, description=%s, image_filename=%s
+                           WHERE id=%s AND tenant_id=%s""",
+                        (name, price, desc, new_img, item_id, tenant["id"]),
+                    )
+                else:
+                    cur.execute(
+                        "UPDATE tenant_menu_items SET name=%s, price=%s, description=%s WHERE id=%s AND tenant_id=%s",
+                        (name, price, desc, item_id, tenant["id"]),
+                    )
+    return back_to_panel(slug, "", "pane-menu")
+
+
+@app.route("/i/<slug>/panel/menu/<int:item_id>/delete", methods=["POST"])
+@tenant_panel_required
+def tenant_delete_menu_item(slug, item_id):
+    _require_menu_module(g.tenant)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM tenant_menu_items WHERE id = %s AND tenant_id = %s", (item_id, g.tenant["id"]))
+    return back_to_panel(slug, "", "pane-menu")
+
+
+@app.route("/i/<slug>/panel/update/<ticket_id>", methods=["POST"])
+@tenant_panel_required
+def tenant_update_ticket(slug, ticket_id):
+    new_status = request.form.get("status", "Yeni").strip()
+    if new_status not in TICKET_STATUSES:
+        new_status = "Yeni"
+    if not update_ticket_status(g.tenant["id"], ticket_id, new_status):
+        return back_to_panel(slug, "⚠️ Bu randevunun masa/saati artık başka bir kayıtta, iptal geri alınamadı.")
+    return back_to_panel(slug)
+
+
+@app.route("/i/<slug>/panel/delete/<ticket_id>", methods=["POST"])
+@tenant_panel_required
+def tenant_delete_ticket(slug, ticket_id):
+    delete_ticket_by_id(g.tenant["id"], ticket_id)
+    return back_to_panel(slug)
+
+
+# ---------------------------------------------------------------------------
+# Super admin
+# ---------------------------------------------------------------------------
+@app.route("/admin/login", methods=["GET", "POST"])
+def superadmin_login():
+    error = None
+    if not SUPERADMIN_ENABLED:
+        error = "Yönetici girişi kapalı: Render'da SUPERADMIN_USERNAME ve SUPERADMIN_PASSWORD tanımlayın."
+        return render_template("superadmin_login.html", error=error)
+    if session.get("superadmin_auth"):
+        return redirect(url_for("superadmin_panel"))
+    next_url = safe_next(request.form.get("next") or request.args.get("next"), url_for("superadmin_panel"))
+    if request.method == "POST":
+        if rate_limited(f"adm:{request.remote_addr}", 6, 900):
+            abort(429)
+        u = request.form.get("username", "").strip().encode("utf-8")
+        p = request.form.get("password", "").strip().encode("utf-8")
+        ok_u = hmac.compare_digest(u, SUPERADMIN_USERNAME.encode("utf-8"))
+        ok_p = hmac.compare_digest(p, SUPERADMIN_PASSWORD.encode("utf-8"))
+        if ok_u and ok_p:
+            session["superadmin_auth"] = True
+            return redirect(next_url)
+        error = "Kullanıcı adı veya şifre hatalı."
+    return render_template("superadmin_login.html", error=error)
+
+
+@app.route("/admin/logout", methods=["POST"])
+def superadmin_logout():
+    session.pop("superadmin_auth", None)
+    return redirect(url_for("superadmin_login"))
+
+
+@app.route("/admin")
+@superadmin_required
+def superadmin_panel():
+    return render_template("superadmin.html", tenants=get_all_tenants(), iban_number=IBAN_NUMBER)
+
+
+def _admin_exec(sql, params):
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+    return redirect(url_for("superadmin_panel"))
+
+
+@app.route("/admin/tenant/<int:tenant_id>/approve", methods=["POST"])
+@superadmin_required
+def superadmin_approve_tenant(tenant_id):
+    return _admin_exec(
+        """UPDATE tenants SET is_active = TRUE, payment_requested = FALSE, activated_at = NOW(),
+           expires_at = GREATEST(COALESCE(expires_at, NOW()), NOW()) + INTERVAL '30 days' WHERE id = %s""",
+        (tenant_id,),
+    )
+
+
+@app.route("/admin/tenant/<int:tenant_id>/unlock-qr", methods=["POST"])
+@superadmin_required
+def superadmin_unlock_qr_addon(tenant_id):
+    return _admin_exec("UPDATE tenants SET qr_addon_active = TRUE, qr_addon_requested = FALSE WHERE id = %s", (tenant_id,))
+
+
+@app.route("/admin/tenant/<int:tenant_id>/extend", methods=["POST"])
+@superadmin_required
+def superadmin_extend_tenant(tenant_id):
+    return _admin_exec(
+        """UPDATE tenants SET is_active = TRUE,
+           expires_at = GREATEST(COALESCE(expires_at, NOW()), NOW()) + INTERVAL '30 days' WHERE id = %s""",
+        (tenant_id,),
+    )
+
+
+@app.route("/admin/tenant/<int:tenant_id>/suspend", methods=["POST"])
+@superadmin_required
+def superadmin_suspend_tenant(tenant_id):
+    return _admin_exec("UPDATE tenants SET is_active = FALSE WHERE id = %s", (tenant_id,))
+
+
+@app.route("/admin/tenant/<int:tenant_id>/edit", methods=["POST"])
+@superadmin_required
+def superadmin_edit_tenant(tenant_id):
+    business_name = clean_text(request.form.get("business_name"), 120)
+    owner_email = clean_text(request.form.get("owner_email"), 160).lower()
+    plan = request.form.get("plan", "starter").strip()
+    module_type = request.form.get("module_type", "genel").strip()
+    new_password = request.form.get("new_password", "").strip()
+    try:
+        table_count = max(1, min(200, int(request.form.get("table_count", 8))))
+    except ValueError:
+        table_count = 8
+    plan = plan if plan in {"starter", "pro"} else "starter"
+    module_type = module_type if module_type in VALID_MODULES else "genel"
+
+    if business_name and _EMAIL_RE.match(owner_email):
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                if len(new_password) >= 8:
+                    cur.execute(
+                        """UPDATE tenants SET business_name=%s, owner_email=%s, plan=%s, module_type=%s,
+                           table_count=%s, password_hash=%s WHERE id=%s""",
+                        (
+                            business_name, owner_email, plan, module_type,
+                            table_count, generate_password_hash(new_password), tenant_id,
+                        ),
+                    )
+                else:
+                    cur.execute(
+                        """UPDATE tenants SET business_name=%s, owner_email=%s, plan=%s, module_type=%s,
+                           table_count=%s WHERE id=%s""",
+                        (business_name, owner_email, plan, module_type, table_count, tenant_id),
                     )
     return redirect(url_for("superadmin_panel"))
 
 
-@app.route("/admin/isletme/<int:tenant_id>/duzenle", methods=["POST"])
-def superadmin_edit_tenant(tenant_id: int):
-    if not is_superadmin():
-        abort(403)
-    b_name = clean_text(request.form.get("business_name", ""), 120)
-    legal_name = clean_text(request.form.get("company_legal_name", ""), 160)
-    tax_office = clean_text(request.form.get("tax_office", ""), 100)
-    tax_number = clean_text(request.form.get("tax_number", ""), 40)
-    email = clean_text(request.form.get("owner_email", ""), 160)
-    wa = clean_text(request.form.get("whatsapp_number", ""), 30)
-    plan = (request.form.get("plan") or "starter").strip()
-    mod = (request.form.get("module_type") or "genel").strip()
-    if plan not in {"starter", "pro"}:
-        plan = "starter"
-    if mod not in VALID_MODULES:
-        mod = "genel"
-    try:
-        table_count = max(1, min(int(request.form.get("table_count") or 8), 200))
-    except ValueError:
-        table_count = 8
-    new_pw = (request.form.get("new_password") or "").strip()
-
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """UPDATE tenants
-                   SET business_name = COALESCE(NULLIF(%s, ''), business_name),
-                       company_legal_name = %s,
-                       tax_office = %s,
-                       tax_number = %s,
-                       owner_email = COALESCE(NULLIF(%s, ''), owner_email),
-                       whatsapp_number = %s,
-                       plan = %s,
-                       module_type = %s,
-                       table_count = %s
-                   WHERE id = %s""",
-                (b_name, legal_name, tax_office, tax_number, email, wa, plan, mod, table_count, tenant_id),
-            )
-            if new_pw:
-                cur.execute("UPDATE tenants SET password_hash = %s WHERE id = %s", (generate_password_hash(new_pw), tenant_id))
-    return redirect(url_for("superadmin_panel"))
-
-
-@app.route("/admin/isletme/<int:tenant_id>/onayla", methods=["POST"])
-def superadmin_approve_tenant(tenant_id: int):
-    if not is_superadmin():
-        abort(403)
-    try:
-        days = max(1, min(int(request.form.get("days") or 30), 3650))
-    except ValueError:
-        days = 30
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """UPDATE tenants
-                   SET is_active = TRUE, payment_requested = FALSE,
-                       activated_at = COALESCE(activated_at, NOW()),
-                       expires_at = GREATEST(COALESCE(expires_at, NOW()), NOW()) + (%s * INTERVAL '1 day')
-                   WHERE id = %s""",
-                (days, tenant_id),
-            )
-    return redirect(url_for("superadmin_panel"))
-
-
-@app.route("/admin/isletme/<int:tenant_id>/pasif", methods=["POST"])
-def superadmin_deactivate_tenant(tenant_id: int):
-    if not is_superadmin():
-        abort(403)
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("UPDATE tenants SET is_active = FALSE WHERE id = %s", (tenant_id,))
-    return redirect(url_for("superadmin_panel"))
-
-
-@app.route("/admin/isletme/<int:tenant_id>/qr-onayla", methods=["POST"])
-def superadmin_approve_qr_addon(tenant_id: int):
-    if not is_superadmin():
-        abort(403)
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("UPDATE tenants SET qr_addon_active = TRUE, qr_addon_requested = FALSE WHERE id = %s", (tenant_id,))
-    return redirect(url_for("superadmin_panel"))
-
-
-@app.route("/admin/isletme/<int:tenant_id>/sil", methods=["POST"])
-def superadmin_delete_tenant(tenant_id: int):
-    if not is_superadmin():
-        abort(403)
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT slug FROM tenants WHERE id = %s", (tenant_id,))
-            row = cur.fetchone()
-            if row and row["slug"] == "kolay-vitrin":
-                return redirect(url_for("superadmin_panel"))
-            cur.execute("DELETE FROM tenants WHERE id = %s", (tenant_id,))
-    return redirect(url_for("superadmin_panel"))
+@app.route("/admin/tenant/<int:tenant_id>/delete", methods=["POST"])
+@superadmin_required
+def superadmin_delete_tenant(tenant_id):
+    return _admin_exec("DELETE FROM tenants WHERE id = %s AND slug != 'kolay-vitrin'", (tenant_id,))
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=os.environ.get("FLASK_DEBUG") == "1")
+    app.run(debug=os.environ.get("FLASK_DEBUG") == "1")
