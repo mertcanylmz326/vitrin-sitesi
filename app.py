@@ -1,4 +1,5 @@
 import functools
+import hashlib
 import hmac
 import io
 import ipaddress
@@ -11,6 +12,7 @@ import threading
 import time
 import uuid
 from datetime import datetime, timedelta
+from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from urllib.parse import quote, urlparse
 from zoneinfo import ZoneInfo
@@ -91,6 +93,7 @@ TIME_SLOTS = [
     "21:00", "22:00", "23:00",
 ]
 TICKET_STATUSES = {"Yeni", "İnceleniyor", "Tamamlandı", "İptal"}
+VALID_RES_STATUSES = {"pending", "confirmed", "checked_in", "no_show", "cancelled"}
 VALID_MODULES = {
     "genel", "kafe-randevu", "berber-randevu", "masa-qr",
     "mobil-saha", "web-otomasyon", "masaustu-otomasyon",
@@ -279,6 +282,14 @@ def safe_next(url, fallback):
 
 def clean_text(value, limit):
     return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", (value or "").strip())[:limit]
+
+
+def hash_pin(pin_code: str) -> str:
+    return hashlib.sha256(str(pin_code or "").strip().encode("utf-8")).hexdigest()
+
+
+def _money(val) -> Decimal:
+    return Decimal(str(val or "0")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
 _rl_store = {}
@@ -595,6 +606,9 @@ def init_db():
                 )
                 """
             )
+            cur.execute("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS res_status VARCHAR(24) NOT NULL DEFAULT 'confirmed'")
+            cur.execute("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS duration_minutes INTEGER NOT NULL DEFAULT 90")
+            cur.execute("ALTER TABLE reservations ADD COLUMN IF NOT EXISTS party_size INTEGER NOT NULL DEFAULT 2")
             cur.execute(
                 """CREATE UNIQUE INDEX IF NOT EXISTS uq_res_table
                    ON reservations(tenant_id, res_date, slot, table_no) WHERE is_active AND kind = 'table'"""
@@ -604,6 +618,54 @@ def init_db():
                    ON reservations(tenant_id, res_date, slot) WHERE is_active AND kind = 'barber'"""
             )
             cur.execute("CREATE INDEX IF NOT EXISTS idx_res_lookup ON reservations(tenant_id, res_date)")
+
+            # Faz 4 tabloları: masalar, personel PIN rolleri ve webhook logları
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS dining_tables (
+                    id SERIAL PRIMARY KEY,
+                    tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                    table_name VARCHAR(80) NOT NULL,
+                    capacity INTEGER NOT NULL DEFAULT 4,
+                    status VARCHAR(32) NOT NULL DEFAULT 'empty',
+                    active_order_code VARCHAR(64) NULL,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE (tenant_id, table_name)
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS tenant_staff (
+                    id SERIAL PRIMARY KEY,
+                    tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                    staff_name VARCHAR(120) NOT NULL,
+                    role VARCHAR(32) NOT NULL DEFAULT 'cashier',
+                    pin_hash VARCHAR(128) NOT NULL,
+                    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS webhook_logs (
+                    id SERIAL PRIMARY KEY,
+                    tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                    event_name VARCHAR(80) NOT NULL,
+                    target_url TEXT NOT NULL,
+                    payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    status_code INTEGER NOT NULL DEFAULT 0,
+                    success BOOLEAN NOT NULL DEFAULT FALSE,
+                    response_snippet TEXT NOT NULL DEFAULT '',
+                    attempt_count INTEGER NOT NULL DEFAULT 1,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_dining_tables_tenant ON dining_tables(tenant_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_tenant_staff_tenant ON tenant_staff(tenant_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_webhook_logs_tenant ON webhook_logs(tenant_id, created_at DESC)")
 
             cur.execute(
                 """
@@ -996,11 +1058,13 @@ def add_ticket(tenant, name, phone, service, message, reservation=None):
                 )
                 if reservation:
                     cur.execute(
-                        """INSERT INTO reservations (tenant_id, ticket_id, kind, res_date, slot, table_no)
-                           VALUES (%s,%s,%s,%s,%s,%s)""",
+                        """INSERT INTO reservations (tenant_id, ticket_id, kind, res_date, slot, table_no, res_status, duration_minutes, party_size)
+                           VALUES (%s,%s,%s,%s,%s,%s,'confirmed',%s,%s)""",
                         (
                             tenant["id"], ticket_id, reservation["kind"], reservation["res_date"],
                             reservation["slot"], reservation.get("table_no"),
+                            int(reservation.get("duration_minutes") or 90),
+                            int(reservation.get("party_size") or 2),
                         ),
                     )
     except psycopg2.errors.UniqueViolation:
@@ -1023,8 +1087,11 @@ def update_ticket_status(tenant_id, ticket_id, new_status):
                     (new_status, ticket_id, tenant_id),
                 )
                 cur.execute(
-                    "UPDATE reservations SET is_active = %s WHERE ticket_id = %s AND tenant_id = %s",
-                    (new_status != "İptal", ticket_id, tenant_id),
+                    """UPDATE reservations
+                       SET is_active = %s,
+                           res_status = CASE WHEN %s = 'İptal' THEN 'cancelled' ELSE res_status END
+                       WHERE ticket_id = %s AND tenant_id = %s""",
+                    (new_status != "İptal", new_status, ticket_id, tenant_id),
                 )
         return True
     except psycopg2.errors.UniqueViolation:
@@ -1043,7 +1110,8 @@ def get_booked_tables_by_slot(tenant_id, res_date):
         with conn.cursor() as cur:
             cur.execute(
                 """SELECT slot, table_no FROM reservations
-                   WHERE tenant_id = %s AND res_date = %s AND kind = 'table' AND is_active""",
+                   WHERE tenant_id = %s AND res_date = %s AND kind = 'table' AND is_active
+                     AND COALESCE(res_status, 'confirmed') NOT IN ('cancelled', 'no_show')""",
                 (tenant_id, res_date),
             )
             for r in cur.fetchall():
@@ -1057,7 +1125,8 @@ def get_booked_barber_slots(tenant_id, res_date):
         with conn.cursor() as cur:
             cur.execute(
                 """SELECT slot FROM reservations
-                   WHERE tenant_id = %s AND res_date = %s AND kind = 'barber' AND is_active""",
+                   WHERE tenant_id = %s AND res_date = %s AND kind = 'barber' AND is_active
+                     AND COALESCE(res_status, 'confirmed') NOT IN ('cancelled', 'no_show')""",
                 (tenant_id, res_date),
             )
             return {r["slot"] for r in cur.fetchall()}
@@ -1072,7 +1141,7 @@ def past_slots_for(res_date):
 
 
 # ---------------------------------------------------------------------------
-# Entegrasyonlar (Telegram / Webhook / WhatsApp / veri cekme)
+# Entegrasyonlar (Telegram / Webhook / WhatsApp / veri cekme + Webhook Log)
 # ---------------------------------------------------------------------------
 def run_async(fn, *args, **kwargs):
     t = threading.Thread(target=_safe_call, args=(fn, args, kwargs), daemon=True)
@@ -1167,6 +1236,36 @@ def safe_request(method, url, **kwargs):
     return requests.request(method, url.strip(), **kwargs)
 
 
+def log_webhook_attempt(tenant_id, event_name, target_url, payload, status_code, success, snippet, attempt_count=1):
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO webhook_logs
+                        (tenant_id, event_name, target_url, payload_json, status_code, success, response_snippet, attempt_count)
+                    VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s, %s)
+                    RETURNING id, event_name, target_url, status_code, success, response_snippet, attempt_count, created_at;
+                    """,
+                    (
+                        tenant_id,
+                        event_name[:80],
+                        target_url,
+                        json.dumps(payload, ensure_ascii=False),
+                        int(status_code or 0),
+                        bool(success),
+                        (snippet or "")[:500],
+                        int(attempt_count or 1),
+                    ),
+                )
+                row = dict(cur.fetchone())
+                row["created_at"] = row["created_at"].isoformat() if row.get("created_at") else ""
+                return row
+    except Exception as exc:
+        app.logger.warning("webhook_logs kayit hatasi: %s", exc)
+        return None
+
+
 def send_telegram(cfg, text):
     token, chat = (cfg.get("tg_bot_token") or "").strip(), (cfg.get("tg_chat_id") or "").strip()
     if not token or not chat:
@@ -1182,14 +1281,36 @@ def send_telegram(cfg, text):
         return False, f"Telegram hatası: {type(exc).__name__}"
 
 
-def send_webhook(cfg, payload):
+def send_webhook(cfg, payload, tenant_id=None, event_name="webhook_event", attempt_count=1):
     url = (cfg.get("webhook_url") or "").strip()
     if not url:
         return False, "Webhook URL eksik"
     try:
         r = safe_request("POST", url, json=payload)
+        if tenant_id:
+            log_webhook_attempt(
+                tenant_id=tenant_id,
+                event_name=event_name,
+                target_url=url,
+                payload=payload,
+                status_code=r.status_code,
+                success=r.ok,
+                snippet=r.text or "",
+                attempt_count=attempt_count,
+            )
         return r.ok, f"Webhook HTTP {r.status_code}"
     except Exception as exc:
+        if tenant_id:
+            log_webhook_attempt(
+                tenant_id=tenant_id,
+                event_name=event_name,
+                target_url=url,
+                payload=payload,
+                status_code=0,
+                success=False,
+                snippet=str(exc),
+                attempt_count=attempt_count,
+            )
         return False, f"Webhook hatası: {exc}"
 
 
@@ -1221,12 +1342,13 @@ def notify_new_ticket(tenant, ticket):
         ok, info = send_telegram(cfg, f"🔔 {tenant['business_name']} — {title}\n{ticket['message']}")
         bot_log(tenant["id"], f"Yeni talep → {info}", "info" if ok else "error")
     if cfg["webhook_url"]:
-        ok, info = send_webhook(cfg, {
+        wh_payload = {
             "business": tenant["business_name"], "slug": tenant["slug"], "event": "new_ticket",
             "ticket_id": ticket["id"], "name": ticket["name"], "phone": ticket["phone"],
             "service": ticket["service"], "message": ticket["message"],
             "created_at": ticket["created_at"], "timestamp": now_tr().isoformat(),
-        })
+        }
+        ok, info = send_webhook(cfg, wh_payload, tenant_id=tenant["id"], event_name="new_ticket")
         bot_log(tenant["id"], f"Yeni talep → {info}", "info" if ok else "error")
     if cfg["wa_auto_reply"] and cfg["wa_api_url"] and cfg["wa_api_token"] and ticket.get("phone"):
         ok, info = send_whatsapp(
@@ -1289,10 +1411,15 @@ def send_report_to_channels(tenant, cfg, text):
     if cfg["tg_bot_token"] and cfg["tg_chat_id"]:
         results.append(send_telegram(cfg, text))
     if cfg["webhook_url"]:
-        results.append(send_webhook(cfg, {
-            "business": tenant["business_name"], "slug": tenant["slug"],
-            "event": "daily_report", "message": text, "timestamp": now_tr().isoformat(),
-        }))
+        results.append(send_webhook(
+            cfg,
+            {
+                "business": tenant["business_name"], "slug": tenant["slug"],
+                "event": "daily_report", "message": text, "timestamp": now_tr().isoformat(),
+            },
+            tenant_id=tenant["id"],
+            event_name="daily_report",
+        ))
     return results
 
 
@@ -1525,7 +1652,274 @@ def login_session(slug):
     authed = set(session.get("tenant_auth_slugs", []))
     authed.add(slug)
     session["tenant_auth_slugs"] = list(authed)
+    session.setdefault("tenant_role", "owner")
     session.permanent = True
+
+
+# ---------------------------------------------------------------------------
+# Faz 4 Yardimcilari: Rezervasyon Saat/Kapasite Cakisma, Check-in & Webhook Log
+# ---------------------------------------------------------------------------
+def _parse_slot_window(date_str: str, time_str: str, duration_minutes: int = 90):
+    dt_start = datetime.strptime(f"{date_str.strip()} {time_str.strip()}", "%Y-%m-%d %H:%M")
+    dur = max(15, min(int(duration_minutes or 90), 480))
+    return dt_start, dt_start + timedelta(minutes=dur)
+
+
+def _intervals_overlap(start_a: datetime, end_a: datetime, start_b: datetime, end_b: datetime) -> bool:
+    return start_a < end_b and end_a > start_b
+
+
+@app.post("/api/tenant/<slug>/reservations/check-availability")
+@tenant_panel_required
+def api_check_reservation_availability(slug):
+    """Tarih, saat, süre ve kişi sayısına göre kapasitesi yeten ve çakışmayan masaları döner."""
+    data = request.get_json(silent=True) or request.form
+    date_str = (data.get("date") or "").strip()
+    time_str = (data.get("time") or "").strip()
+    party_size = max(1, int(data.get("party_size") or 2))
+    duration_minutes = int(data.get("duration_minutes") or 90)
+
+    try:
+        req_start, req_end = _parse_slot_window(date_str, time_str, duration_minutes)
+    except ValueError:
+        return jsonify({"ok": False, "error": "Gecerli tarih (YYYY-MM-DD) ve saat (HH:MM) giriniz."}), 400
+
+    tid = g.tenant["id"]
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT table_name, capacity, status
+                  FROM dining_tables
+                 WHERE tenant_id = %s AND capacity >= %s
+                 ORDER BY capacity ASC, id ASC;
+                """,
+                (tid, party_size),
+            )
+            candidate_tables = [dict(r) for r in cur.fetchall()]
+
+            cur.execute(
+                """
+                SELECT res_date, slot, table_no, duration_minutes
+                  FROM reservations
+                 WHERE tenant_id = %s AND kind = 'table' AND is_active
+                   AND COALESCE(res_status, 'confirmed') NOT IN ('cancelled', 'no_show');
+                """,
+                (tid,),
+            )
+            busy_table_nos = set()
+            for r in cur.fetchall():
+                r_date = r["res_date"].isoformat() if hasattr(r["res_date"], "isoformat") else str(r["res_date"] or "")
+                r_slot = str(r.get("slot") or "").strip()
+                r_tno = r.get("table_no")
+                r_dur = int(r.get("duration_minutes") or 90)
+                if not r_date or not r_slot or r_tno is None:
+                    continue
+                try:
+                    ex_start, ex_end = _parse_slot_window(r_date, r_slot, r_dur)
+                except ValueError:
+                    continue
+                if _intervals_overlap(req_start, req_end, ex_start, ex_end):
+                    busy_table_nos.add(int(r_tno))
+
+            available_tables = []
+            for t in candidate_tables:
+                m = re.search(r"(\d+)", str(t.get("table_name") or ""))
+                t_num = int(m.group(1)) if m else None
+                if t_num is None or t_num not in busy_table_nos:
+                    available_tables.append(t)
+
+            return jsonify({
+                "ok": True,
+                "date": date_str,
+                "time": time_str,
+                "party_size": party_size,
+                "available_tables": available_tables,
+                "recommended_table": available_tables[0]["table_name"] if available_tables else None,
+            })
+
+
+@app.post("/api/tenant/<slug>/reservations/<int:res_id>/status")
+@tenant_panel_required
+def api_update_reservation_status(slug, res_id):
+    """Rezervasyon durumunu ('pending', 'confirmed', 'checked_in', 'no_show', 'cancelled') günceller."""
+    data = request.get_json(silent=True) or request.form
+    new_status = (data.get("status") or "").strip().lower()
+    if new_status not in VALID_RES_STATUSES:
+        return jsonify({"ok": False, "error": "Gecersiz rezervasyon durumu."}), 400
+
+    tid = g.tenant["id"]
+    is_active = new_status not in {"cancelled", "no_show"}
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE reservations
+                   SET res_status = %s, is_active = %s
+                 WHERE id = %s AND tenant_id = %s
+                RETURNING id, ticket_id, res_date, slot, table_no, res_status, is_active;
+                """,
+                (new_status, is_active, res_id, tid),
+            )
+            updated = cur.fetchone()
+            if not updated:
+                return jsonify({"ok": False, "error": "Rezervasyon bulunamadi."}), 404
+
+            table_no = updated.get("table_no")
+            if table_no is not None:
+                table_name = f"Masa {int(table_no)}"
+                if new_status == "checked_in":
+                    cur.execute(
+                        """
+                        UPDATE dining_tables
+                           SET status = 'occupied', updated_at = CURRENT_TIMESTAMP
+                         WHERE tenant_id = %s AND table_name = %s;
+                        """,
+                        (tid, table_name),
+                    )
+                elif new_status in {"cancelled", "no_show"}:
+                    cur.execute(
+                        """
+                        UPDATE dining_tables
+                           SET status = CASE WHEN status = 'reserved' THEN 'empty' ELSE status END,
+                               updated_at = CURRENT_TIMESTAMP
+                         WHERE tenant_id = %s AND table_name = %s;
+                        """,
+                        (tid, table_name),
+                    )
+
+            row_dict = dict(updated)
+            if hasattr(row_dict.get("res_date"), "isoformat"):
+                row_dict["res_date"] = row_dict["res_date"].isoformat()
+            return jsonify({"ok": True, "reservation": row_dict})
+
+
+@app.post("/api/tenant/<slug>/staff/add")
+@tenant_panel_required
+def api_add_staff_member(slug):
+    """PIN tabanlı personel (manager, cashier, waiter) tanımlar."""
+    role_curr = (session.get("tenant_role") or "owner").lower()
+    if role_curr not in {"owner", "manager"}:
+        return jsonify({"ok": False, "error": "Personel ekleme yetkiniz yok."}), 403
+
+    data = request.get_json(silent=True) or request.form
+    staff_name = clean_text(str(data.get("staff_name") or ""), 120)
+    role = (data.get("role") or "cashier").strip().lower()
+    pin_code = (data.get("pin_code") or "").strip()
+
+    if role not in {"manager", "cashier", "waiter"}:
+        return jsonify({"ok": False, "error": "Gecersiz personel rolu."}), 400
+    if not staff_name or len(pin_code) < 4:
+        return jsonify({"ok": False, "error": "Personel adi ve en az 4 haneli PIN zorunludur."}), 400
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO tenant_staff (tenant_id, staff_name, role, pin_hash, is_active)
+                VALUES (%s, %s, %s, %s, TRUE)
+                RETURNING id, staff_name, role, is_active, created_at;
+                """,
+                (g.tenant["id"], staff_name, role, hash_pin(pin_code)),
+            )
+            row = dict(cur.fetchone())
+            if hasattr(row.get("created_at"), "isoformat"):
+                row["created_at"] = row["created_at"].isoformat()
+            return jsonify({"ok": True, "staff": row})
+
+
+@app.post("/api/tenant/<slug>/staff/pin-login")
+@tenant_panel_required
+def api_staff_pin_login(slug):
+    """PIN doğrulayarak aktif oturumun rolünü (manager/cashier/waiter) değiştirir."""
+    data = request.get_json(silent=True) or request.form
+    pin_code = (data.get("pin_code") or "").strip()
+    if not pin_code:
+        return jsonify({"ok": False, "error": "PIN kodu giriniz."}), 400
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, staff_name, role
+                  FROM tenant_staff
+                 WHERE tenant_id = %s AND pin_hash = %s AND is_active = TRUE
+                 LIMIT 1;
+                """,
+                (g.tenant["id"], hash_pin(pin_code)),
+            )
+            staff = cur.fetchone()
+            if not staff:
+                return jsonify({"ok": False, "error": "Hatali PIN kodu."}), 401
+
+            session["tenant_role"] = staff["role"]
+            session["tenant_staff_name"] = staff["staff_name"]
+            return jsonify({
+                "ok": True,
+                "staff_name": staff["staff_name"],
+                "role": staff["role"],
+            })
+
+
+@app.get("/api/tenant/<slug>/webhooks/logs")
+@tenant_panel_required
+def api_list_webhook_logs(slug):
+    """Kiracının son webhook çağrı loglarını listeler."""
+    limit = max(1, min(int(request.args.get("limit") or 30), 100))
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, event_name, target_url, status_code, success, response_snippet, attempt_count, created_at
+                  FROM webhook_logs
+                 WHERE tenant_id = %s
+                 ORDER BY id DESC
+                 LIMIT %s;
+                """,
+                (g.tenant["id"], limit),
+            )
+            logs = []
+            for r in cur.fetchall():
+                d = dict(r)
+                if hasattr(d.get("created_at"), "isoformat"):
+                    d["created_at"] = d["created_at"].isoformat()
+                logs.append(d)
+            return jsonify({"ok": True, "logs": logs})
+
+
+@app.post("/api/tenant/<slug>/webhooks/logs/<int:log_id>/retry")
+@tenant_panel_required
+def api_retry_webhook_log(slug, log_id):
+    """Önceki bir webhook kaydını SSRF korumalı olarak aynı payload ile yeniden tetikler."""
+    tid = g.tenant["id"]
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT event_name, target_url, payload_json, attempt_count
+                  FROM webhook_logs
+                 WHERE id = %s AND tenant_id = %s;
+                """,
+                (log_id, tid),
+            )
+            orig = cur.fetchone()
+            if not orig:
+                return jsonify({"ok": False, "error": "Webhook kaydi bulunamadi."}), 404
+
+    payload_data = orig["payload_json"]
+    if isinstance(payload_data, str):
+        payload_data = json.loads(payload_data or "{}")
+
+    next_attempt = int(orig.get("attempt_count") or 1) + 1
+    cfg = {"webhook_url": orig["target_url"]}
+    ok, info = send_webhook(
+        cfg,
+        payload_data or {},
+        tenant_id=tid,
+        event_name=orig["event_name"],
+        attempt_count=next_attempt,
+    )
+    return jsonify({"ok": True, "sent_ok": ok, "info": info, "attempt_count": next_attempt})
 
 
 # ---------------------------------------------------------------------------
