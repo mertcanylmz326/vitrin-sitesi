@@ -94,9 +94,11 @@ TIME_SLOTS = [
 ]
 TICKET_STATUSES = {"Yeni", "İnceleniyor", "Tamamlandı", "İptal"}
 VALID_RES_STATUSES = {"pending", "confirmed", "checked_in", "no_show", "cancelled"}
+VALID_B2B_TIERS = {"standard", "silver", "gold", "enterprise"}
+VALID_B2B_ORDER_STATUSES = {"pending", "approved", "shipped", "completed", "cancelled"}
 VALID_MODULES = {
     "genel", "kafe-randevu", "berber-randevu", "masa-qr",
-    "mobil-saha", "web-otomasyon", "masaustu-otomasyon",
+    "mobil-saha", "web-otomasyon", "masaustu-otomasyon", "b2b-ticaret",
 }
 
 SUPERADMIN_USERNAME = os.environ.get("SUPERADMIN_USERNAME", "").strip()
@@ -120,10 +122,26 @@ MODULE_LABELS = {
     "mobil-saha": "Mobil Uygulama & Saha Akışları",
     "web-otomasyon": "Web Panelleri, Formlar & Botlar",
     "masaustu-otomasyon": "Masaüstü Kasa, Barkod & Stok Otomasyonu",
+    "b2b-ticaret": "B2B Kurumsal Üyelik, Toptan Sipariş & Cari",
     "genel": "Genel Talep Formu",
 }
 
 SERVICES_DATA = [
+    {
+        "id": "b2b-kurumsal-uyelik",
+        "module_key": "b2b-ticaret",
+        "tag": "B2B Kurumsal",
+        "title": "B2B Üyelik, Cari Limit & Toptan Sipariş",
+        "image": "webotom.jpg",
+        "short": "Vergi/VKN doğrulamalı kurumsal üyelik, kademeli bayi iskontosu, cari bakiye ve toptan sipariş yönetimi.",
+        "details": "Kurumsal müşterilerin VKN/vergi dairesi ve cari limitleriyle sisteme tanımlandığı, toptan siparişlerin onaylanıp cari ekstresine işlendiği B2B altyapısı.",
+        "features": [
+            "Kurumsal ünvan, Vergi Dairesi / VKN ve vade/limit tanımlama",
+            "Standard, Silver, Gold ve Enterprise bayi segmentleri",
+            "Toptan sipariş oluşturma, onaylama ve otomatik cari borç/tahsilat kaydı",
+            "Panel ve JSON API üzerinden anlık cari limit kontrolü",
+        ],
+    },
     {
         "id": "mobil-otomasyon",
         "module_key": "mobil-saha",
@@ -449,7 +467,7 @@ def init_db():
                     owner_email TEXT NOT NULL,
                     password_hash TEXT NOT NULL,
                     plan TEXT NOT NULL DEFAULT 'starter',
-                    module_type TEXT NOT NULL DEFAULT 'genel',
+                    module_type TEXT NOT NULL DEFAULT 'b2b-ticaret',
                     table_count INTEGER NOT NULL DEFAULT 8,
                     logo_filename TEXT DEFAULT '',
                     whatsapp_number TEXT DEFAULT '',
@@ -459,6 +477,12 @@ def init_db():
                     qr_addon_requested BOOLEAN NOT NULL DEFAULT FALSE,
                     qr_addon_note TEXT DEFAULT '',
                     bot_config_json TEXT DEFAULT '{}',
+                    company_legal_name TEXT DEFAULT '',
+                    tax_office TEXT DEFAULT '',
+                    tax_number TEXT DEFAULT '',
+                    b2b_tier TEXT NOT NULL DEFAULT 'standard',
+                    credit_limit NUMERIC(12,2) NOT NULL DEFAULT 50000.00,
+                    payment_term_days INTEGER NOT NULL DEFAULT 30,
                     is_active BOOLEAN NOT NULL DEFAULT FALSE,
                     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
                     activated_at TIMESTAMP
@@ -466,7 +490,7 @@ def init_db():
                 """
             )
             for ddl in (
-                "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS module_type TEXT NOT NULL DEFAULT 'genel'",
+                "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS module_type TEXT NOT NULL DEFAULT 'b2b-ticaret'",
                 "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS table_count INTEGER NOT NULL DEFAULT 8",
                 "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS logo_filename TEXT DEFAULT ''",
                 "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS payment_note TEXT DEFAULT ''",
@@ -475,6 +499,12 @@ def init_db():
                 "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS qr_addon_requested BOOLEAN NOT NULL DEFAULT FALSE",
                 "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS qr_addon_note TEXT DEFAULT ''",
                 "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS bot_config_json TEXT DEFAULT '{}'",
+                "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS company_legal_name TEXT DEFAULT ''",
+                "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS tax_office TEXT DEFAULT ''",
+                "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS tax_number TEXT DEFAULT ''",
+                "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS b2b_tier TEXT NOT NULL DEFAULT 'standard'",
+                "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS credit_limit NUMERIC(12,2) NOT NULL DEFAULT 50000.00",
+                "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS payment_term_days INTEGER NOT NULL DEFAULT 30",
                 "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS activated_at TIMESTAMP",
                 "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP",
                 "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS access_token TEXT",
@@ -487,6 +517,40 @@ def init_db():
             cur.execute("SELECT id FROM tenants WHERE access_token IS NULL OR access_token = ''")
             for row in cur.fetchall():
                 cur.execute("UPDATE tenants SET access_token = %s WHERE id = %s", (secrets.token_urlsafe(24), row["id"]))
+
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS b2b_orders (
+                    id SERIAL PRIMARY KEY,
+                    tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                    order_code VARCHAR(32) UNIQUE NOT NULL,
+                    item_summary TEXT NOT NULL,
+                    quantity INTEGER NOT NULL DEFAULT 1,
+                    unit_price NUMERIC(12,2) NOT NULL DEFAULT 0.00,
+                    discount_rate NUMERIC(5,2) NOT NULL DEFAULT 0.00,
+                    total_amount NUMERIC(12,2) NOT NULL DEFAULT 0.00,
+                    status VARCHAR(24) NOT NULL DEFAULT 'pending',
+                    note TEXT DEFAULT '',
+                    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+                );
+                """
+            )
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_b2b_orders_tenant ON b2b_orders(tenant_id, id DESC)")
+
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS b2b_ledger (
+                    id SERIAL PRIMARY KEY,
+                    tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                    entry_type VARCHAR(24) NOT NULL,
+                    amount NUMERIC(12,2) NOT NULL DEFAULT 0.00,
+                    description TEXT NOT NULL DEFAULT '',
+                    ref_order_code VARCHAR(32) DEFAULT '',
+                    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+                );
+                """
+            )
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_b2b_ledger_tenant ON b2b_ledger(tenant_id, id DESC)")
 
             cur.execute(
                 """
@@ -696,11 +760,11 @@ def init_db():
                     INSERT INTO tenants (slug, business_name, owner_email, password_hash, plan, module_type,
                         table_count, whatsapp_number, payment_note, payment_requested, is_active, activated_at,
                         expires_at, access_token)
-                    VALUES (%s,%s,%s,%s,'pro','genel',8,%s,%s,FALSE,TRUE,NOW(), NOW() + INTERVAL '3650 days', %s)
+                    VALUES (%s,%s,%s,%s,'pro','b2b-ticaret',8,%s,%s,FALSE,TRUE,NOW(), NOW() + INTERVAL '3650 days', %s)
                     """,
                     (
-                        "kolay-vitrin", "KOLAY Otomasyon Ana Vitrin", "iletisim@kolayotomasyon.local",
-                        generate_password_hash(pw), WHATSAPP_NUMBER, "Varsayilan aktif vitrin hesabi",
+                        "kolay-vitrin", "KOLAY B2B Ana Vitrin", "iletisim@kolayotomasyon.local",
+                        generate_password_hash(pw), WHATSAPP_NUMBER, "Varsayilan aktif B2B vitrin hesabi",
                         secrets.token_urlsafe(24),
                     ),
                 )
@@ -774,7 +838,7 @@ def _backfill_reservations(cur):
 
 
 # ---------------------------------------------------------------------------
-# Tenant verisi
+# B2B & Tenant verisi
 # ---------------------------------------------------------------------------
 _TENANT_SELECT = """
     SELECT t.*, (t.is_active AND t.expires_at IS NOT NULL AND t.expires_at < NOW()) AS is_expired
@@ -787,7 +851,7 @@ def tenant_usable(tenant):
 
 
 def tenant_has_qr_access(tenant):
-    mod = tenant.get("module_type") or "genel"
+    mod = tenant.get("module_type") or "b2b-ticaret"
     if mod == "masa-qr":
         return True
     if mod == "kafe-randevu":
@@ -831,10 +895,27 @@ def get_all_tenants():
     return rows
 
 
-def create_tenant(business_name, owner_email, password, raw_slug="", plan="starter", module_type="genel", whatsapp_number=""):
+def create_tenant(
+    business_name,
+    owner_email,
+    password,
+    raw_slug="",
+    plan="starter",
+    module_type="b2b-ticaret",
+    whatsapp_number="",
+    company_legal_name="",
+    tax_office="",
+    tax_number="",
+    b2b_tier="standard",
+    credit_limit=50000.0,
+    payment_term_days=30,
+):
     base_slug = slugify(raw_slug or business_name)
-    mod = module_type if module_type in VALID_MODULES else "genel"
+    mod = module_type if module_type in VALID_MODULES else "b2b-ticaret"
     chosen_plan = plan if plan in {"starter", "pro"} else "starter"
+    tier = b2b_tier if b2b_tier in VALID_B2B_TIERS else "standard"
+    limit_val = _money(max(0.0, float(credit_limit or 50000.0)))
+    term_days = max(0, min(365, int(payment_term_days or 30)))
     default_tables = 8 if mod in {"kafe-randevu", "masa-qr"} else 4
     with get_db() as conn:
         with conn.cursor() as cur:
@@ -848,17 +929,106 @@ def create_tenant(business_name, owner_email, password, raw_slug="", plan="start
             cur.execute(
                 """
                 INSERT INTO tenants (slug, business_name, owner_email, password_hash, plan, module_type,
-                    table_count, whatsapp_number, is_active, payment_requested, qr_addon_active, access_token)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,FALSE,FALSE,%s,%s)
+                    table_count, whatsapp_number, company_legal_name, tax_office, tax_number,
+                    b2b_tier, credit_limit, payment_term_days,
+                    is_active, payment_requested, qr_addon_active, access_token)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,FALSE,FALSE,%s,%s)
                 RETURNING *
                 """,
                 (
                     candidate, business_name.strip()[:120], owner_email.strip().lower()[:160],
                     generate_password_hash(password), chosen_plan, mod, default_tables,
-                    whatsapp_number.strip()[:30], chosen_plan == "pro", secrets.token_urlsafe(24),
+                    whatsapp_number.strip()[:30],
+                    (company_legal_name or business_name).strip()[:160],
+                    tax_office.strip()[:100], tax_number.strip()[:40],
+                    tier, limit_val, term_days,
+                    chosen_plan == "pro", secrets.token_urlsafe(24),
                 ),
             )
             return cur.fetchone()
+
+
+def tier_default_discount(tier: str) -> Decimal:
+    mapping = {
+        "standard": Decimal("0.00"),
+        "silver": Decimal("5.00"),
+        "gold": Decimal("10.00"),
+        "enterprise": Decimal("15.00"),
+    }
+    return mapping.get((tier or "standard").lower(), Decimal("0.00"))
+
+
+def get_b2b_summary(tenant):
+    tid = tenant["id"]
+    credit_limit = _money(tenant.get("credit_limit") or 50000)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    COALESCE(SUM(CASE WHEN entry_type = 'debit' THEN amount ELSE 0 END), 0) AS total_debit,
+                    COALESCE(SUM(CASE WHEN entry_type = 'credit' THEN amount ELSE 0 END), 0) AS total_credit
+                FROM b2b_ledger
+                WHERE tenant_id = %s;
+                """,
+                (tid,),
+            )
+            bal_row = cur.fetchone() or {}
+            total_debit = _money(bal_row.get("total_debit") or 0)
+            total_credit = _money(bal_row.get("total_credit") or 0)
+            current_balance = _money(total_debit - total_credit)
+            available_credit = _money(credit_limit - current_balance)
+
+            cur.execute(
+                """
+                SELECT id, order_code, item_summary, quantity, unit_price, discount_rate, total_amount, status, note, created_at
+                  FROM b2b_orders
+                 WHERE tenant_id = %s
+                 ORDER BY id DESC
+                 LIMIT 40;
+                """,
+                (tid,),
+            )
+            orders = []
+            for r in cur.fetchall():
+                d = dict(r)
+                d["unit_price"] = float(d.get("unit_price") or 0)
+                d["discount_rate"] = float(d.get("discount_rate") or 0)
+                d["total_amount"] = float(d.get("total_amount") or 0)
+                d["created_str"] = d["created_at"].strftime("%d.%m.%Y %H:%M") if d.get("created_at") else "-"
+                orders.append(d)
+
+            cur.execute(
+                """
+                SELECT id, entry_type, amount, description, ref_order_code, created_at
+                  FROM b2b_ledger
+                 WHERE tenant_id = %s
+                 ORDER BY id DESC
+                 LIMIT 30;
+                """,
+                (tid,),
+            )
+            ledger = []
+            for r in cur.fetchall():
+                d = dict(r)
+                d["amount"] = float(d.get("amount") or 0)
+                d["created_str"] = d["created_at"].strftime("%d.%m.%Y %H:%M") if d.get("created_at") else "-"
+                ledger.append(d)
+
+    return {
+        "company_legal_name": tenant.get("company_legal_name") or tenant.get("business_name") or "",
+        "tax_office": tenant.get("tax_office") or "",
+        "tax_number": tenant.get("tax_number") or "",
+        "b2b_tier": tenant.get("b2b_tier") or "standard",
+        "credit_limit": float(credit_limit),
+        "payment_term_days": int(tenant.get("payment_term_days") or 30),
+        "total_debit": float(total_debit),
+        "total_credit": float(total_credit),
+        "current_balance": float(current_balance),
+        "available_credit": float(available_credit),
+        "orders": orders,
+        "ledger": ledger,
+    }
 
 
 def get_menu_items(tenant_id):
@@ -1632,11 +1802,11 @@ def device_tenant(slug, module_check=None):
 
 
 def render_pending(tenant, notified=False):
-    mod_type = tenant.get("module_type") or "genel"
+    mod_type = tenant.get("module_type") or "b2b-ticaret"
     return render_template(
         "tenant_pending.html",
         tenant=tenant,
-        mod_label=MODULE_LABELS.get(mod_type, MODULE_LABELS["genel"]),
+        mod_label=MODULE_LABELS.get(mod_type, MODULE_LABELS["b2b-ticaret"]),
         notified=notified or request.args.get("notified") == "1",
         iban_holder=IBAN_HOLDER, iban_bank=IBAN_BANK, iban_number=IBAN_NUMBER,
         price_starter=PLAN_PRICE_STARTER, price_pro=PLAN_PRICE_PRO, wa_number=WHATSAPP_NUMBER,
@@ -1658,6 +1828,186 @@ def login_session(slug):
     session["tenant_auth_slugs"] = list(authed)
     session.setdefault("tenant_role", "owner")
     session.permanent = True
+
+
+# ---------------------------------------------------------------------------
+# B2B Kurumsal Siparis & Cari Endpointleri
+# ---------------------------------------------------------------------------
+@app.get("/api/tenant/<slug>/b2b/summary")
+@tenant_panel_required
+def api_b2b_summary(slug):
+    return jsonify({"ok": True, "b2b": get_b2b_summary(g.tenant)})
+
+
+@app.post("/api/tenant/<slug>/b2b/profile")
+@tenant_panel_required
+def api_b2b_update_profile(slug):
+    data = request.get_json(silent=True) or request.form
+    tid = g.tenant["id"]
+    legal_name = clean_text(str(data.get("company_legal_name") or ""), 160)
+    tax_office = clean_text(str(data.get("tax_office") or ""), 100)
+    tax_number = clean_text(str(data.get("tax_number") or ""), 40)
+    b2b_tier = (data.get("b2b_tier") or g.tenant.get("b2b_tier") or "standard").strip().lower()
+    if b2b_tier not in VALID_B2B_TIERS:
+        b2b_tier = "standard"
+    try:
+        credit_limit = _money(max(0.0, float(data.get("credit_limit", g.tenant.get("credit_limit") or 50000))))
+        term_days = max(0, min(365, int(data.get("payment_term_days", g.tenant.get("payment_term_days") or 30))))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Gecersiz cari limit veya vade degeri."}), 400
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE tenants
+                   SET company_legal_name = %s,
+                       tax_office = %s,
+                       tax_number = %s,
+                       b2b_tier = %s,
+                       credit_limit = %s,
+                       payment_term_days = %s
+                 WHERE id = %s;
+                """,
+                (legal_name, tax_office, tax_number, b2b_tier, credit_limit, term_days, tid),
+            )
+    updated_tenant = get_tenant_by_id(tid)
+    return jsonify({"ok": True, "b2b": get_b2b_summary(updated_tenant)})
+
+
+@app.post("/api/tenant/<slug>/b2b/orders")
+@tenant_panel_required
+def api_b2b_create_order(slug):
+    data = request.get_json(silent=True) or request.form
+    tid = g.tenant["id"]
+    item_summary = clean_text(str(data.get("item_summary") or ""), 240)
+    note = clean_text(str(data.get("note") or ""), 300)
+    if not item_summary:
+        return jsonify({"ok": False, "error": "Toptan siparis kalemi / aciklamasi zorunludur."}), 400
+
+    try:
+        qty = max(1, min(100000, int(data.get("quantity") or 1)))
+        unit_price = _money(max(0.01, float(data.get("unit_price") or 0)))
+        raw_disc = data.get("discount_rate")
+        if raw_disc is None or str(raw_disc).strip() == "":
+            disc_rate = tier_default_discount(g.tenant.get("b2b_tier") or "standard")
+        else:
+            disc_rate = _money(max(0.0, min(90.0, float(raw_disc))))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Adet, birim fiyat veya iskonto gecersiz."}), 400
+
+    gross = _money(unit_price * Decimal(qty))
+    discount_amt = _money(gross * (disc_rate / Decimal("100")))
+    total_amount = _money(gross - discount_amt)
+
+    summary_now = get_b2b_summary(g.tenant)
+    avail = _money(summary_now["available_credit"])
+    if total_amount > avail:
+        return jsonify({
+            "ok": False,
+            "error": f"Cari limit yetersiz. Siparis tutari: {total_amount:.2f} TL, Kullanilabilir limit: {avail:.2f} TL",
+        }), 400
+
+    order_code = f"B2B-{uuid.uuid4().hex[:8].upper()}"
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO b2b_orders
+                    (tenant_id, order_code, item_summary, quantity, unit_price, discount_rate, total_amount, status, note)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 'approved', %s)
+                RETURNING id, order_code, item_summary, quantity, unit_price, discount_rate, total_amount, status, note, created_at;
+                """,
+                (tid, order_code, item_summary, qty, unit_price, disc_rate, total_amount, note),
+            )
+            order_row = dict(cur.fetchone())
+            order_row["unit_price"] = float(order_row["unit_price"])
+            order_row["discount_rate"] = float(order_row["discount_rate"])
+            order_row["total_amount"] = float(order_row["total_amount"])
+            order_row["created_at"] = order_row["created_at"].isoformat() if order_row.get("created_at") else ""
+
+            cur.execute(
+                """
+                INSERT INTO b2b_ledger (tenant_id, entry_type, amount, description, ref_order_code)
+                VALUES (%s, 'debit', %s, %s, %s);
+                """,
+                (tid, total_amount, f"Toptan Sipariş Borcu ({qty}x {item_summary})", order_code),
+            )
+
+    updated_tenant = get_tenant_by_id(tid)
+    return jsonify({"ok": True, "order": order_row, "b2b": get_b2b_summary(updated_tenant)})
+
+
+@app.post("/api/tenant/<slug>/b2b/ledger/payment")
+@tenant_panel_required
+def api_b2b_record_payment(slug):
+    data = request.get_json(silent=True) or request.form
+    tid = g.tenant["id"]
+    desc = clean_text(str(data.get("description") or "Cari Tahsilat / Ödeme"), 240)
+    ref_code = clean_text(str(data.get("ref_order_code") or ""), 32)
+    try:
+        amount = _money(float(data.get("amount") or 0))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Gecersiz tahsilat tutari."}), 400
+    if amount <= Decimal("0.00"):
+        return jsonify({"ok": False, "error": "Tahsilat tutari sifirdan buyuk olmalidir."}), 400
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO b2b_ledger (tenant_id, entry_type, amount, description, ref_order_code)
+                VALUES (%s, 'credit', %s, %s, %s);
+                """,
+                (tid, amount, desc or "Cari Tahsilat", ref_code),
+            )
+    updated_tenant = get_tenant_by_id(tid)
+    return jsonify({"ok": True, "b2b": get_b2b_summary(updated_tenant)})
+
+
+@app.post("/api/tenant/<slug>/b2b/orders/<int:order_id>/status")
+@tenant_panel_required
+def api_b2b_update_order_status(slug, order_id):
+    data = request.get_json(silent=True) or request.form
+    new_status = (data.get("status") or "").strip().lower()
+    if new_status not in VALID_B2B_ORDER_STATUSES:
+        return jsonify({"ok": False, "error": "Gecersiz B2B siparis durumu."}), 400
+
+    tid = g.tenant["id"]
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, order_code, total_amount, status
+                  FROM b2b_orders
+                 WHERE id = %s AND tenant_id = %s
+                 FOR UPDATE;
+                """,
+                (order_id, tid),
+            )
+            order = cur.fetchone()
+            if not order:
+                return jsonify({"ok": False, "error": "B2B siparis bulunamadi."}), 404
+
+            old_status = (order.get("status") or "").lower()
+            amt = _money(order.get("total_amount") or 0)
+            ocode = order["order_code"]
+
+            cur.execute(
+                "UPDATE b2b_orders SET status = %s WHERE id = %s AND tenant_id = %s;",
+                (new_status, order_id, tid),
+            )
+            if new_status == "cancelled" and old_status != "cancelled" and amt > Decimal("0.00"):
+                cur.execute(
+                    """
+                    INSERT INTO b2b_ledger (tenant_id, entry_type, amount, description, ref_order_code)
+                    VALUES (%s, 'credit', %s, %s, %s);
+                    """,
+                    (tid, amt, f"İptal Sipariş İadesi ({ocode})", ocode),
+                )
+
+    updated_tenant = get_tenant_by_id(tid)
+    return jsonify({"ok": True, "order_id": order_id, "status": new_status, "b2b": get_b2b_summary(updated_tenant)})
 
 
 # ---------------------------------------------------------------------------
@@ -2010,7 +2360,7 @@ def index():
 
 
 # ---------------------------------------------------------------------------
-# Kayit / giris
+# Kayit / giris (B2B Kurumsal Uyelik)
 # ---------------------------------------------------------------------------
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -2023,16 +2373,38 @@ def register_tenant():
     raw_slug = clean_text(request.form.get("slug"), 60)
     owner_email = clean_text(request.form.get("owner_email"), 160)
     whatsapp_number = clean_text(request.form.get("whatsapp_number"), 30)
+    company_legal_name = clean_text(request.form.get("company_legal_name") or business_name, 160)
+    tax_office = clean_text(request.form.get("tax_office"), 100)
+    tax_number = clean_text(request.form.get("tax_number"), 40)
+    b2b_tier = request.form.get("b2b_tier", "standard").strip().lower()
     password = request.form.get("password", "").strip()
     plan = request.form.get("plan", "starter").strip()
-    module_type = request.form.get("module_type", "kafe-randevu").strip()
+    module_type = request.form.get("module_type", "b2b-ticaret").strip()
+
+    try:
+        credit_limit = float(request.form.get("credit_limit") or 50000)
+        payment_term_days = int(request.form.get("payment_term_days") or 30)
+    except ValueError:
+        credit_limit = 50000.0
+        payment_term_days = 30
 
     if not business_name or not _EMAIL_RE.match(owner_email) or len(password) < 8:
-        return redirect(url_for("index", err="İşletme adı, geçerli e-posta ve en az 8 karakter şifre zorunlu.") + "#saas-basla")
+        return redirect(url_for("index", err="Kurumsal ünvan/işletme adı, geçerli e-posta ve en az 8 karakter şifre zorunlu.") + "#saas-basla")
     try:
         tenant = create_tenant(
-            business_name, owner_email, password, raw_slug=raw_slug,
-            plan=plan, module_type=module_type, whatsapp_number=whatsapp_number,
+            business_name,
+            owner_email,
+            password,
+            raw_slug=raw_slug,
+            plan=plan,
+            module_type=module_type,
+            whatsapp_number=whatsapp_number,
+            company_legal_name=company_legal_name,
+            tax_office=tax_office,
+            tax_number=tax_number,
+            b2b_tier=b2b_tier,
+            credit_limit=credit_limit,
+            payment_term_days=payment_term_days,
         )
     except Exception as exc:
         app.logger.error("Kayit hatasi: %s", exc)
@@ -2051,7 +2423,7 @@ def tenant_quick_login():
     if tenant and check_password_hash(tenant["password_hash"], password):
         login_session(tenant["slug"])
         return redirect(url_for("tenant_panel", slug=tenant["slug"]))
-    return redirect(url_for("index", err="İşletme slug veya şifre hatalı.") + "#saas-basla")
+    return redirect(url_for("index", err="Kurumsal slug veya şifre hatalı.") + "#saas-basla")
 
 
 @app.route("/i/<slug>/login", methods=["GET", "POST"])
@@ -2303,7 +2675,7 @@ def tenant_qr_order_page(slug):
 
 
 # ---------------------------------------------------------------------------
-# Musteri tarafi: ana sayfa (randevu / talep)
+# Musteri tarafi: ana sayfa (randevu / talep / B2B talep)
 # ---------------------------------------------------------------------------
 ERR_MESSAGES = {
     "taken": "Seçtiğiniz masa/saat az önce doldu. Lütfen başka bir seçim yapın.",
@@ -2317,8 +2689,8 @@ def tenant_public(slug):
     tenant = get_tenant_by_slug(slug)
     if not tenant:
         abort(404)
-    mod_type = tenant.get("module_type") or "genel"
-    mod_label = MODULE_LABELS.get(mod_type, MODULE_LABELS["genel"])
+    mod_type = tenant.get("module_type") or "b2b-ticaret"
+    mod_label = MODULE_LABELS.get(mod_type, MODULE_LABELS["b2b-ticaret"])
 
     if not tenant_usable(tenant):
         return render_pending(tenant)
@@ -2350,7 +2722,7 @@ def tenant_public(slug):
         if not name or len(re.sub(r"\D", "", phone)) < 10:
             return fail("invalid")
 
-        reservation, service = None, raw_service or "Genel Talep"
+        reservation, service = None, raw_service or ("B2B Kurumsal Talep" if mod_type == "b2b-ticaret" else "Genel Talep")
         if mod_type in ("kafe-randevu", "berber-randevu"):
             res_date = parse_date(request.form.get("res_date"))
             slot_time = request.form.get("slot_time", "").strip()
@@ -2418,7 +2790,7 @@ def tenant_public(slug):
 
 
 # ---------------------------------------------------------------------------
-# Isletme paneli
+# Isletme / B2B paneli
 # ---------------------------------------------------------------------------
 def build_tenant_qr_list(tenant):
     cap = max(1, int(tenant.get("table_count") or 8))
@@ -2467,7 +2839,7 @@ def tenant_panel(slug):
     if not tenant_usable(tenant):
         return render_pending(tenant)
 
-    mod_type = tenant.get("module_type") or "genel"
+    mod_type = tenant.get("module_type") or "b2b-ticaret"
     show_menu_tab = mod_type in {"kafe-randevu", "masa-qr"}
     qr_unlocked = tenant_has_qr_access(tenant)
     tid = tenant["id"]
@@ -2479,6 +2851,7 @@ def tenant_panel(slug):
     if mod_type == "masaustu-otomasyon":
         pos_products, pos_total_sold, pos_total_revenue, pos_sales = get_pos_overview(tid)
     bot_cfg = get_bot_config(tenant) if mod_type == "web-otomasyon" else {}
+    b2b_summary = get_b2b_summary(tenant)
 
     with get_db() as conn:
         with conn.cursor() as cur:
@@ -2497,16 +2870,17 @@ def tenant_panel(slug):
                 for r in cur.fetchall()
             ]
 
-    nav_count = 4 if show_menu_tab else (3 if mod_type in {"mobil-saha", "web-otomasyon", "masaustu-otomasyon"} else 2)
+    nav_count = 4 if show_menu_tab else (3 if mod_type in {"mobil-saha", "web-otomasyon", "masaustu-otomasyon", "b2b-ticaret"} else 2)
     return render_template(
         "tenant_panel.html",
-        tenant=tenant, mod_label=MODULE_LABELS.get(mod_type, MODULE_LABELS["genel"]),
+        tenant=tenant, mod_label=MODULE_LABELS.get(mod_type, MODULE_LABELS["b2b-ticaret"]),
         show_menu_tab=show_menu_tab, qr_unlocked=qr_unlocked, qr_addon_price=QR_ADDON_PRICE,
         iban_holder=IBAN_HOLDER, iban_bank=IBAN_BANK, iban_number=IBAN_NUMBER,
         addon_notified=request.args.get("addon_notified") == "1",
         bot_saved=request.args.get("bot_saved", "")[:300], start_tab=request.args.get("tab", ""),
         selected_date=today_tr().isoformat(),
         reservations=reservations,
+        b2b_summary=b2b_summary,
         menu_items=get_menu_items(tid) if show_menu_tab else [],
         qr_list=build_tenant_qr_list(tenant) if (show_menu_tab and qr_unlocked) else [],
         kds_url=url_for("kitchen_kds_screen", slug=slug, k=token, _external=True),
@@ -2727,6 +3101,9 @@ def tenant_qr_print(slug):
 def tenant_update_settings(slug):
     tenant = g.tenant
     wa_num = clean_text(request.form.get("whatsapp_number"), 30)
+    legal_name = clean_text(request.form.get("company_legal_name") or tenant.get("company_legal_name") or tenant.get("business_name"), 160)
+    tax_office = clean_text(request.form.get("tax_office") or tenant.get("tax_office"), 100)
+    tax_number = clean_text(request.form.get("tax_number") or tenant.get("tax_number"), 40)
     new_logo = save_uploaded_image(LOGO_IMAGES_DIR, tenant["id"], request.files.get("logo"))
     try:
         t_count = int(request.form.get("table_count", tenant.get("table_count") or 8))
@@ -2737,20 +3114,22 @@ def tenant_update_settings(slug):
         with conn.cursor() as cur:
             if new_logo:
                 cur.execute(
-                    "UPDATE tenants SET whatsapp_number=%s, table_count=%s, logo_filename=%s WHERE id=%s",
-                    (wa_num, t_count, new_logo, tenant["id"]),
+                    """UPDATE tenants SET whatsapp_number=%s, table_count=%s, logo_filename=%s,
+                       company_legal_name=%s, tax_office=%s, tax_number=%s WHERE id=%s""",
+                    (wa_num, t_count, new_logo, legal_name, tax_office, tax_number, tenant["id"]),
                 )
             else:
                 cur.execute(
-                    "UPDATE tenants SET whatsapp_number=%s, table_count=%s WHERE id=%s",
-                    (wa_num, t_count, tenant["id"]),
+                    """UPDATE tenants SET whatsapp_number=%s, table_count=%s,
+                       company_legal_name=%s, tax_office=%s, tax_number=%s WHERE id=%s""",
+                    (wa_num, t_count, legal_name, tax_office, tax_number, tenant["id"]),
                 )
     msg = "" if (new_logo or not request.files.get("logo") or not request.files["logo"].filename) else "⚠️ Logo kaydedilmedi: sadece JPG/PNG/WEBP ve en fazla 4 MB."
-    return back_to_panel(slug, msg or "Ayarlar kaydedildi.", "pane-settings")
+    return back_to_panel(slug, msg or "Kurumsal ve panel ayarları kaydedildi.", "pane-settings")
 
 
 def _require_menu_module(tenant):
-    if (tenant.get("module_type") or "genel") not in {"kafe-randevu", "masa-qr"}:
+    if (tenant.get("module_type") or "b2b-ticaret") not in {"kafe-randevu", "masa-qr"}:
         abort(403)
 
 
@@ -2910,14 +3289,18 @@ def superadmin_edit_tenant(tenant_id):
     business_name = clean_text(request.form.get("business_name"), 120)
     owner_email = clean_text(request.form.get("owner_email"), 160).lower()
     plan = request.form.get("plan", "starter").strip()
-    module_type = request.form.get("module_type", "genel").strip()
+    module_type = request.form.get("module_type", "b2b-ticaret").strip()
+    b2b_tier = request.form.get("b2b_tier", "standard").strip().lower()
     new_password = request.form.get("new_password", "").strip()
     try:
         table_count = max(1, min(200, int(request.form.get("table_count", 8))))
+        credit_limit = _money(max(0.0, float(request.form.get("credit_limit") or 50000)))
     except ValueError:
         table_count = 8
+        credit_limit = _money(50000)
     plan = plan if plan in {"starter", "pro"} else "starter"
-    module_type = module_type if module_type in VALID_MODULES else "genel"
+    module_type = module_type if module_type in VALID_MODULES else "b2b-ticaret"
+    b2b_tier = b2b_tier if b2b_tier in VALID_B2B_TIERS else "standard"
 
     if business_name and _EMAIL_RE.match(owner_email):
         with get_db() as conn:
@@ -2925,17 +3308,20 @@ def superadmin_edit_tenant(tenant_id):
                 if len(new_password) >= 8:
                     cur.execute(
                         """UPDATE tenants SET business_name=%s, owner_email=%s, plan=%s, module_type=%s,
-                           table_count=%s, password_hash=%s WHERE id=%s""",
+                           b2b_tier=%s, credit_limit=%s, table_count=%s, password_hash=%s WHERE id=%s""",
                         (
                             business_name, owner_email, plan, module_type,
-                            table_count, generate_password_hash(new_password), tenant_id,
+                            b2b_tier, credit_limit, table_count, generate_password_hash(new_password), tenant_id,
                         ),
                     )
                 else:
                     cur.execute(
                         """UPDATE tenants SET business_name=%s, owner_email=%s, plan=%s, module_type=%s,
-                           table_count=%s WHERE id=%s""",
-                        (business_name, owner_email, plan, module_type, table_count, tenant_id),
+                           b2b_tier=%s, credit_limit=%s, table_count=%s WHERE id=%s""",
+                        (
+                            business_name, owner_email, plan, module_type,
+                            b2b_tier, credit_limit, table_count, tenant_id,
+                        ),
                     )
     return redirect(url_for("superadmin_panel"))
 
