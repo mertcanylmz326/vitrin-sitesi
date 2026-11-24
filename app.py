@@ -619,7 +619,6 @@ def init_db():
             )
             cur.execute("CREATE INDEX IF NOT EXISTS idx_res_lookup ON reservations(tenant_id, res_date)")
 
-            # Faz 4 tabloları: masalar, personel PIN rolleri ve webhook logları
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS dining_tables (
@@ -1507,6 +1506,11 @@ def csrf_token():
         tok = secrets.token_urlsafe(24)
         session["_csrf"] = tok
     return tok
+
+
+@app.context_processor
+def inject_csrf_token():
+    return {"csrf_token": csrf_token}
 
 
 @app.before_request
@@ -2476,6 +2480,23 @@ def tenant_panel(slug):
         pos_products, pos_total_sold, pos_total_revenue, pos_sales = get_pos_overview(tid)
     bot_cfg = get_bot_config(tenant) if mod_type == "web-otomasyon" else {}
 
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, ticket_id, kind, res_date, slot, table_no, res_status, duration_minutes, party_size, is_active
+                  FROM reservations
+                 WHERE tenant_id = %s
+                 ORDER BY res_date DESC, slot DESC, id DESC
+                 LIMIT 50;
+                """,
+                (tid,),
+            )
+            reservations = [
+                dict(r, res_date=r["res_date"].isoformat() if hasattr(r.get("res_date"), "isoformat") else str(r.get("res_date") or ""))
+                for r in cur.fetchall()
+            ]
+
     nav_count = 4 if show_menu_tab else (3 if mod_type in {"mobil-saha", "web-otomasyon", "masaustu-otomasyon"} else 2)
     return render_template(
         "tenant_panel.html",
@@ -2484,6 +2505,8 @@ def tenant_panel(slug):
         iban_holder=IBAN_HOLDER, iban_bank=IBAN_BANK, iban_number=IBAN_NUMBER,
         addon_notified=request.args.get("addon_notified") == "1",
         bot_saved=request.args.get("bot_saved", "")[:300], start_tab=request.args.get("tab", ""),
+        selected_date=today_tr().isoformat(),
+        reservations=reservations,
         menu_items=get_menu_items(tid) if show_menu_tab else [],
         qr_list=build_tenant_qr_list(tenant) if (show_menu_tab and qr_unlocked) else [],
         kds_url=url_for("kitchen_kds_screen", slug=slug, k=token, _external=True),
