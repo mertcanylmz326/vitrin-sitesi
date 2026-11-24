@@ -1,115 +1,651 @@
-<!-- AYARLAR SEKMESİ (templates/tenant_panel.html -> #pane-settings) -->
-<div id="pane-settings" class="tab-pane {% if start_tab == 'pane-settings' %}active{% endif %}">
-  <div class="panel-grid-2" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;align-items:start;">
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ tenant.business_name }} — İşletme Paneli</title>
+  <style>
+    :root {
+      --bg: #080d0b; --bg-soft: #0f1714; --card: rgba(17, 27, 23, 0.94);
+      --text: #f8fafc; --muted: #9ca3af; --accent: #10b981; --accent-bright: #34d399;
+      --accent-2: #f59e0b; --border: rgba(16, 185, 129, 0.24);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: "Inter", system-ui, -apple-system, sans-serif; }
+    body {
+      background:
+        radial-gradient(circle at 12% 8%, rgba(16, 185, 129, 0.14), transparent 36%),
+        radial-gradient(circle at 88% 16%, rgba(245, 158, 11, 0.10), transparent 38%),
+        var(--bg);
+      color: var(--text); line-height: 1.55; min-height: 100vh; padding: 18px 14px 42px;
+    }
+    .wrap { max-width: 1160px; margin: 0 auto; display: grid; gap: 16px; }
+    .topbar {
+      display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
+      background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 14px 18px;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand img { height: 40px; width: auto; border-radius: 10px; object-fit: contain; }
+    .brand-badge {
+      width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center;
+      font-weight: 900; color: #04130d; background: linear-gradient(135deg, var(--accent-bright), var(--accent-2));
+    }
+    .muted { color: var(--muted); font-size: 0.85rem; }
+    .chip {
+      display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px;
+      font-size: 0.78rem; font-weight: 700; background: rgba(16, 185, 129, 0.12);
+      border: 1px solid rgba(16, 185, 129, 0.3); color: var(--accent-bright);
+    }
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+    .stat-box {
+      background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px;
+    }
+    .stat-box small { color: var(--muted); font-size: 0.78rem; display: block; }
+    .stat-box strong { font-size: 1.45rem; color: var(--accent-bright); }
 
-    <!-- 1. Kart: İşletme & B2B Kurumsal Bilgiler -->
-    <form class="panel-card" method="POST" action="{{ url_for('tenant_update_settings', slug=tenant.slug) }}" enctype="multipart/form-data" style="display:grid;gap:12px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
-        <h3 style="font-size:1.05rem;">İşletme &amp; B2B Kurumsal Bilgiler</h3>
-        <span style="font-size:0.75rem;padding:4px 10px;border-radius:999px;background:rgba(16,185,129,0.14);color:#34d399;border:1px solid rgba(16,185,129,0.3);font-weight:700;">
-          Aktif Üyelik
-        </span>
-      </div>
+    .tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+    .tab-btn {
+      padding: 9px 14px; border-radius: 10px; border: 1px solid var(--border);
+      background: var(--card); color: var(--muted); font-weight: 700; font-size: 0.86rem; cursor: pointer;
+    }
+    .tab-btn.active {
+      background: linear-gradient(135deg, var(--accent-bright), var(--accent));
+      color: #04130d; border-color: transparent;
+    }
+    .tab-pane { display: none; }
+    .tab-pane.active { display: grid; gap: 16px; }
 
-      <div>
-        <label for="company_legal_name">Firma Ünvanı</label>
-        <input id="company_legal_name" type="text" name="company_legal_name" value="{{ tenant.company_legal_name or tenant.business_name }}" placeholder="Örn: Düzgünler Gıda Ltd. Şti." />
-      </div>
-
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-        <div>
-          <label for="tax_office">Vergi Dairesi</label>
-          <input id="tax_office" type="text" name="tax_office" value="{{ tenant.tax_office or '' }}" placeholder="Örn: Ümraniye" />
-        </div>
-        <div>
-          <label for="tax_number">Vergi No / VKN</label>
-          <input id="tax_number" type="text" name="tax_number" value="{{ tenant.tax_number or '' }}" placeholder="Örn: 1234567890" />
-        </div>
-      </div>
-
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-        <div>
-          <label for="whatsapp_number">WhatsApp / Telefon</label>
-          <input id="whatsapp_number" type="text" name="whatsapp_number" value="{{ tenant.whatsapp_number or '' }}" placeholder="05xx xxx xx xx" />
-        </div>
-        <div>
-          <label for="table_count">Masa / Kapasite Sayısı</label>
-          <input id="table_count" type="number" name="table_count" min="1" max="200" value="{{ tenant.table_count or 8 }}" />
-        </div>
-      </div>
-
-      <div>
-        <label for="logo">İşletme Logosu (JPG / PNG / WEBP — Maks. 4 MB)</label>
-        <input id="logo" type="file" name="logo" accept=".jpg,.jpeg,.png,.webp" />
+    .panel-card {
+      background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 18px;
+    }
+    .panel-grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(310px, 1fr)); gap: 16px; align-items: start; }
+    label { display: block; font-size: 0.83rem; color: #d1d5db; margin-bottom: 5px; font-weight: 600; }
+    input, select, textarea {
+      width: 100%; padding: 9px 11px; border-radius: 10px; border: 1px solid var(--border);
+      background: var(--bg-soft); color: var(--text); font-size: 0.9rem;
+    }
+    .btn-primary, .btn-secondary, .btn-danger {
+      padding: 9px 14px; border-radius: 10px; font-weight: 700; font-size: 0.84rem;
+      cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent-bright), var(--accent)); color: #04130d; border: none;
+    }
+    .btn-secondary {
+      background: var(--bg-soft); color: var(--text); border: 1px solid var(--border);
+    }
+    .btn-danger {
+      background: rgba(239, 68, 68, 0.14); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.35);
+    }
+    .alert-ok {
+      padding: 12px 15px; border-radius: 12px; background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.4); color: #a7f3d0; font-size: 0.88rem;
+    }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+    th, td { padding: 10px 10px; text-align: left; border-bottom: 1px solid rgba(156, 163, 175, 0.14); vertical-align: middle; }
+    th { color: var(--muted); font-size: 0.78rem; text-transform: uppercase; }
+    .badge-st {
+      padding: 3px 8px; border-radius: 999px; font-size: 0.75rem; font-weight: 700;
+      background: rgba(245, 158, 11, 0.16); color: #fcd34d; border: 1px solid rgba(245, 158, 11, 0.35);
+    }
+    .badge-st.done {
+      background: rgba(16, 185, 129, 0.16); color: #6ee7b7; border-color: rgba(16, 185, 129, 0.35);
+    }
+    .qr-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(175px, 1fr)); gap: 12px; }
+    .qr-card {
+      background: var(--bg-soft); border: 1px solid var(--border); border-radius: 12px;
+      padding: 12px; text-align: center; display: grid; gap: 8px;
+    }
+    .qr-card img { width: 120px; height: 120px; margin: 0 auto; background: #fff; padding: 6px; border-radius: 8px; }
+    .menu-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+    .menu-card {
+      background: var(--bg-soft); border: 1px solid var(--border); border-radius: 12px; padding: 12px; display: grid; gap: 8px;
+    }
+    .menu-card img { width: 100%; aspect-ratio: 16/9; object-fit: cover; border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div class="brand">
         {% if tenant.logo_filename %}
-        <div style="margin-top:8px;display:flex;align-items:center;gap:10px;">
-          <img src="{{ url_for('serve_tenant_logo', tenant_id=tenant.id, filename=tenant.logo_filename) }}" alt="Logo" style="height:42px;border-radius:8px;border:1px solid rgba(16,185,129,0.3);" />
-          <span style="font-size:0.78rem;color:#9ca3af;">Mevcut logo yüklü</span>
-        </div>
+        <img src="{{ url_for('serve_tenant_logo', tenant_id=tenant.id, filename=tenant.logo_filename) }}" alt="{{ tenant.business_name }}" />
+        {% else %}
+        <span class="brand-badge">K</span>
         {% endif %}
+        <div>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <strong>{{ tenant.company_legal_name or tenant.business_name }}</strong>
+            <span class="chip">{{ mod_label }}</span>
+            <span class="chip" style="color:#fcd34d;border-color:rgba(245,158,11,0.35);background:rgba(245,158,11,0.12);">{{ tenant.plan | upper }}</span>
+          </div>
+          <div class="muted">Vitrin: <a href="{{ url_for('tenant_public', slug=tenant.slug) }}" target="_blank" style="color:#34d399;">/i/{{ tenant.slug }}</a></div>
+        </div>
       </div>
 
-      <button type="submit" class="btn-primary" style="width:100%;">Kurumsal Bilgileri &amp; Ayarları Kaydet</button>
-    </form>
-
-    <!-- 2. Kart: Aktif Modül, Paket & Cihaz Erişimi -->
-    <div style="display:grid;gap:16px;">
-      <div class="panel-card" style="display:grid;gap:10px;">
-        <h3 style="font-size:1.05rem;">Aktif Modül &amp; Paket Durumu</h3>
-        <div style="display:grid;gap:8px;font-size:0.86rem;">
-          <div style="display:flex;justify-content:space-between;padding:9px 12px;border-radius:10px;background:rgba(8,13,11,0.65);border:1px solid rgba(16,185,129,0.16);">
-            <span style="color:#9ca3af;">Seçili Modül</span>
-            <strong style="color:#34d399;">{{ mod_label }}</strong>
-          </div>
-          <div style="display:flex;justify-content:space-between;padding:9px 12px;border-radius:10px;background:rgba(8,13,11,0.65);border:1px solid rgba(16,185,129,0.16);">
-            <span style="color:#9ca3af;">Paket</span>
-            <strong>{{ tenant.plan | upper }}</strong>
-          </div>
-          <div style="display:flex;justify-content:space-between;padding:9px 12px;border-radius:10px;background:rgba(8,13,11,0.65);border:1px solid rgba(16,185,129,0.16);">
-            <span style="color:#9ca3af;">Vitrin / Müşteri Linki</span>
-            <a href="{{ url_for('tenant_public', slug=tenant.slug) }}" target="_blank" style="color:#fcd34d;font-weight:700;">/i/{{ tenant.slug }}</a>
-          </div>
-        </div>
-
-        {% if tenant.module_type == 'kafe-randevu' and not qr_unlocked %}
-        <div style="margin-top:6px;padding:12px;border-radius:12px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.34);display:grid;gap:8px;">
-          <strong style="font-size:0.86rem;color:#fcd34d;">Masa QR Eklentisi Aç ({{ qr_addon_price }})</strong>
-          <p style="font-size:0.8rem;color:#d1d5db;">
-            IBAN: <code>{{ iban_number }}</code> ({{ iban_holder }})
-          </p>
-          {% if addon_notified or tenant.qr_addon_requested %}
-          <div style="font-size:0.8rem;color:#a7f3d0;">Masa QR eklenti talebiniz alındı, onay bekleniyor.</div>
-          {% else %}
-          <form method="POST" action="{{ url_for('tenant_request_qr_addon', slug=tenant.slug) }}" style="display:grid;gap:8px;">
-            <input type="text" name="qr_addon_note" placeholder="Ödeme açıklama notu..." required />
-            <button type="submit" class="btn-secondary" style="width:100%;">Masa QR Ödeme Bildirimi Gönder</button>
-          </form>
-          {% endif %}
-        </div>
-        {% endif %}
-      </div>
-
-      {% if qr_unlocked or tenant.module_type == 'mobil-saha' %}
-      <div class="panel-card" style="display:grid;gap:10px;">
-        <h3 style="font-size:1.05rem;">Cihaz &amp; Ekran Bağlantıları</h3>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
         {% if qr_unlocked %}
-        <div style="font-size:0.82rem;">
-          <span style="color:#9ca3af;display:block;margin-bottom:4px;">Mutfak Ekranı (KDS):</span>
-          <input type="text" readonly value="{{ kds_url }}" onclick="this.select()" style="font-family:monospace;font-size:0.78rem;" />
-        </div>
+        <a href="{{ kds_url }}" target="_blank" class="btn-secondary">Mutfak (KDS)</a>
+        <a href="{{ url_for('tenant_qr_print', slug=tenant.slug) }}" target="_blank" class="btn-secondary">QR Yazdır</a>
         {% endif %}
         {% if tenant.module_type == 'mobil-saha' %}
-        <div style="font-size:0.82rem;">
-          <span style="color:#9ca3af;display:block;margin-bottom:4px;">Saha Elemanı Terminali:</span>
-          <input type="text" readonly value="{{ saha_url }}" onclick="this.select()" style="font-family:monospace;font-size:0.78rem;" />
-        </div>
+        <a href="{{ saha_url }}" target="_blank" class="btn-secondary">Saha Linki</a>
         {% endif %}
-        <form method="POST" action="{{ url_for('tenant_regen_token', slug=tenant.slug) }}">
-          <button type="submit" class="btn-secondary" style="width:100%;">Cihaz Erişim Anahtarını Yenile</button>
+        <form method="POST" action="{{ url_for('tenant_logout', slug=tenant.slug) }}" style="margin:0;">
+          <button type="submit" class="btn-danger">Çıkış</button>
         </form>
+      </div>
+    </div>
+
+    {% if bot_saved %}
+    <div class="alert-ok">{{ bot_saved }}</div>
+    {% endif %}
+    {% if addon_notified %}
+    <div class="alert-ok">Masa QR eklenti ödeme bildiriminiz alındı, onay bekleniyor.</div>
+    {% endif %}
+
+    <div class="stats-grid">
+      <div class="stat-box"><small>Toplam Talep / Kayıt</small><strong>{{ total_count }}</strong></div>
+      <div class="stat-box"><small>Yeni Bekleyen</small><strong>{{ yeni_count }}</strong></div>
+      <div class="stat-box"><small>Tamamlanan</small><strong>{{ tamam_count }}</strong></div>
+      <div class="stat-box"><small>Kapasite / Masa</small><strong>{{ tenant.table_count or 8 }}</strong></div>
+    </div>
+
+    <div class="tabs">
+      <button type="button" class="tab-btn {% if not start_tab or start_tab == 'pane-tickets' %}active{% endif %}" onclick="switchTab('pane-tickets', this)">Talepler &amp; Randevular</button>
+      {% if show_menu_tab %}
+      <button type="button" class="tab-btn {% if start_tab == 'pane-menu' %}active{% endif %}" onclick="switchTab('pane-menu', this)">Menü &amp; Masa QR</button>
+      {% endif %}
+      {% if tenant.module_type == 'mobil-saha' %}
+      <button type="button" class="tab-btn {% if start_tab == 'pane-saha' %}active{% endif %}" onclick="switchTab('pane-saha', this)">Saha Ekibi</button>
+      {% endif %}
+      {% if tenant.module_type == 'web-otomasyon' %}
+      <button type="button" class="tab-btn {% if start_tab == 'pane-bots' %}active{% endif %}" onclick="switchTab('pane-bots', this)">Bot &amp; API</button>
+      {% endif %}
+      {% if tenant.module_type == 'masaustu-otomasyon' %}
+      <button type="button" class="tab-btn {% if start_tab == 'pane-pos' %}active{% endif %}" onclick="switchTab('pane-pos', this)">Kasa &amp; Barkod</button>
+      {% endif %}
+      <button type="button" class="tab-btn {% if start_tab == 'pane-settings' %}active{% endif %}" onclick="switchTab('pane-settings', this)">Ayarlar</button>
+    </div>
+
+    <!-- TALEPLER -->
+    <div id="pane-tickets" class="tab-pane {% if not start_tab or start_tab == 'pane-tickets' %}active{% endif %}">
+      <div class="panel-card">
+        <h3 style="margin-bottom:10px;font-size:1.05rem;">Gelen Talepler &amp; Randevular</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Tarih</th>
+                <th>Müşteri / Masa</th>
+                <th>Telefon</th>
+                <th>Hizmet / Detay</th>
+                <th>Mesaj</th>
+                <th>Durum</th>
+                <th>İşlem</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for tk in tickets %}
+              <tr>
+                <td style="white-space:nowrap;">{{ tk.created_at }}</td>
+                <td><strong>{{ tk.name }}</strong></td>
+                <td>
+                  {% if tk.phone %}
+                  <div>{{ tk.phone }}</div>
+                  {% if tk.wa_link %}<a href="{{ tk.wa_link }}" target="_blank" style="color:#34d399;font-size:0.78rem;">WhatsApp</a>{% endif %}
+                  {% else %}<span class="muted">-</span>{% endif %}
+                </td>
+                <td>{{ tk.service }}</td>
+                <td style="max-width:280px;">{{ tk.message }}</td>
+                <td>
+                  <span class="badge-st {% if tk.status == 'Tamamlandı' %}done{% endif %}">{{ tk.status }}</span>
+                </td>
+                <td>
+                  <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+                    <form method="POST" action="{{ url_for('tenant_update_ticket', slug=tenant.slug, ticket_id=tk.id) }}" style="display:flex;gap:4px;margin:0;">
+                      <select name="status" style="width:auto;padding:5px 8px;font-size:0.8rem;">
+                        {% for st in ['Yeni', 'İnceleniyor', 'Tamamlandı', 'İptal'] %}
+                        <option value="{{ st }}" {% if tk.status == st %}selected{% endif %}>{{ st }}</option>
+                        {% endfor %}
+                      </select>
+                      <button type="submit" class="btn-secondary" style="padding:5px 9px;font-size:0.78rem;">Kaydet</button>
+                    </form>
+                    <form method="POST" action="{{ url_for('tenant_delete_ticket', slug=tenant.slug, ticket_id=tk.id) }}" style="margin:0;" onsubmit="return confirm('Kaydı silmek istediğine emin misin?');">
+                      <button type="submit" class="btn-danger" style="padding:5px 8px;font-size:0.78rem;">Sil</button>
+                    </form>
+                  </div>
+                </td>
+              </tr>
+              {% else %}
+              <tr><td colspan="7" class="muted" style="text-align:center;padding:24px;">Henüz kayıt bulunmuyor.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    {% if show_menu_tab %}
+    <!-- MENÜ & MASA QR -->
+    <div id="pane-menu" class="tab-pane {% if start_tab == 'pane-menu' %}active{% endif %}">
+      <div class="panel-grid-2">
+        <form class="panel-card" method="POST" action="{{ url_for('tenant_add_menu_item', slug=tenant.slug) }}" enctype="multipart/form-data" style="display:grid;gap:12px;">
+          <h3 style="font-size:1.05rem;">Menü Ürünü Ekle</h3>
+          <div>
+            <label for="m_name">Ürün Adı</label>
+            <input id="m_name" type="text" name="name" placeholder="Örn: Türk Kahvesi" required />
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div>
+              <label for="m_price">Fiyat</label>
+              <input id="m_price" type="text" name="price" placeholder="Örn: 95 TL" />
+            </div>
+            <div>
+              <label for="m_img">Görsel</label>
+              <input id="m_img" type="file" name="image" accept=".jpg,.jpeg,.png,.webp" />
+            </div>
+          </div>
+          <div>
+            <label for="m_desc">Açıklama</label>
+            <input id="m_desc" type="text" name="description" placeholder="Kısa ürün açıklaması" />
+          </div>
+          <button type="submit" class="btn-primary">Ürünü Ekle</button>
+        </form>
+
+        <div class="panel-card" style="display:grid;gap:12px;">
+          <h3 style="font-size:1.05rem;">Kayıtlı Menü Ürünleri ({{ menu_items | length }})</h3>
+          <div class="menu-grid">
+            {% for item in menu_items %}
+            <div class="menu-card">
+              {% if item.image_filename %}
+              <img src="{{ url_for('serve_menu_image', tenant_id=tenant.id, filename=item.image_filename) }}" alt="{{ item.name }}" />
+              {% endif %}
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
+                <strong>{{ item.name }}</strong>
+                {% if item.price %}<span class="chip">{{ item.price }}</span>{% endif %}
+              </div>
+              {% if item.description %}<div class="muted">{{ item.description }}</div>{% endif %}
+              <form method="POST" action="{{ url_for('tenant_delete_menu_item', slug=tenant.slug, item_id=item.id) }}" style="margin:0;">
+                <button type="submit" class="btn-danger" style="width:100%;padding:6px;">Kaldır</button>
+              </form>
+            </div>
+            {% else %}
+            <p class="muted">Henüz menü ürünü eklenmemiş.</p>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+
+      {% if qr_unlocked %}
+      <div class="panel-card" style="display:grid;gap:12px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+          <h3 style="font-size:1.05rem;">Masa QR Kodları</h3>
+          <a href="{{ url_for('tenant_qr_print', slug=tenant.slug) }}" target="_blank" class="btn-primary">Tümünü Yazdır</a>
+        </div>
+        <div class="qr-grid">
+          {% for q in qr_list %}
+          <div class="qr-card">
+            <strong>{{ q.label }}</strong>
+            <img src="{{ q.qr_img_url }}" alt="{{ q.label }}" />
+            <a href="{{ q.target_url }}" target="_blank" class="muted" style="font-size:0.75rem;word-break:break-all;">{{ q.target_url }}</a>
+          </div>
+          {% endfor %}
+        </div>
       </div>
       {% endif %}
     </div>
+    {% endif %}
 
+    {% if tenant.module_type == 'mobil-saha' %}
+    <!-- SAHA EKİBİ -->
+    <div id="pane-saha" class="tab-pane {% if start_tab == 'pane-saha' %}active{% endif %}">
+      <div class="panel-card" style="display:grid;gap:12px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+          <h3 style="font-size:1.05rem;">Canlı Saha Elemanı Takibi</h3>
+          <button type="button" class="btn-secondary" onclick="refreshSaha()">Yenile</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Personel</th>
+                <th>Durum</th>
+                <th>Paket / Müşteri</th>
+                <th>Pil</th>
+                <th>Konum</th>
+                <th>Son Güncelleme</th>
+                <th>İşlem</th>
+              </tr>
+            </thead>
+            <tbody id="sahaTableBody">
+              {% for ag in agents %}
+              <tr>
+                <td><strong>{{ ag.agent_name }}</strong></td>
+                <td><span class="badge-st {% if ag.online %}done{% endif %}">{{ ag.status_text or ('Aktif' if ag.online else 'Çevrimdışı') }}</span></td>
+                <td>{{ ag.active_package or '-' }} {% if ag.target_customer %}/ {{ ag.target_customer }}{% endif %}</td>
+                <td>{% if ag.battery_level >= 0 %}{{ ag.battery_level }}%{% if ag.is_charging %} ⚡{% endif %}{% else %}-{% endif %}</td>
+                <td>
+                  {% if ag.latitude and ag.longitude %}
+                  <a href="https://maps.google.com/?q={{ ag.latitude }},{{ ag.longitude }}" target="_blank" style="color:#34d399;">Harita</a>
+                  {% else %}-{% endif %}
+                </td>
+                <td>{{ ag.updated_str }}</td>
+                <td>
+                  <form method="POST" action="{{ url_for('panel_saha_delete', slug=tenant.slug, agent_id=ag.id) }}" style="margin:0;">
+                    <button type="submit" class="btn-danger" style="padding:5px 8px;font-size:0.78rem;">Sil</button>
+                  </form>
+                </td>
+              </tr>
+              {% else %}
+              <tr><td colspan="7" class="muted" style="text-align:center;padding:20px;">Saha bağlantısından henüz ping gelmedi.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if tenant.module_type == 'web-otomasyon' %}
+    <!-- BOT & API -->
+    <div id="pane-bots" class="tab-pane {% if start_tab == 'pane-bots' %}active{% endif %}">
+      <div class="panel-grid-2">
+        <form class="panel-card" method="POST" action="{{ url_for('tenant_save_bot_config', slug=tenant.slug) }}" style="display:grid;gap:11px;">
+          <h3 style="font-size:1.05rem;">Bot, Telegram &amp; Webhook Ayarları</h3>
+          <div>
+            <label for="tg_bot_token">Telegram Bot Token</label>
+            <input id="tg_bot_token" type="password" name="tg_bot_token" placeholder="Değiştirmek için girin (kayıtlıysa boş bırakılabilir)" />
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div>
+              <label for="tg_chat_id">Telegram Chat ID</label>
+              <input id="tg_chat_id" type="text" name="tg_chat_id" value="{{ bot_cfg.tg_chat_id or '' }}" />
+            </div>
+            <div>
+              <label for="report_hour">Günlük Rapor Saati</label>
+              <input id="report_hour" type="text" name="report_hour" value="{{ bot_cfg.report_hour or '21:00' }}" />
+            </div>
+          </div>
+          <div>
+            <label for="webhook_url">Webhook URL</label>
+            <input id="webhook_url" type="url" name="webhook_url" value="{{ bot_cfg.webhook_url or '' }}" placeholder="https://..." />
+          </div>
+          <div>
+            <label for="scraper_url">Veri Kaynağı / Scraper URL</label>
+            <input id="scraper_url" type="url" name="scraper_url" value="{{ bot_cfg.scraper_url or '' }}" placeholder="https://..." />
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+            <input type="checkbox" name="tg_notify_enabled" style="width:auto;" {% if bot_cfg.tg_notify_enabled %}checked{% endif %} />
+            <span>Yeni taleplerde Telegram bildirimi gönder</span>
+          </label>
+          <button type="submit" class="btn-primary">Entegrasyonları Kaydet</button>
+        </form>
+
+        <div class="panel-card" style="display:grid;gap:12px;">
+          <h3 style="font-size:1.05rem;">Hızlı Test &amp; Son Loglar</h3>
+          <form method="POST" action="{{ url_for('tenant_run_bot_action', slug=tenant.slug) }}" style="display:flex;gap:8px;flex-wrap:wrap;margin:0;">
+            <button type="submit" name="bot_action" value="test" class="btn-secondary">Test Bildirimi Gönder</button>
+            <button type="submit" name="bot_action" value="pull_data" class="btn-primary">Rapor Çek &amp; Gönder</button>
+          </form>
+          <div style="display:grid;gap:6px;max-height:260px;overflow-y:auto;">
+            {% for lg in bot_logs %}
+            <div style="font-size:0.8rem;padding:8px 10px;border-radius:8px;background:rgba(8,13,11,0.7);border:1px solid rgba(16,185,129,0.14);">
+              <span class="muted">[{{ lg.time_str }}]</span> {{ lg.message }}
+            </div>
+            {% else %}
+            <div class="muted">Henüz log kaydı yok.</div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if tenant.module_type == 'masaustu-otomasyon' %}
+    <!-- KASA & BARKOD -->
+    <div id="pane-pos" class="tab-pane {% if start_tab == 'pane-pos' %}active{% endif %}">
+      <div class="stats-grid">
+        <div class="stat-box"><small>Bugün Satılan Adet</small><strong>{{ pos_total_sold }}</strong></div>
+        <div class="stat-box"><small>Bugünkü Ciro</small><strong>{{ "%.2f"|format(pos_total_revenue) }} TL</strong></div>
+      </div>
+      <div class="panel-grid-2">
+        <form class="panel-card" method="POST" action="{{ url_for('tenant_pos_scan', slug=tenant.slug) }}" style="display:grid;gap:10px;">
+          <h3 style="font-size:1.05rem;">Barkod Okut / Hızlı Satış</h3>
+          <div style="display:grid;grid-template-columns:2fr 1fr;gap:10px;">
+            <div>
+              <label for="scan_barcode">Barkod</label>
+              <input id="scan_barcode" type="text" name="barcode" placeholder="Barkod okutun veya yazın" autofocus required />
+            </div>
+            <div>
+              <label for="scan_qty">Adet</label>
+              <input id="scan_qty" type="number" name="qty" min="1" value="1" />
+            </div>
+          </div>
+          <button type="submit" class="btn-primary">Satış İşle</button>
+        </form>
+
+        <form class="panel-card" method="POST" action="{{ url_for('tenant_pos_add_product', slug=tenant.slug) }}" style="display:grid;gap:10px;">
+          <h3 style="font-size:1.05rem;">Ürün Tanımla / Stok Güncelle</h3>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div>
+              <label for="p_barcode">Barkod</label>
+              <input id="p_barcode" type="text" name="barcode" required />
+            </div>
+            <div>
+              <label for="p_name">Ürün Adı</label>
+              <input id="p_name" type="text" name="name" required />
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div>
+              <label for="p_price">Fiyat (TL)</label>
+              <input id="p_price" type="number" step="0.01" name="price" value="0" required />
+            </div>
+            <div>
+              <label for="p_stock">Stok Adedi</label>
+              <input id="p_stock" type="number" name="stock" value="0" required />
+            </div>
+          </div>
+          <button type="submit" class="btn-secondary">Ürünü Kaydet</button>
+        </form>
+      </div>
+
+      <div class="panel-card">
+        <h3 style="margin-bottom:10px;font-size:1.05rem;">Ürün &amp; Stok Listesi</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Barkod</th><th>Ürün</th><th>Fiyat</th><th>Stok</th><th>Bugün Satış</th><th>İşlem</th></tr>
+            </thead>
+            <tbody>
+              {% for p in pos_products %}
+              <tr>
+                <td><code>{{ p.barcode }}</code></td>
+                <td><strong>{{ p.name }}</strong></td>
+                <td>{{ "%.2f"|format(p.price_num) }} TL</td>
+                <td>{{ p.stock }}</td>
+                <td>{{ p.sold_today }}</td>
+                <td>
+                  <form method="POST" action="{{ url_for('tenant_pos_delete_product', slug=tenant.slug, product_id=p.id) }}" style="margin:0;">
+                    <button type="submit" class="btn-danger" style="padding:4px 8px;font-size:0.76rem;">Sil</button>
+                  </form>
+                </td>
+              </tr>
+              {% else %}
+              <tr><td colspan="6" class="muted" style="text-align:center;padding:18px;">Henüz ürün eklenmemiş.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- AYARLAR -->
+    <div id="pane-settings" class="tab-pane {% if start_tab == 'pane-settings' %}active{% endif %}">
+      <div class="panel-grid-2">
+        <form class="panel-card" method="POST" action="{{ url_for('tenant_update_settings', slug=tenant.slug) }}" enctype="multipart/form-data" style="display:grid;gap:12px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+            <h3 style="font-size:1.05rem;">İşletme &amp; B2B Kurumsal Bilgiler</h3>
+            <span class="chip">Aktif Üyelik</span>
+          </div>
+
+          <div>
+            <label for="company_legal_name">Firma Ünvanı</label>
+            <input id="company_legal_name" type="text" name="company_legal_name" value="{{ tenant.company_legal_name or tenant.business_name }}" placeholder="Örn: Düzgünler Gıda Ltd. Şti." />
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div>
+              <label for="tax_office">Vergi Dairesi</label>
+              <input id="tax_office" type="text" name="tax_office" value="{{ tenant.tax_office or '' }}" placeholder="Örn: Ümraniye" />
+            </div>
+            <div>
+              <label for="tax_number">Vergi No / VKN</label>
+              <input id="tax_number" type="text" name="tax_number" value="{{ tenant.tax_number or '' }}" placeholder="Örn: 1234567890" />
+            </div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div>
+              <label for="whatsapp_number">WhatsApp / Telefon</label>
+              <input id="whatsapp_number" type="text" name="whatsapp_number" value="{{ tenant.whatsapp_number or '' }}" placeholder="05xx xxx xx xx" />
+            </div>
+            <div>
+              <label for="table_count">Masa / Kapasite Sayısı</label>
+              <input id="table_count" type="number" name="table_count" min="1" max="200" value="{{ tenant.table_count or 8 }}" />
+            </div>
+          </div>
+
+          <div>
+            <label for="logo">İşletme Logosu (JPG / PNG / WEBP — Maks. 4 MB)</label>
+            <input id="logo" type="file" name="logo" accept=".jpg,.jpeg,.png,.webp" />
+            {% if tenant.logo_filename %}
+            <div style="margin-top:8px;display:flex;align-items:center;gap:10px;">
+              <img src="{{ url_for('serve_tenant_logo', tenant_id=tenant.id, filename=tenant.logo_filename) }}" alt="Logo" style="height:42px;border-radius:8px;border:1px solid rgba(16,185,129,0.3);" />
+              <span class="muted">Mevcut logo yüklü</span>
+            </div>
+            {% endif %}
+          </div>
+
+          <button type="submit" class="btn-primary" style="width:100%;">Kurumsal Bilgileri &amp; Ayarları Kaydet</button>
+        </form>
+
+        <div style="display:grid;gap:16px;">
+          <div class="panel-card" style="display:grid;gap:10px;">
+            <h3 style="font-size:1.05rem;">Aktif Modül &amp; Paket Durumu</h3>
+            <div style="display:grid;gap:8px;font-size:0.86rem;">
+              <div style="display:flex;justify-content:space-between;padding:9px 12px;border-radius:10px;background:rgba(8,13,11,0.65);border:1px solid rgba(16,185,129,0.16);">
+                <span class="muted">Seçili Modül</span>
+                <strong style="color:#34d399;">{{ mod_label }}</strong>
+              </div>
+              <div style="display:flex;justify-content:space-between;padding:9px 12px;border-radius:10px;background:rgba(8,13,11,0.65);border:1px solid rgba(16,185,129,0.16);">
+                <span class="muted">Paket</span>
+                <strong>{{ tenant.plan | upper }}</strong>
+              </div>
+              <div style="display:flex;justify-content:space-between;padding:9px 12px;border-radius:10px;background:rgba(8,13,11,0.65);border:1px solid rgba(16,185,129,0.16);">
+                <span class="muted">Vitrin / Müşteri Linki</span>
+                <a href="{{ url_for('tenant_public', slug=tenant.slug) }}" target="_blank" style="color:#fcd34d;font-weight:700;">/i/{{ tenant.slug }}</a>
+              </div>
+            </div>
+
+            {% if tenant.module_type == 'kafe-randevu' and not qr_unlocked %}
+            <div style="margin-top:6px;padding:12px;border-radius:12px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.34);display:grid;gap:8px;">
+              <strong style="font-size:0.86rem;color:#fcd34d;">Masa QR Eklentisi Aç ({{ qr_addon_price }})</strong>
+              <p class="muted" style="font-size:0.8rem;">IBAN: <code>{{ iban_number }}</code> ({{ iban_holder }})</p>
+              {% if addon_notified or tenant.qr_addon_requested %}
+              <div style="font-size:0.8rem;color:#a7f3d0;">Masa QR eklenti talebiniz alındı, onay bekleniyor.</div>
+              {% else %}
+              <form method="POST" action="{{ url_for('tenant_request_qr_addon', slug=tenant.slug) }}" style="display:grid;gap:8px;">
+                <input type="text" name="qr_addon_note" placeholder="Ödeme açıklama notu..." required />
+                <button type="submit" class="btn-secondary" style="width:100%;">Masa QR Ödeme Bildirimi Gönder</button>
+              </form>
+              {% endif %}
+            </div>
+            {% endif %}
+          </div>
+
+          {% if qr_unlocked or tenant.module_type == 'mobil-saha' %}
+          <div class="panel-card" style="display:grid;gap:10px;">
+            <h3 style="font-size:1.05rem;">Cihaz &amp; Ekran Bağlantıları</h3>
+            {% if qr_unlocked %}
+            <div style="font-size:0.82rem;">
+              <span class="muted" style="display:block;margin-bottom:4px;">Mutfak Ekranı (KDS):</span>
+              <input type="text" readonly value="{{ kds_url }}" onclick="this.select()" style="font-family:monospace;font-size:0.78rem;" />
+            </div>
+            {% endif %}
+            {% if tenant.module_type == 'mobil-saha' %}
+            <div style="font-size:0.82rem;">
+              <span class="muted" style="display:block;margin-bottom:4px;">Saha Elemanı Terminali:</span>
+              <input type="text" readonly value="{{ saha_url }}" onclick="this.select()" style="font-family:monospace;font-size:0.78rem;" />
+            </div>
+            {% endif %}
+            <form method="POST" action="{{ url_for('tenant_regen_token', slug=tenant.slug) }}">
+              <button type="submit" class="btn-secondary" style="width:100%;">Cihaz Erişim Anahtarını Yenile</button>
+            </form>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
   </div>
-</div>
+
+  <script>
+    function switchTab(paneId, btn) {
+      document.querySelectorAll(".tab-pane").forEach(p => p.classList.remove("active"));
+      document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+      const pane = document.getElementById(paneId);
+      if (pane) pane.classList.add("active");
+      if (btn) btn.classList.add("active");
+    }
+
+    async function refreshSaha() {
+      const tbody = document.getElementById("sahaTableBody");
+      if (!tbody) return;
+      try {
+        const res = await fetch("{{ url_for('panel_saha_data', slug=tenant.slug) }}");
+        if (!res.ok) return;
+        const data = await res.json();
+        const agents = data.agents || [];
+        if (!agents.length) {
+          tbody.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;padding:20px;">Saha bağlantısından henüz ping gelmedi.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = agents.map(ag => `
+          <tr>
+            <td><strong>${ag.agent_name}</strong></td>
+            <td><span class="badge-st ${ag.online ? 'done' : ''}">${ag.status_text || (ag.online ? 'Aktif' : 'Çevrimdışı')}</span></td>
+            <td>${ag.active_package || '-'}${ag.target_customer ? ' / ' + ag.target_customer : ''}</td>
+            <td>${ag.battery_level >= 0 ? ag.battery_level + '%' + (ag.is_charging ? ' ⚡' : '') : '-'}</td>
+            <td>${(ag.latitude && ag.longitude) ? '<a href="https://maps.google.com/?q=' + ag.latitude + ',' + ag.longitude + '" target="_blank" style="color:#34d399;">Harita</a>' : '-'}</td>
+            <td>${ag.updated_str}</td>
+            <td>
+              <form method="POST" action="/i/{{ tenant.slug }}/panel/saha/${ag.id}/delete" style="margin:0;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+                <button type="submit" class="btn-danger" style="padding:5px 8px;font-size:0.78rem;">Sil</button>
+              </form>
+            </td>
+          </tr>
+        `).join("");
+      } catch (_) {}
+    }
+
+    setInterval(() => {
+      fetch("{{ url_for('tenant_panel_poll', slug=tenant.slug) }}")
+        .then(r => r.ok ? r.json() : null)
+        .then(d => {
+          if (!d) return;
+          if (window.__lastTicketId && d.latest_id && d.latest_id !== window.__lastTicketId) {
+            location.reload();
+          }
+          window.__lastTicketId = d.latest_id || "";
+        })
+        .catch(() => {});
+      if (document.getElementById("sahaTableBody") && document.getElementById("pane-saha")?.classList.contains("active")) {
+        refreshSaha();
+      }
+    }, 8000);
+  </script>
+</body>
+</html>
