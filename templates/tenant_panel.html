@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>{{ tenant.business_name }} — Modül Kurulum &amp; IBAN Ödeme</title>
+  <title>{{ tenant.business_name }} — Modül Seçimi &amp; IBAN Ödeme</title>
   <style>
     :root {
       --bg: #080d0b; --bg-soft: #0f1714; --card: rgba(17, 27, 23, 0.94);
@@ -16,35 +16,23 @@
         radial-gradient(circle at 12% 8%, rgba(16, 185, 129, 0.14), transparent 36%),
         radial-gradient(circle at 88% 16%, rgba(245, 158, 11, 0.10), transparent 38%),
         var(--bg);
-      color: var(--text); line-height: 1.6; min-height: 100vh; padding: 20px 14px 44px;
+      color: var(--text); line-height: 1.6; min-height: 100vh; padding: 20px 14px 40px;
     }
-    .wrap { max-width: 1000px; margin: 0 auto; display: grid; gap: 16px; }
+    .wrap { max-width: 920px; margin: 0 auto; display: grid; gap: 16px; }
     .topbar {
       display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap;
       background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 14px 18px;
     }
     .brand { display: flex; align-items: center; gap: 10px; }
     .badge-k {
-      width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center;
+      width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center;
       font-weight: 900; color: #04130d; background: linear-gradient(135deg, var(--accent-bright), var(--accent-2));
     }
     .status-pill {
       padding: 5px 11px; border-radius: 999px; font-size: 0.78rem; font-weight: 800;
       background: rgba(245, 158, 11, 0.16); border: 1px solid rgba(245, 158, 11, 0.4); color: #fcd34d;
     }
-    .timeline {
-      display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
-    }
-    .step-box {
-      background: var(--card); border: 1px solid rgba(156, 163, 175, 0.16); border-radius: 12px;
-      padding: 11px 13px; display: grid; gap: 3px;
-    }
-    .step-box.done { border-color: rgba(16, 185, 129, 0.42); background: rgba(16, 185, 129, 0.08); }
-    .step-box.active { border-color: rgba(245, 158, 11, 0.48); background: rgba(245, 158, 11, 0.08); }
-    .step-box small { font-size: 0.72rem; color: var(--muted); font-weight: 700; }
-    .step-box strong { font-size: 0.84rem; }
-
-    .grid-2 { display: grid; grid-template-columns: 1.08fr 0.92fr; gap: 16px; align-items: start; }
+    .grid-2 { display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 16px; align-items: start; }
     .card {
       background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 20px;
       display: grid; gap: 14px;
@@ -54,27 +42,23 @@
       letter-spacing: 0.06em; color: var(--accent-bright); background: rgba(16, 185, 129, 0.12);
       border: 1px solid rgba(16, 185, 129, 0.28); padding: 4px 10px; border-radius: 999px; width: fit-content;
     }
-    h1 { font-size: 1.32rem; line-height: 1.25; }
-    h2 { font-size: 1.06rem; }
+    h1 { font-size: 1.35rem; line-height: 1.25; }
+    h2 { font-size: 1.08rem; }
     .muted { color: var(--muted); font-size: 0.86rem; }
     label { display: block; font-size: 0.84rem; color: #d1d5db; margin-bottom: 5px; font-weight: 600; }
     input, select, textarea {
       width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border);
       background: var(--bg-soft); color: var(--text); font-size: 0.92rem;
     }
-    .plan-hint {
-      padding: 10px 12px; border-radius: 10px; background: rgba(16, 185, 129, 0.07);
-      border: 1px solid rgba(16, 185, 129, 0.2); font-size: 0.82rem; color: #d1fae5;
-    }
     .iban-box {
       background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.36);
       border-radius: 12px; padding: 14px; display: grid; gap: 8px;
     }
-    .copy-row {
+    .iban-row {
       display: flex; align-items: center; justify-content: space-between; gap: 8px;
       background: rgba(0, 0, 0, 0.35); padding: 9px 11px; border-radius: 9px;
     }
-    .mono-val { font-family: monospace; font-size: 0.86rem; font-weight: 800; color: #fcd34d; word-break: break-all; }
+    .iban-code { font-family: monospace; font-size: 0.9rem; font-weight: 800; color: #fcd34d; word-break: break-all; }
     .copy-btn {
       background: rgba(245, 158, 11, 0.2); border: 1px solid rgba(245, 158, 11, 0.45);
       color: #fde68a; padding: 6px 10px; border-radius: 8px; font-size: 0.78rem; font-weight: 700; cursor: pointer; flex-shrink: 0;
@@ -91,20 +75,13 @@
       padding: 13px 15px; border-radius: 12px; background: rgba(16, 185, 129, 0.15);
       border: 1px solid rgba(16, 185, 129, 0.4); color: #a7f3d0; font-size: 0.88rem;
     }
-    .meta-list, .checklist { list-style: none; display: grid; gap: 8px; }
+    .meta-list { list-style: none; display: grid; gap: 8px; }
     .meta-list li {
       display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap;
       padding: 9px 12px; border-radius: 10px; background: rgba(8, 13, 11, 0.65);
       border: 1px solid rgba(16, 185, 129, 0.14); font-size: 0.84rem;
     }
-    .checklist li {
-      padding: 8px 11px; border-radius: 9px; background: rgba(16, 185, 129, 0.06);
-      border: 1px solid rgba(16, 185, 129, 0.18); font-size: 0.82rem; color: #d1fae5;
-    }
-    @media (max-width: 820px) {
-      .grid-2 { grid-template-columns: 1fr; }
-      .timeline { grid-template-columns: repeat(2, 1fr); }
-    }
+    @media (max-width: 820px) { .grid-2 { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
@@ -114,12 +91,12 @@
         <span class="badge-k">K</span>
         <div>
           <strong>{{ tenant.company_legal_name or tenant.business_name }}</strong>
-          <div class="muted" style="font-size:0.78rem;">B2B Ön-Panel • <code>/i/{{ tenant.slug }}</code></div>
+          <div class="muted" style="font-size:0.78rem;">B2B Panel • <code>/i/{{ tenant.slug }}</code></div>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
         <span class="status-pill">
-          {% if tenant.is_expired %}Süresi Doldu{% elif tenant.payment_requested %}Ödeme Onayı Bekleniyor{% else %}Modül &amp; Ödeme Aşaması{% endif %}
+          {% if tenant.is_expired %}Süresi Doldu — Yenileme Bekliyor{% elif tenant.payment_requested %}Ödeme Onayı Bekleniyor{% else %}Modül &amp; Ödeme Bekliyor{% endif %}
         </span>
         {% if is_logged_in %}
         <form method="POST" action="{{ url_for('tenant_logout', slug=tenant.slug) }}" style="margin:0;">
@@ -131,37 +108,30 @@
       </div>
     </div>
 
-    <div class="timeline">
-      <div class="step-box done"><small>ADIM 1</small><strong>B2B Üyelik Açıldı</strong></div>
-      <div class="step-box {% if tenant.module_type and tenant.module_type != 'genel' %}done{% else %}active{% endif %}"><small>ADIM 2</small><strong>Modül &amp; Paket Seçimi</strong></div>
-      <div class="step-box {% if notified or tenant.payment_requested %}done{% else %}active{% endif %}"><small>ADIM 3</small><strong>IBAN Bildirimi</strong></div>
-      <div class="step-box"><small>ADIM 4</small><strong>Panel Aktivasyonu</strong></div>
-    </div>
-
     {% if saved_mod %}
     <div class="alert-ok">
-      Modül ve paket tercihiniz kaydedildi: <strong>{{ mod_label }}</strong> ({{ tenant.plan | upper }}). Aktivasyon için IBAN transferi sonrası ödeme bildirimi gönderebilirsiniz.
+      Modül ve paket tercihiniz güncellendi: <strong>{{ mod_label }}</strong> ({{ tenant.plan | upper }}). Aktivasyon için aşağıdan IBAN ödeme bildirimi gönderebilirsiniz.
     </div>
     {% endif %}
 
     {% if notified or tenant.payment_requested %}
     <div class="alert-ok">
-      <strong>Ödeme bildiriminiz iletildi!</strong> Seçtiğiniz <strong>{{ mod_label }}</strong> modülü için ödemeniz onaylandığında paneliniz doğrudan açılacaktır. Notunuzu aşağıdan güncelleyebilirsiniz.
-      {% if tenant.payment_note %}<div style="margin-top:4px;font-size:0.82rem;opacity:0.92;">Kayıtlı not: {{ tenant.payment_note }}</div>{% endif %}
+      <strong>Ödeme bildiriminiz alındı!</strong> Seçtiğiniz <strong>{{ mod_label }}</strong> modülü için ödemeniz kontrol edilip onaylandığında paneliniz otomatik olarak açılacaktır.
+      {% if tenant.payment_note %}<div style="margin-top:4px;font-size:0.82rem;opacity:0.9;">Son notunuz: {{ tenant.payment_note }}</div>{% endif %}
     </div>
     {% endif %}
 
     <div class="grid-2">
       <form class="card" method="POST" action="{{ url_for('notify_iban_payment', slug=tenant.slug) }}">
-        <span class="step-badge">1. Modül &amp; Paket Seçimi</span>
-        <h1>Çalışma Modülünü Seç</h1>
+        <span class="step-badge">1. Adım: Modül &amp; Paket Seçimi</span>
+        <h1>Kullanacağın Modülü Seç</h1>
         <p class="muted">
-          Aktivasyon sonrası panelin seçtiğin modüle göre açılır. Dilersen önce modül/paket seçimini kaydedip sonra ödeme bildirebilirsin.
+          Hesabın aktif edildiğinde seçtiğin modül panele tanımlanır. Ödeme onaylanana kadar seçimini buradan değiştirebilirsin.
         </p>
 
         <div>
           <label for="module_type">Çalışma Modülü</label>
-          <select id="module_type" name="module_type" onchange="syncPlanAndChecklist()" {% if not is_logged_in %}disabled{% endif %}>
+          <select id="module_type" name="module_type" {% if not is_logged_in %}disabled{% endif %}>
             {% for key, label in module_labels.items() %}
             <option value="{{ key }}" {% if tenant.module_type == key %}selected{% endif %}>{{ label }}</option>
             {% endfor %}
@@ -170,13 +140,11 @@
 
         <div>
           <label for="plan">Paket Seçimi</label>
-          <select id="plan" name="plan" onchange="syncPlanAndChecklist()" {% if not is_logged_in %}disabled{% endif %}>
+          <select id="plan" name="plan" {% if not is_logged_in %}disabled{% endif %}>
             <option value="starter" {% if tenant.plan == 'starter' %}selected{% endif %}>Starter — {{ price_starter }}</option>
             <option value="pro" {% if tenant.plan == 'pro' %}selected{% endif %}>Pro — {{ price_pro }} (Masa QR Dahil)</option>
           </select>
         </div>
-
-        <div id="planHint" class="plan-hint"></div>
 
         {% if is_logged_in %}
         <button type="submit" name="action_mode" value="save_module_only" class="btn-secondary">
@@ -186,147 +154,74 @@
 
         <hr style="border:none;border-top:1px solid rgba(16,185,129,0.16);" />
 
-        <span class="step-badge" style="color:#fcd34d;border-color:rgba(245,158,11,0.35);background:rgba(245,158,11,0.12);">2. IBAN Transfer &amp; Bildirim</span>
-        <h2>Ödeme Bilgileri</h2>
+        <span class="step-badge" style="color:#fcd34d;border-color:rgba(245,158,11,0.35);background:rgba(245,158,11,0.12);">2. Adım: IBAN Ödeme &amp; Aktivasyon</span>
+        <h2>IBAN Transferi ve Bildirim</h2>
 
         <div class="iban-box">
           <div style="font-size:0.82rem;color:#e5e7eb;">
-            Alıcı: <strong>{{ iban_holder }}</strong> • Banka: <strong>{{ iban_bank }}</strong>
+            Alıcı: <strong>{{ iban_holder }}</strong><br />
+            Banka: <strong>{{ iban_bank }}</strong>
           </div>
-          <div class="copy-row">
-            <span id="ibanText" class="mono-val">{{ iban_number }}</span>
-            <button type="button" class="copy-btn" onclick="copyText('ibanText', this)">IBAN Kopyala</button>
-          </div>
-          <div class="copy-row">
-            <span id="refText" class="mono-val" style="color:#a7f3d0;">KOLAY-{{ tenant.slug }}-{{ (tenant.plan or 'starter') | upper }}</span>
-            <button type="button" class="copy-btn" onclick="copyText('refText', this)">Açıklama Kopyala</button>
+          <div class="iban-row">
+            <span id="ibanText" class="iban-code">{{ iban_number }}</span>
+            <button type="button" class="copy-btn" onclick="copyIban()">Kopyala</button>
           </div>
           <span class="muted" style="font-size:0.78rem;">
-            Havale/EFT açıklamasına üstteki referans kodunu yazmanız ödemenizin hızlı eşleşmesini sağlar.
+            Transfer açıklamasına <strong>{{ tenant.slug }}</strong> veya firma ünvanınızı yazın.
           </span>
         </div>
 
         <div>
-          <label for="payment_note">Ödeme / Dekont Notu</label>
-          <input id="payment_note" type="text" name="payment_note" value="{{ tenant.payment_note or '' }}" placeholder="Gönderen ad-soyad, banka veya dekont bilgisi..." required />
+          <label for="payment_note">Ödeme / Dekont Açıklaması</label>
+          <input id="payment_note" type="text" name="payment_note" value="{{ tenant.payment_note or '' }}" placeholder="Örn: {{ tenant.company_legal_name or tenant.business_name }} - Havale yapıldı" required />
         </div>
 
         <button type="submit" name="action_mode" value="payment" class="btn-primary">
-          {% if tenant.payment_requested %}Ödeme Bildirimini Güncelle{% else %}Modülü Kaydet ve Ödeme Bildirimi Gönder{% endif %}
+          Modülü Kaydet ve Ödeme Bildirimi Gönder
         </button>
       </form>
 
       <div class="card">
-        <span class="step-badge">Üyelik &amp; Hazırlık</span>
-        <h2>Kurumsal Özet</h2>
+        <span class="step-badge">B2B Üyelik Özeti</span>
+        <h2>Hesap &amp; Kurumsal Bilgiler</h2>
         <ul class="meta-list">
           <li><span class="muted">Firma Ünvanı</span><strong>{{ tenant.company_legal_name or tenant.business_name }}</strong></li>
-          <li><span class="muted">Kısa Ad / Marka</span><strong>{{ tenant.business_name }}</strong></li>
-          <li><span class="muted">Panel Slug</span><code>/i/{{ tenant.slug }}</code></li>
-          {% if tenant.tax_office %}<li><span class="muted">Vergi Dairesi</span><strong>{{ tenant.tax_office }}</strong></li>{% endif %}
-          {% if tenant.tax_number %}<li><span class="muted">Vergi No / VKN</span><strong>{{ tenant.tax_number }}</strong></li>{% endif %}
-          <li><span class="muted">Seçili Modül</span><strong id="summaryMod" style="color:var(--accent-bright);">{{ mod_label }}</strong></li>
-          <li><span class="muted">Seçili Paket</span><strong id="summaryPlan">{{ (tenant.plan or 'starter') | upper }}</strong></li>
-          <li><span class="muted">Varsayılan Masa / Kapasite</span><strong id="summaryCap">{{ tenant.table_count or 8 }}</strong></li>
+          <li><span class="muted">Marka / Kısa Ad</span><strong>{{ tenant.business_name }}</strong></li>
+          <li><span class="muted">Özel Link</span><code>/i/{{ tenant.slug }}</code></li>
+          {% if tenant.tax_office %}
+          <li><span class="muted">Vergi Dairesi</span><strong>{{ tenant.tax_office }}</strong></li>
+          {% endif %}
+          {% if tenant.tax_number %}
+          <li><span class="muted">Vergi No / VKN</span><strong>{{ tenant.tax_number }}</strong></li>
+          {% endif %}
+          <li><span class="muted">Seçili Modül</span><strong style="color:var(--accent-bright);">{{ mod_label }}</strong></li>
+          <li><span class="muted">Seçili Paket</span><strong>{{ tenant.plan | upper }}</strong></li>
         </ul>
 
-        <div>
-          <strong style="font-size:0.88rem;display:block;margin-bottom:8px;">Panel Açılınca Aktif Olacak Ekranlar</strong>
-          <ul id="moduleChecklist" class="checklist"></ul>
+        <div class="iban-box" style="background:rgba(16,185,129,0.06);border-color:rgba(16,185,129,0.24);">
+          <strong style="font-size:0.86rem;color:var(--accent-bright);">Hızlı Onay İçin WhatsApp</strong>
+          <p class="muted" style="font-size:0.8rem;">
+            Ödeme bildirimini gönderdikten sonra dekontu WhatsApp hattımıza ileterek aktivasyonu hızlandırabilirsin.
+          </p>
+          <a href="https://wa.me/{{ wa_number }}?text={{ ('Merhaba, ' ~ (tenant.company_legal_name or tenant.business_name) ~ ' (' ~ tenant.slug ~ ') B2B hesabi icin ' ~ mod_label ~ ' modulu odemesini yaptim.') | urlencode }}" target="_blank" rel="noopener noreferrer" class="btn-secondary" style="border-color:rgba(34,197,94,0.45);color:#bbf7d0;">
+            WhatsApp'tan Dekont İlet
+          </a>
         </div>
 
-        <a href="https://wa.me/{{ wa_number }}?text={{ ('Merhaba, ' ~ (tenant.company_legal_name or tenant.business_name) ~ ' (' ~ tenant.slug ~ ') B2B hesabi icin odeme bildirimimi gonderdim.') | urlencode }}" target="_blank" rel="noopener noreferrer" class="btn-secondary" style="border-color:rgba(34,197,94,0.45);color:#bbf7d0;">
-          WhatsApp'tan Dekont İlet
-        </a>
         <a href="{{ url_for('index') }}" class="btn-secondary">← Ana Sayfaya Dön</a>
       </div>
     </div>
   </div>
 
   <script>
-    const CHECKLISTS = {
-      "kafe-randevu": [
-        "Tarih, saat ve masa bazlı müşteri rezervasyonlarını panelden yöneteceksin.",
-        "Menü ürünlerini ekleyip Pro pakette veya {{ qr_addon_price }} Masa QR eklentisiyle masa QR kodlarını yazdırabileceksin.",
-        "Mutfak ekranı (KDS) üzerinden gelen sipariş, garson ve hesap isteklerini takip edeceksin."
-      ],
-      "masa-qr": [
-        "Masalara özel QR kod etiketleri oluşturup A4 olarak yazdırabileceksin.",
-        "Müşteriler QR menüden sepetle sipariş verip tek dokunuşla garson/hesap çağırabilecek.",
-        "Gelen tüm masa istekleri panelde ve mutfak (KDS) ekranında anlık düşecek."
-      ],
-      "berber-randevu": [
-        "Müşteriler tarih ve müsait saat seçerek salon randevusu oluşturabilecek.",
-        "Dolu saatler otomatik kilitlenecek, randevu durumlarını tek tıkla güncelleyebileceksin."
-      ],
-      "mobil-saha": [
-        "Saha personeline özel terminal linki açıp canlı konum, pil/şarj durumu ve paket takibi yapabileceksin.",
-        "Saha ekibinin anlık durumlarını ve harita konumlarını panelden izleyeceksin."
-      ],
-      "web-otomasyon": [
-        "Webhook URL, otomatik veri çekme (scraper/API) ve günlük raporlama ayarlarını yönetebileceksin.",
-        "Webhook gönderim loglarını ve günlük rapor geçmişini panelden takip edeceksin."
-      ],
-      "masaustu-otomasyon": [
-        "Barkod okutarak hızlı satış yapacak, stokları anlık düşeceksin.",
-        "Günlük satılan adet ve ciro özetini panelden takip edeceksin."
-      ],
-      "genel": [
-        "Müşteri talep formundan gelen kayıtları durum bazlı yönetebileceksin.",
-        "İhtiyacına göre diğer modüllerden birine geçiş yapabileceksin."
-      ]
-    };
-
-    function syncPlanAndChecklist() {
-      const selMod = document.getElementById("module_type");
-      const selPlan = document.getElementById("plan");
-      const modVal = selMod ? selMod.value : "{{ tenant.module_type or 'genel' }}";
-      const planVal = selPlan ? selPlan.value : "{{ tenant.plan or 'starter' }}";
-
-      const refEl = document.getElementById("refText");
-      if (refEl) refEl.textContent = `KOLAY-{{ tenant.slug }}-${planVal.toUpperCase()}`;
-
-      const sumMod = document.getElementById("summaryMod");
-      if (sumMod && selMod && selMod.selectedIndex >= 0) {
-        sumMod.textContent = selMod.options[selMod.selectedIndex].text;
-      }
-
-      const sumPlan = document.getElementById("summaryPlan");
-      if (sumPlan) sumPlan.textContent = planVal.toUpperCase();
-
-      const sumCap = document.getElementById("summaryCap");
-      if (sumCap) {
-        sumCap.textContent = (modVal === "kafe-randevu" || modVal === "masa-qr") ? "8 Masa (Ayarlanabilir)" : "4 Kapasite (Ayarlanabilir)";
-      }
-
-      const hintEl = document.getElementById("planHint");
-      if (hintEl) {
-        if (modVal === "kafe-randevu" && planVal === "starter") {
-          hintEl.textContent = "Starter paketle masa randevu akışı açılır; Masa QR menü & sipariş eklentisi istersen panelden {{ qr_addon_price }} karşılığı talep edebilirsin.";
-        } else if (planVal === "pro") {
-          hintEl.textContent = "Pro paket seçili: desteklenen modüllerde Masa QR ve tüm gelişmiş panel özellikleri pakete dahildir.";
-        } else {
-          hintEl.textContent = "Starter paket seçili: seçtiğin modülün temel panel ve yönetim akışları aktif edilir.";
-        }
-      }
-
-      const ul = document.getElementById("moduleChecklist");
-      if (ul) {
-        const items = CHECKLISTS[modVal] || CHECKLISTS["genel"];
-        ul.innerHTML = items.map(t => `<li>✓ ${t}</li>`).join("");
-      }
-    }
-
-    function copyText(elId, btn) {
-      const txt = document.getElementById(elId)?.textContent?.trim() || "";
-      navigator.clipboard.writeText(txt).then(() => {
-        const prev = btn.textContent;
+    function copyIban() {
+      const text = document.getElementById("ibanText").textContent.trim();
+      navigator.clipboard.writeText(text).then(() => {
+        const btn = document.querySelector(".copy-btn");
         btn.textContent = "Kopyalandı ✓";
-        setTimeout(() => { btn.textContent = prev; }, 1800);
+        setTimeout(() => { btn.textContent = "Kopyala"; }, 2000);
       });
     }
-
-    syncPlanAndChecklist();
   </script>
 </body>
 </html>
