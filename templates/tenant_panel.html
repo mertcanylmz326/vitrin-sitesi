@@ -1,227 +1,115 @@
-<!DOCTYPE html>
-<html lang="tr">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>{{ tenant.business_name }} — Modül Seçimi &amp; IBAN Ödeme</title>
-  <style>
-    :root {
-      --bg: #080d0b; --bg-soft: #0f1714; --card: rgba(17, 27, 23, 0.94);
-      --text: #f8fafc; --muted: #9ca3af; --accent: #10b981; --accent-bright: #34d399;
-      --accent-2: #f59e0b; --border: rgba(16, 185, 129, 0.24);
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: "Inter", system-ui, -apple-system, sans-serif; }
-    body {
-      background:
-        radial-gradient(circle at 12% 8%, rgba(16, 185, 129, 0.14), transparent 36%),
-        radial-gradient(circle at 88% 16%, rgba(245, 158, 11, 0.10), transparent 38%),
-        var(--bg);
-      color: var(--text); line-height: 1.6; min-height: 100vh; padding: 20px 14px 40px;
-    }
-    .wrap { max-width: 920px; margin: 0 auto; display: grid; gap: 16px; }
-    .topbar {
-      display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap;
-      background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 14px 18px;
-    }
-    .brand { display: flex; align-items: center; gap: 10px; }
-    .badge-k {
-      width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center;
-      font-weight: 900; color: #04130d; background: linear-gradient(135deg, var(--accent-bright), var(--accent-2));
-    }
-    .status-pill {
-      padding: 5px 11px; border-radius: 999px; font-size: 0.78rem; font-weight: 800;
-      background: rgba(245, 158, 11, 0.16); border: 1px solid rgba(245, 158, 11, 0.4); color: #fcd34d;
-    }
-    .grid-2 { display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 16px; align-items: start; }
-    .card {
-      background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 20px;
-      display: grid; gap: 14px;
-    }
-    .step-badge {
-      display: inline-block; font-size: 0.74rem; font-weight: 800; text-transform: uppercase;
-      letter-spacing: 0.06em; color: var(--accent-bright); background: rgba(16, 185, 129, 0.12);
-      border: 1px solid rgba(16, 185, 129, 0.28); padding: 4px 10px; border-radius: 999px; width: fit-content;
-    }
-    h1 { font-size: 1.35rem; line-height: 1.25; }
-    h2 { font-size: 1.08rem; }
-    .muted { color: var(--muted); font-size: 0.86rem; }
-    label { display: block; font-size: 0.84rem; color: #d1d5db; margin-bottom: 5px; font-weight: 600; }
-    input, select, textarea {
-      width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border);
-      background: var(--bg-soft); color: var(--text); font-size: 0.92rem;
-    }
-    .iban-box {
-      background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.36);
-      border-radius: 12px; padding: 14px; display: grid; gap: 8px;
-    }
-    .iban-row {
-      display: flex; align-items: center; justify-content: space-between; gap: 8px;
-      background: rgba(0, 0, 0, 0.35); padding: 9px 11px; border-radius: 9px;
-    }
-    .iban-code { font-family: monospace; font-size: 0.9rem; font-weight: 800; color: #fcd34d; word-break: break-all; }
-    .copy-btn {
-      background: rgba(245, 158, 11, 0.2); border: 1px solid rgba(245, 158, 11, 0.45);
-      color: #fde68a; padding: 6px 10px; border-radius: 8px; font-size: 0.78rem; font-weight: 700; cursor: pointer; flex-shrink: 0;
-    }
-    .btn-primary {
-      padding: 12px 16px; border-radius: 11px; border: none; cursor: pointer; font-weight: 800;
-      font-size: 0.92rem; color: #04130d; background: linear-gradient(135deg, var(--accent-bright), var(--accent-2)); width: 100%;
-    }
-    .btn-secondary {
-      padding: 10px 14px; border-radius: 10px; border: 1px solid var(--border); cursor: pointer;
-      font-weight: 700; font-size: 0.85rem; color: var(--text); background: var(--bg-soft); text-decoration: none; text-align: center;
-    }
-    .alert-ok {
-      padding: 13px 15px; border-radius: 12px; background: rgba(16, 185, 129, 0.15);
-      border: 1px solid rgba(16, 185, 129, 0.4); color: #a7f3d0; font-size: 0.88rem;
-    }
-    .meta-list { list-style: none; display: grid; gap: 8px; }
-    .meta-list li {
-      display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap;
-      padding: 9px 12px; border-radius: 10px; background: rgba(8, 13, 11, 0.65);
-      border: 1px solid rgba(16, 185, 129, 0.14); font-size: 0.84rem;
-    }
-    @media (max-width: 820px) { .grid-2 { grid-template-columns: 1fr; } }
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="topbar">
-      <div class="brand">
-        <span class="badge-k">K</span>
-        <div>
-          <strong>{{ tenant.company_legal_name or tenant.business_name }}</strong>
-          <div class="muted" style="font-size:0.78rem;">B2B Panel • <code>/i/{{ tenant.slug }}</code></div>
-        </div>
-      </div>
-      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-        <span class="status-pill">
-          {% if tenant.is_expired %}Süresi Doldu — Yenileme Bekliyor{% elif tenant.payment_requested %}Ödeme Onayı Bekleniyor{% else %}Modül &amp; Ödeme Bekliyor{% endif %}
+<!-- AYARLAR SEKMESİ (templates/tenant_panel.html -> #pane-settings) -->
+<div id="pane-settings" class="tab-pane {% if start_tab == 'pane-settings' %}active{% endif %}">
+  <div class="panel-grid-2" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;align-items:start;">
+
+    <!-- 1. Kart: İşletme & B2B Kurumsal Bilgiler -->
+    <form class="panel-card" method="POST" action="{{ url_for('tenant_update_settings', slug=tenant.slug) }}" enctype="multipart/form-data" style="display:grid;gap:12px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+        <h3 style="font-size:1.05rem;">İşletme &amp; B2B Kurumsal Bilgiler</h3>
+        <span style="font-size:0.75rem;padding:4px 10px;border-radius:999px;background:rgba(16,185,129,0.14);color:#34d399;border:1px solid rgba(16,185,129,0.3);font-weight:700;">
+          Aktif Üyelik
         </span>
-        {% if is_logged_in %}
-        <form method="POST" action="{{ url_for('tenant_logout', slug=tenant.slug) }}" style="margin:0;">
-          <button type="submit" class="btn-secondary">Çıkış</button>
-        </form>
-        {% else %}
-        <a href="{{ url_for('tenant_login', slug=tenant.slug) }}" class="btn-secondary">Panel Girişi</a>
+      </div>
+
+      <div>
+        <label for="company_legal_name">Firma Ünvanı</label>
+        <input id="company_legal_name" type="text" name="company_legal_name" value="{{ tenant.company_legal_name or tenant.business_name }}" placeholder="Örn: Düzgünler Gıda Ltd. Şti." />
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div>
+          <label for="tax_office">Vergi Dairesi</label>
+          <input id="tax_office" type="text" name="tax_office" value="{{ tenant.tax_office or '' }}" placeholder="Örn: Ümraniye" />
+        </div>
+        <div>
+          <label for="tax_number">Vergi No / VKN</label>
+          <input id="tax_number" type="text" name="tax_number" value="{{ tenant.tax_number or '' }}" placeholder="Örn: 1234567890" />
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div>
+          <label for="whatsapp_number">WhatsApp / Telefon</label>
+          <input id="whatsapp_number" type="text" name="whatsapp_number" value="{{ tenant.whatsapp_number or '' }}" placeholder="05xx xxx xx xx" />
+        </div>
+        <div>
+          <label for="table_count">Masa / Kapasite Sayısı</label>
+          <input id="table_count" type="number" name="table_count" min="1" max="200" value="{{ tenant.table_count or 8 }}" />
+        </div>
+      </div>
+
+      <div>
+        <label for="logo">İşletme Logosu (JPG / PNG / WEBP — Maks. 4 MB)</label>
+        <input id="logo" type="file" name="logo" accept=".jpg,.jpeg,.png,.webp" />
+        {% if tenant.logo_filename %}
+        <div style="margin-top:8px;display:flex;align-items:center;gap:10px;">
+          <img src="{{ url_for('serve_tenant_logo', tenant_id=tenant.id, filename=tenant.logo_filename) }}" alt="Logo" style="height:42px;border-radius:8px;border:1px solid rgba(16,185,129,0.3);" />
+          <span style="font-size:0.78rem;color:#9ca3af;">Mevcut logo yüklü</span>
+        </div>
         {% endif %}
       </div>
-    </div>
 
-    {% if saved_mod %}
-    <div class="alert-ok">
-      Modül ve paket tercihiniz güncellendi: <strong>{{ mod_label }}</strong> ({{ tenant.plan | upper }}). Aktivasyon için aşağıdan IBAN ödeme bildirimi gönderebilirsiniz.
-    </div>
-    {% endif %}
+      <button type="submit" class="btn-primary" style="width:100%;">Kurumsal Bilgileri &amp; Ayarları Kaydet</button>
+    </form>
 
-    {% if notified or tenant.payment_requested %}
-    <div class="alert-ok">
-      <strong>Ödeme bildiriminiz alındı!</strong> Seçtiğiniz <strong>{{ mod_label }}</strong> modülü için ödemeniz kontrol edilip onaylandığında paneliniz otomatik olarak açılacaktır.
-      {% if tenant.payment_note %}<div style="margin-top:4px;font-size:0.82rem;opacity:0.9;">Son notunuz: {{ tenant.payment_note }}</div>{% endif %}
-    </div>
-    {% endif %}
-
-    <div class="grid-2">
-      <form class="card" method="POST" action="{{ url_for('notify_iban_payment', slug=tenant.slug) }}">
-        <span class="step-badge">1. Adım: Modül &amp; Paket Seçimi</span>
-        <h1>Kullanacağın Modülü Seç</h1>
-        <p class="muted">
-          Hesabın aktif edildiğinde seçtiğin modül panele tanımlanır. Ödeme onaylanana kadar seçimini buradan değiştirebilirsin.
-        </p>
-
-        <div>
-          <label for="module_type">Çalışma Modülü</label>
-          <select id="module_type" name="module_type" {% if not is_logged_in %}disabled{% endif %}>
-            {% for key, label in module_labels.items() %}
-            <option value="{{ key }}" {% if tenant.module_type == key %}selected{% endif %}>{{ label }}</option>
-            {% endfor %}
-          </select>
-        </div>
-
-        <div>
-          <label for="plan">Paket Seçimi</label>
-          <select id="plan" name="plan" {% if not is_logged_in %}disabled{% endif %}>
-            <option value="starter" {% if tenant.plan == 'starter' %}selected{% endif %}>Starter — {{ price_starter }}</option>
-            <option value="pro" {% if tenant.plan == 'pro' %}selected{% endif %}>Pro — {{ price_pro }} (Masa QR Dahil)</option>
-          </select>
-        </div>
-
-        {% if is_logged_in %}
-        <button type="submit" name="action_mode" value="save_module_only" class="btn-secondary">
-          Modül &amp; Paket Seçimini Kaydet
-        </button>
-        {% endif %}
-
-        <hr style="border:none;border-top:1px solid rgba(16,185,129,0.16);" />
-
-        <span class="step-badge" style="color:#fcd34d;border-color:rgba(245,158,11,0.35);background:rgba(245,158,11,0.12);">2. Adım: IBAN Ödeme &amp; Aktivasyon</span>
-        <h2>IBAN Transferi ve Bildirim</h2>
-
-        <div class="iban-box">
-          <div style="font-size:0.82rem;color:#e5e7eb;">
-            Alıcı: <strong>{{ iban_holder }}</strong><br />
-            Banka: <strong>{{ iban_bank }}</strong>
+    <!-- 2. Kart: Aktif Modül, Paket & Cihaz Erişimi -->
+    <div style="display:grid;gap:16px;">
+      <div class="panel-card" style="display:grid;gap:10px;">
+        <h3 style="font-size:1.05rem;">Aktif Modül &amp; Paket Durumu</h3>
+        <div style="display:grid;gap:8px;font-size:0.86rem;">
+          <div style="display:flex;justify-content:space-between;padding:9px 12px;border-radius:10px;background:rgba(8,13,11,0.65);border:1px solid rgba(16,185,129,0.16);">
+            <span style="color:#9ca3af;">Seçili Modül</span>
+            <strong style="color:#34d399;">{{ mod_label }}</strong>
           </div>
-          <div class="iban-row">
-            <span id="ibanText" class="iban-code">{{ iban_number }}</span>
-            <button type="button" class="copy-btn" onclick="copyIban()">Kopyala</button>
+          <div style="display:flex;justify-content:space-between;padding:9px 12px;border-radius:10px;background:rgba(8,13,11,0.65);border:1px solid rgba(16,185,129,0.16);">
+            <span style="color:#9ca3af;">Paket</span>
+            <strong>{{ tenant.plan | upper }}</strong>
           </div>
-          <span class="muted" style="font-size:0.78rem;">
-            Transfer açıklamasına <strong>{{ tenant.slug }}</strong> veya firma ünvanınızı yazın.
-          </span>
+          <div style="display:flex;justify-content:space-between;padding:9px 12px;border-radius:10px;background:rgba(8,13,11,0.65);border:1px solid rgba(16,185,129,0.16);">
+            <span style="color:#9ca3af;">Vitrin / Müşteri Linki</span>
+            <a href="{{ url_for('tenant_public', slug=tenant.slug) }}" target="_blank" style="color:#fcd34d;font-weight:700;">/i/{{ tenant.slug }}</a>
+          </div>
         </div>
 
-        <div>
-          <label for="payment_note">Ödeme / Dekont Açıklaması</label>
-          <input id="payment_note" type="text" name="payment_note" value="{{ tenant.payment_note or '' }}" placeholder="Örn: {{ tenant.company_legal_name or tenant.business_name }} - Havale yapıldı" required />
-        </div>
-
-        <button type="submit" name="action_mode" value="payment" class="btn-primary">
-          Modülü Kaydet ve Ödeme Bildirimi Gönder
-        </button>
-      </form>
-
-      <div class="card">
-        <span class="step-badge">B2B Üyelik Özeti</span>
-        <h2>Hesap &amp; Kurumsal Bilgiler</h2>
-        <ul class="meta-list">
-          <li><span class="muted">Firma Ünvanı</span><strong>{{ tenant.company_legal_name or tenant.business_name }}</strong></li>
-          <li><span class="muted">Marka / Kısa Ad</span><strong>{{ tenant.business_name }}</strong></li>
-          <li><span class="muted">Özel Link</span><code>/i/{{ tenant.slug }}</code></li>
-          {% if tenant.tax_office %}
-          <li><span class="muted">Vergi Dairesi</span><strong>{{ tenant.tax_office }}</strong></li>
-          {% endif %}
-          {% if tenant.tax_number %}
-          <li><span class="muted">Vergi No / VKN</span><strong>{{ tenant.tax_number }}</strong></li>
-          {% endif %}
-          <li><span class="muted">Seçili Modül</span><strong style="color:var(--accent-bright);">{{ mod_label }}</strong></li>
-          <li><span class="muted">Seçili Paket</span><strong>{{ tenant.plan | upper }}</strong></li>
-        </ul>
-
-        <div class="iban-box" style="background:rgba(16,185,129,0.06);border-color:rgba(16,185,129,0.24);">
-          <strong style="font-size:0.86rem;color:var(--accent-bright);">Hızlı Onay İçin WhatsApp</strong>
-          <p class="muted" style="font-size:0.8rem;">
-            Ödeme bildirimini gönderdikten sonra dekontu WhatsApp hattımıza ileterek aktivasyonu hızlandırabilirsin.
+        {% if tenant.module_type == 'kafe-randevu' and not qr_unlocked %}
+        <div style="margin-top:6px;padding:12px;border-radius:12px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.34);display:grid;gap:8px;">
+          <strong style="font-size:0.86rem;color:#fcd34d;">Masa QR Eklentisi Aç ({{ qr_addon_price }})</strong>
+          <p style="font-size:0.8rem;color:#d1d5db;">
+            IBAN: <code>{{ iban_number }}</code> ({{ iban_holder }})
           </p>
-          <a href="https://wa.me/{{ wa_number }}?text={{ ('Merhaba, ' ~ (tenant.company_legal_name or tenant.business_name) ~ ' (' ~ tenant.slug ~ ') B2B hesabi icin ' ~ mod_label ~ ' modulu odemesini yaptim.') | urlencode }}" target="_blank" rel="noopener noreferrer" class="btn-secondary" style="border-color:rgba(34,197,94,0.45);color:#bbf7d0;">
-            WhatsApp'tan Dekont İlet
-          </a>
+          {% if addon_notified or tenant.qr_addon_requested %}
+          <div style="font-size:0.8rem;color:#a7f3d0;">Masa QR eklenti talebiniz alındı, onay bekleniyor.</div>
+          {% else %}
+          <form method="POST" action="{{ url_for('tenant_request_qr_addon', slug=tenant.slug) }}" style="display:grid;gap:8px;">
+            <input type="text" name="qr_addon_note" placeholder="Ödeme açıklama notu..." required />
+            <button type="submit" class="btn-secondary" style="width:100%;">Masa QR Ödeme Bildirimi Gönder</button>
+          </form>
+          {% endif %}
         </div>
-
-        <a href="{{ url_for('index') }}" class="btn-secondary">← Ana Sayfaya Dön</a>
+        {% endif %}
       </div>
-    </div>
-  </div>
 
-  <script>
-    function copyIban() {
-      const text = document.getElementById("ibanText").textContent.trim();
-      navigator.clipboard.writeText(text).then(() => {
-        const btn = document.querySelector(".copy-btn");
-        btn.textContent = "Kopyalandı ✓";
-        setTimeout(() => { btn.textContent = "Kopyala"; }, 2000);
-      });
-    }
-  </script>
-</body>
-</html>
+      {% if qr_unlocked or tenant.module_type == 'mobil-saha' %}
+      <div class="panel-card" style="display:grid;gap:10px;">
+        <h3 style="font-size:1.05rem;">Cihaz &amp; Ekran Bağlantıları</h3>
+        {% if qr_unlocked %}
+        <div style="font-size:0.82rem;">
+          <span style="color:#9ca3af;display:block;margin-bottom:4px;">Mutfak Ekranı (KDS):</span>
+          <input type="text" readonly value="{{ kds_url }}" onclick="this.select()" style="font-family:monospace;font-size:0.78rem;" />
+        </div>
+        {% endif %}
+        {% if tenant.module_type == 'mobil-saha' %}
+        <div style="font-size:0.82rem;">
+          <span style="color:#9ca3af;display:block;margin-bottom:4px;">Saha Elemanı Terminali:</span>
+          <input type="text" readonly value="{{ saha_url }}" onclick="this.select()" style="font-family:monospace;font-size:0.78rem;" />
+        </div>
+        {% endif %}
+        <form method="POST" action="{{ url_for('tenant_regen_token', slug=tenant.slug) }}">
+          <button type="submit" class="btn-secondary" style="width:100%;">Cihaz Erişim Anahtarını Yenile</button>
+        </form>
+      </div>
+      {% endif %}
+    </div>
+
+  </div>
+</div>
