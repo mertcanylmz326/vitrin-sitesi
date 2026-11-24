@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="csrf-token" content="{{ csrf_token() }}" />
   <title>{{ tenant.business_name }} — Yönetim Paneli</title>
   <style>
     :root { --bg:#080d0b; --card:#121d18; --soft:#0f1714; --text:#f8fafc; --muted:#9ca3af; --accent:#10b981; --bright:#34d399; --amber:#f59e0b; --border:rgba(16,185,129,0.22); }
@@ -47,10 +48,14 @@
     .tab-pane.active { display:grid; }
     .pos-table { width:100%; border-collapse:collapse; font-size:0.85rem; }
     .pos-table th, .pos-table td { padding:9px 8px; border-bottom:1px solid rgba(16,185,129,0.14); text-align:left; }
+    .v2-subpanel { background:var(--soft); border:1px solid rgba(16,185,129,0.15); border-radius:12px; padding:12px; display:grid; gap:8px; }
+    .v2-badge { background:rgba(52,211,153,0.14); color:var(--bright); border:1px solid rgba(52,211,153,0.35); padding:4px 10px; border-radius:999px; font-size:0.78rem; font-weight:700; }
+    .v2-pill-ok { color:#34d399; font-weight:700; }
+    .v2-pill-err { color:#f87171; font-weight:700; }
     @media (max-width:768px) {
       .row-flex > div, .row-flex > button { width:100% !important; min-width:0 !important; }
     }
-      .live-ring-banner { display:none; background:linear-gradient(135deg, rgba(245,158,11,0.22), rgba(16,185,129,0.22)); border:1.5px solid #fbbf24; border-radius:14px; padding:13px 15px; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; animation:pulseRing 1.4s infinite; }
+    .live-ring-banner { display:none; background:linear-gradient(135deg, rgba(245,158,11,0.22), rgba(16,185,129,0.22)); border:1.5px solid #fbbf24; border-radius:14px; padding:13px 15px; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; animation:pulseRing 1.4s infinite; }
     .live-ring-banner.show { display:flex; }
     @keyframes pulseRing { 0%,100% { box-shadow:0 0 0 0 rgba(251,191,36,0.45); } 50% { box-shadow:0 0 18px 2px rgba(251,191,36,0.75); } }
     .bell-btn.muted { border-color:rgba(239,68,68,0.45); color:#fca5a5; }
@@ -66,6 +71,10 @@
       <p style="color:var(--muted);font-size:0.75rem;">{{ mod_label }} • {{ tenant.plan|upper }}</p>
     </div>
     <div style="display:flex;gap:8px;align-items:center;flex-shrink:0;">
+      <span class="v2-badge" id="v2-active-role-badge">
+        Rol: {{ session.get('tenant_role', 'owner') }}
+        {% if session.get('tenant_staff_name') %}({{ session.get('tenant_staff_name') }}){% endif %}
+      </span>
       <button type="button" id="bellToggleBtn" class="btn bell-btn" onclick="toggleSoundBell()" title="Yeni sipariş ve garson çağrısı sesi">🔔 Zil Açık</button>
       <form method="POST" action="{{ url_for('tenant_logout', slug=tenant.slug) }}"><button type="submit" class="btn btn-del">Çıkış</button></form>
     </div>
@@ -113,6 +122,65 @@
         <button type="button" class="pill-tab" onclick="filterTickets('Yeni', this)">Yeni ({{ yeni_count }})</button>
         <button type="button" class="pill-tab" onclick="filterTickets('İnceleniyor', this)">İnceleniyor</button>
         <button type="button" class="pill-tab" onclick="filterTickets('Tamamlandı', this)">Tamamlandı ({{ tamam_count }})</button>
+      </div>
+
+      <!-- FAZ 4: REZERVASYON MÜSAİTLİK KONTROLÜ & DURUM YÖNETİMİ -->
+      <div class="card" id="v2-res-box">
+        <div style="font-size:0.86rem;font-weight:800;color:var(--bright);">🗓️ REZERVASYON MÜSAİTLİK KONTROLÜ &amp; CHECK-İN / NO-SHOW</div>
+        <div class="row-flex">
+          <div style="min-width:150px;">
+            <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Tarih</label>
+            <input type="date" id="v2-res-date" value="{{ selected_date or '' }}" style="width:100%;" />
+          </div>
+          <div style="min-width:120px;">
+            <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Saat</label>
+            <input type="time" id="v2-res-time" value="19:00" style="width:100%;" />
+          </div>
+          <div style="width:110px;">
+            <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Kişi Sayısı</label>
+            <input type="number" id="v2-res-party" min="1" max="50" value="2" style="width:100%;" />
+          </div>
+          <div style="width:110px;">
+            <label style="display:block;font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Süre (Dk)</label>
+            <input type="number" id="v2-res-dur" min="15" max="480" value="90" style="width:100%;" />
+          </div>
+          <button type="button" class="btn btn-ok" id="v2-check-avail-btn">Uygun Masaları Kontrol Et</button>
+        </div>
+        <div class="msg" id="v2-avail-result" style="color:var(--bright);">Tarih, saat, kişi ve süre seçip uygun masaları kontrol edebilirsiniz.</div>
+
+        {% if reservations %}
+        <div style="overflow-x:auto;">
+          <table class="pos-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Tarih / Saat</th>
+                <th>Masa</th>
+                <th>Kişi</th>
+                <th>Durum</th>
+                <th>İşlem</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for r in reservations %}
+              <tr>
+                <td>#{{ r.id }}</td>
+                <td>{{ r.res_date }} {{ r.slot }}</td>
+                <td>{% if r.table_no %}Masa {{ r.table_no }}{% else %}-{% endif %}</td>
+                <td>{{ r.party_size or 2 }}</td>
+                <td><span style="color:var(--amber);font-weight:700;" data-res-status="{{ r.id }}">{{ r.res_status or 'confirmed' }}</span></td>
+                <td style="display:flex;gap:5px;flex-wrap:wrap;">
+                  <button type="button" class="btn" style="padding:5px 8px;font-size:0.75rem;" onclick="v2SetResStatus({{ r.id }}, 'confirmed')">Onayla</button>
+                  <button type="button" class="btn btn-ok" style="padding:5px 8px;font-size:0.75rem;" onclick="v2SetResStatus({{ r.id }}, 'checked_in')">Check-in</button>
+                  <button type="button" class="btn btn-gold" style="padding:5px 8px;font-size:0.75rem;" onclick="v2SetResStatus({{ r.id }}, 'no_show')">No-Show</button>
+                  <button type="button" class="btn btn-del" style="padding:5px 8px;font-size:0.75rem;" onclick="v2SetResStatus({{ r.id }}, 'cancelled')">İptal</button>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% endif %}
       </div>
 
       {% for t in tickets %}
@@ -376,6 +444,35 @@
           {% endfor %}
         </div>
       </div>
+
+      <!-- FAZ 4: WEBHOOK ÇAĞRI LOGLARI & RETRY -->
+      <div class="card" id="v2-webhook-box">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+          <div style="font-size:0.86rem;font-weight:800;color:var(--bright);">🪝 WEBHOOK ÇAĞRI LOGLARI &amp; YENİDEN GÖNDER (RETRY)</div>
+          <button type="button" class="btn" id="v2-wh-refresh-btn">Logları Yenile</button>
+        </div>
+        <div class="msg" id="v2-wh-msg" style="color:#a7f3d0;">Son webhook çağrıları listeleniyor.</div>
+        <div style="overflow-x:auto;">
+          <table class="pos-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Olay</th>
+                <th>Hedef URL</th>
+                <th>HTTP</th>
+                <th>Deneme</th>
+                <th>Yanıt Özeti</th>
+                <th>İşlem</th>
+              </tr>
+            </thead>
+            <tbody id="v2-wh-tbody">
+              <tr>
+                <td colspan="7" style="text-align:center;color:var(--muted);">Loglar yükleniyor...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
     </section>
     {% endif %}
 
@@ -503,6 +600,38 @@
           <button type="submit" class="btn btn-ok">Ayarları Kaydet</button>
         </div>
       </form>
+
+      <!-- FAZ 4: PERSONEL PIN GİRİŞİ & PERSONEL TANIMLAMA -->
+      <div class="card" id="v2-staff-box">
+        <div style="font-size:0.86rem;font-weight:800;color:var(--bright);">🔑 PERSONEL PIN OTURUMU &amp; ROL YÖNETİMİ</div>
+        <div class="menu-admin-grid">
+          <div class="v2-subpanel">
+            <strong style="font-size:0.9rem;color:var(--bright);">Hızlı PIN Girişi</strong>
+            <p style="font-size:0.78rem;color:var(--muted);">Cihaz başında rol değiştirmek için tanımlı PIN kodunu girin.</p>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <input type="password" id="v2-pin-login-input" maxlength="12" placeholder="PIN kodunuz (örn. 1234)" style="flex:1;min-width:140px;" />
+              <button type="button" class="btn btn-ok" id="v2-pin-login-btn">PIN ile Gir</button>
+            </div>
+            <div class="msg" id="v2-pin-login-msg" style="color:#a7f3d0;">Hazır.</div>
+          </div>
+
+          <div class="v2-subpanel">
+            <strong style="font-size:0.9rem;color:var(--bright);">Yeni Personel Tanımla</strong>
+            <p style="font-size:0.78rem;color:var(--muted);">manager, cashier veya waiter rolüyle PIN ekleyin.</p>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <input type="text" id="v2-staff-name" placeholder="Personel adı" style="flex:1;min-width:130px;" />
+              <select id="v2-staff-role" style="min-width:130px;">
+                <option value="cashier">cashier (Kasa)</option>
+                <option value="waiter">waiter (Garson)</option>
+                <option value="manager">manager (Müdür)</option>
+              </select>
+              <input type="password" id="v2-staff-pin" maxlength="12" placeholder="Min. 4 haneli PIN" style="width:140px;" />
+              <button type="button" class="btn btn-ok" id="v2-staff-add-btn">Personel Ekle</button>
+            </div>
+            <div class="msg" id="v2-staff-add-msg" style="color:#a7f3d0;">Hazır.</div>
+          </div>
+        </div>
+      </div>
 
       {% if show_menu_tab or tenant.module_type == 'mobil-saha' %}
       <form class="card" method="POST" action="{{ url_for('tenant_regen_token', slug=tenant.slug) }}" onsubmit="return confirm('Eski mutfak/saha linkleri çalışmayacak. Devam edilsin mi?');">
@@ -635,6 +764,135 @@
     }
     updateBellButton();
     setInterval(pollNewOrders, 8000);
+
+    // FAZ 4 İSTEMCİ İŞLEMLERİ
+    (function() {
+      const SLUG = {{ tenant.slug | tojson }};
+      const CSRF = document.querySelector('meta[name="csrf-token"]')?.content
+        || document.querySelector('input[name="csrf_token"]')?.value
+        || "";
+
+      async function v2Post(url, payload) {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRF-Token": CSRF
+          },
+          body: JSON.stringify(payload || {})
+        });
+        const data = await res.json().catch(() => ({ ok: false, error: "Sunucu yanıtı okunamadı." }));
+        if (!res.ok || data.ok === false) {
+          throw new Error(data.error || `HTTP ${res.status}`);
+        }
+        return data;
+      }
+
+      document.getElementById("v2-check-avail-btn")?.addEventListener("click", async () => {
+        const outEl = document.getElementById("v2-avail-result");
+        if (!outEl) return;
+        outEl.textContent = "Kontrol ediliyor...";
+        try {
+          const data = await v2Post(`/api/tenant/${SLUG}/reservations/check-availability`, {
+            date: document.getElementById("v2-res-date")?.value || "",
+            time: document.getElementById("v2-res-time")?.value || "",
+            party_size: Number(document.getElementById("v2-res-party")?.value || 2),
+            duration_minutes: Number(document.getElementById("v2-res-dur")?.value || 90)
+          });
+          const list = (data.available_tables || []).map(t => `${t.table_name} (${t.capacity} kişilik)`);
+          outEl.textContent = list.length
+            ? `Uygun masalar: ${list.join(", ")} | Önerilen: ${data.recommended_table}`
+            : "Seçilen tarih/saat/kapasite için uygun masa bulunamadı.";
+        } catch (err) {
+          outEl.textContent = `Uyarı: ${err.message}`;
+        }
+      });
+
+      window.v2SetResStatus = async function(resId, status) {
+        try {
+          const data = await v2Post(`/api/tenant/${SLUG}/reservations/${resId}/status`, { status });
+          const badge = document.querySelector(`[data-res-status="${resId}"]`);
+          if (badge && data.reservation) {
+            badge.textContent = data.reservation.res_status;
+          }
+        } catch (err) {
+          alert(err.message);
+        }
+      };
+
+      document.getElementById("v2-pin-login-btn")?.addEventListener("click", async () => {
+        const msgEl = document.getElementById("v2-pin-login-msg");
+        const pin = document.getElementById("v2-pin-login-input")?.value || "";
+        try {
+          const data = await v2Post(`/api/tenant/${SLUG}/staff/pin-login`, { pin_code: pin });
+          if (msgEl) msgEl.textContent = `Giriş başarılı: ${data.staff_name} (${data.role})`;
+          const roleBadge = document.getElementById("v2-active-role-badge");
+          if (roleBadge) roleBadge.textContent = `Rol: ${data.role} (${data.staff_name})`;
+          document.getElementById("v2-pin-login-input").value = "";
+        } catch (err) {
+          if (msgEl) msgEl.textContent = `Hata: ${err.message}`;
+        }
+      });
+
+      document.getElementById("v2-staff-add-btn")?.addEventListener("click", async () => {
+        const msgEl = document.getElementById("v2-staff-add-msg");
+        try {
+          const data = await v2Post(`/api/tenant/${SLUG}/staff/add`, {
+            staff_name: document.getElementById("v2-staff-name")?.value || "",
+            role: document.getElementById("v2-staff-role")?.value || "cashier",
+            pin_code: document.getElementById("v2-staff-pin")?.value || ""
+          });
+          if (msgEl) msgEl.textContent = `Eklendi: ${data.staff.staff_name} [${data.staff.role}]`;
+          document.getElementById("v2-staff-name").value = "";
+          document.getElementById("v2-staff-pin").value = "";
+        } catch (err) {
+          if (msgEl) msgEl.textContent = `Hata: ${err.message}`;
+        }
+      });
+
+      async function loadWebhookLogs() {
+        const tbody = document.getElementById("v2-wh-tbody");
+        if (!tbody) return;
+        try {
+          const res = await fetch(`/api/tenant/${SLUG}/webhooks/logs?limit=25`, { cache: "no-store" });
+          const data = await res.json();
+          const logs = data.logs || [];
+          if (!logs.length) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);">Henüz webhook logu yok.</td></tr>';
+            return;
+          }
+          tbody.innerHTML = logs.map(l => `
+            <tr>
+              <td>#${l.id}</td>
+              <td>${l.event_name}</td>
+              <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${l.target_url}</td>
+              <td class="${l.success ? "v2-pill-ok" : "v2-pill-err"}">${l.status_code || "ERR"}</td>
+              <td>${l.attempt_count}</td>
+              <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${l.response_snippet || ""}</td>
+              <td><button type="button" class="btn" style="padding:5px 9px;font-size:0.75rem;" onclick="v2RetryWebhook(${l.id})">Retry</button></td>
+            </tr>
+          `).join("");
+        } catch (err) {
+          tbody.innerHTML = `<tr><td colspan="7" style="color:#fca5a5;">Loglar yüklenemedi: ${err.message}</td></tr>`;
+        }
+      }
+
+      window.v2RetryWebhook = async function(logId) {
+        const msgEl = document.getElementById("v2-wh-msg");
+        try {
+          const data = await v2Post(`/api/tenant/${SLUG}/webhooks/logs/${logId}/retry`, {});
+          if (msgEl) msgEl.textContent = `Log #${logId} yeniden gönderildi (Deneme #${data.attempt_count}): ${data.info}`;
+          await loadWebhookLogs();
+        } catch (err) {
+          if (msgEl) msgEl.textContent = `Retry hatası: ${err.message}`;
+        }
+      };
+
+      document.getElementById("v2-wh-refresh-btn")?.addEventListener("click", loadWebhookLogs);
+      if (document.getElementById("v2-wh-tbody")) {
+        loadWebhookLogs();
+      }
+    })();
 
     {% if tenant.module_type == 'mobil-saha' %}
     const AGENT_DEL_BASE = "{{ url_for('panel_saha_delete', slug=tenant.slug, agent_id=0) }}";
