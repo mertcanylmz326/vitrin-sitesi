@@ -281,8 +281,36 @@ def clean_text(value, limit):
     return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", (value or "").strip())[:limit]
 
 
-def hash_pin(pin_code: str) -> str:
+def _legacy_pin_hash(pin_code: str) -> str:
     return hashlib.sha256(str(pin_code or "").strip().encode("utf-8")).hexdigest()
+
+
+def hash_pin(pin_code: str) -> str:
+    # Tuzlu hash (pbkdf2). Sutun genisligi (128) icinde kalir.
+    return generate_password_hash(str(pin_code or "").strip(), method="pbkdf2:sha256:200000")
+
+
+def verify_pin(stored: str, pin_code: str) -> bool:
+    pin = str(pin_code or "").strip()
+    stored = stored or ""
+    if re.fullmatch(r"[0-9a-f]{64}", stored):  # eski (tuzsuz) kayitlar
+        return hmac.compare_digest(stored, _legacy_pin_hash(pin))
+    try:
+        return check_password_hash(stored, pin)
+    except Exception:
+        return False
+
+
+def safe_int(value, default, lo=None, hi=None):
+    try:
+        v = int(str(value).strip())
+    except (TypeError, ValueError):
+        v = default
+    if lo is not None:
+        v = max(lo, v)
+    if hi is not None:
+        v = min(hi, v)
+    return v
 
 
 _rl_store = {}
@@ -908,7 +936,7 @@ def get_field_agents(tenant_id):
             "longitude": r["longitude"] or "",
             "updated_str": upd.strftime("%d.%m.%Y %H:%M:%S") if upd else "-",
             "age_sec": age,
-            "online": age < 150,
+            "online": age < 150 and not (r["status_text"] or "").startswith("Çevrimdışı"),
         })
     return out
 
@@ -926,7 +954,7 @@ def get_pos_overview(tenant_id):
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT p.*, COALESCE(s.q, 0) AS sold_today
+                SELECT p.id, p.barcode, p.name, p.price, p.stock, COALESCE(s.q, 0) AS sold_today
                 FROM pos_products p
                 LEFT JOIN (
                     SELECT product_id, SUM(qty) AS q FROM pos_sales
@@ -950,7 +978,7 @@ def get_pos_overview(tenant_id):
             tot = cur.fetchone()
             cur.execute(
                 """SELECT id, name, qty, total, sold_at, voided FROM pos_sales
-                   WHERE tenant_id = %s ORDER BY id DESC LIMIT 15""",
+                   WHERE tenant_id = %s ORDER BY id DESC LIMIT 20""",
                 (tenant_id,),
             )
             sales = [
@@ -1034,13 +1062,54 @@ def ticket_stats(tenant_id):
     }
 
 
-def recent_duplicate(tenant_id, name, service, seconds=60):
+KDS_SERVICES = ["🍽️ QR Masa Siparişi", "🔔 Garson Çağır", "💳 Hesap İste"]
+
+
+def load_kds_orders(tenant_id, limit=100):
+    """Mutfak ekrani: sadece QR siparis / garson / hesap kayitlari (rezervasyonlar haric)."""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT id, tenant_id, name, phone, service, message, status, created_at, created_ts
+                   FROM tickets WHERE tenant_id = %s AND status IN ('Yeni','İnceleniyor')
+                     AND service = ANY(%s)
+                   ORDER BY created_ts ASC NULLS LAST, id ASC LIMIT %s""",
+                (tenant_id, KDS_SERVICES, limit),
+            )
+            rows = cur.fetchall()
+    now = now_tr()
+    out = []
+    for r in rows:
+        d = dict(r)
+        ts = d.get("created_ts")
+        mins = max(0, int((now - ts).total_seconds() // 60)) if ts else 0
+        d["elapsed_mins"] = mins
+        d["urgency_level"] = _urgency(mins)
+        d["kind"] = "garson" if "Garson" in (d.get("service") or "") else ("hesap" if "Hesap" in (d.get("service") or "") else "siparis")
+        out.append(d)
+    return out
+
+
+def kds_stats(tenant_id):
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT COUNT(*) AS c, COALESCE(MAX(created_ts)::text, '') || '|' || COALESCE(MAX(id), '') AS sig
+                   FROM tickets WHERE tenant_id = %s AND status IN ('Yeni','İnceleniyor') AND service = ANY(%s)""",
+                (tenant_id, KDS_SERVICES),
+            )
+            row = cur.fetchone()
+    return int(row["c"]), row["sig"]
+
+
+def recent_duplicate(tenant_id, name, service, seconds=60, message=None):
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """SELECT 1 FROM tickets WHERE tenant_id = %s AND name = %s AND service = %s
-                   AND status IN ('Yeni','İnceleniyor') AND created_ts > %s LIMIT 1""",
-                (tenant_id, name, service, now_tr() - timedelta(seconds=seconds)),
+                   AND status IN ('Yeni','İnceleniyor') AND created_ts > %s
+                   AND (%s::text IS NULL OR message = %s::text) LIMIT 1""",
+                (tenant_id, name, service, now_tr() - timedelta(seconds=seconds), message, message),
             )
             return cur.fetchone() is not None
 
@@ -1494,7 +1563,12 @@ if not SUPERADMIN_ENABLED:
 # Guvenlik katmani: CSRF, basliklar, yetki
 # ---------------------------------------------------------------------------
 CSRF_EXEMPT_ENDPOINTS = {"field_agent_ping"}
-_FORM_POST_RE = re.compile(r"(<form\b[^>]*\bmethod\s*=\s*[\"']?post[\"']?[^>]*>)", re.IGNORECASE)
+# Token zaten formun hemen ardindan varsa tekrar ekleme (form bazli kontrol; sayfa genelinde aramak
+# JS icindeki metinler yuzunden tum formlarin tokensiz kalmasina yol aciyordu).
+_FORM_POST_RE = re.compile(
+    r"(<form\b[^>]*\bmethod\s*=\s*[\"']?post[\"']?[^>]*>)(?!\s*<input[^>]*name=[\"']csrf_token[\"'])",
+    re.IGNORECASE,
+)
 
 
 def csrf_token():
@@ -1526,7 +1600,7 @@ def harden_response(resp):
     resp.headers.setdefault("Referrer-Policy", "same-origin")
     if resp.mimetype == "text/html" and not resp.direct_passthrough and resp.status_code < 400:
         body = resp.get_data(as_text=True)
-        if "<form" in body.lower() and 'name="csrf_token"' not in body.lower():
+        if "<form" in body.lower():
             hidden = f'<input type="hidden" name="csrf_token" value="{csrf_token()}">'
             resp.set_data(_FORM_POST_RE.sub(lambda m: m.group(1) + hidden, body))
         resp.headers["Cache-Control"] = "no-store"
@@ -1679,8 +1753,8 @@ def api_check_reservation_availability(slug):
     data = request.get_json(silent=True) or request.form
     date_str = (data.get("date") or "").strip()
     time_str = (data.get("time") or "").strip()
-    party_size = max(1, int(data.get("party_size") or 2))
-    duration_minutes = int(data.get("duration_minutes") or 90)
+    party_size = safe_int(data.get("party_size"), 2, 1, 200)
+    duration_minutes = safe_int(data.get("duration_minutes"), 90, 15, 480)
 
     try:
         req_start, req_end = _parse_slot_window(date_str, time_str, duration_minutes)
@@ -1752,6 +1826,13 @@ def api_update_reservation_status(slug, res_id):
 
     tid = g.tenant["id"]
     is_active = new_status not in {"cancelled", "no_show"}
+    try:
+        return _apply_reservation_status(tid, res_id, new_status, is_active)
+    except psycopg2.errors.UniqueViolation:
+        return jsonify({"ok": False, "error": "Bu masa/saat artık başka bir kayıtta, durum geri alınamadı."}), 409
+
+
+def _apply_reservation_status(tid, res_id, new_status, is_active):
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -1766,6 +1847,14 @@ def api_update_reservation_status(slug, res_id):
             updated = cur.fetchone()
             if not updated:
                 return jsonify({"ok": False, "error": "Rezervasyon bulunamadi."}), 404
+            # Talep listesindeki durum da senkron kalsin
+            if updated.get("ticket_id"):
+                if new_status == "checked_in":
+                    cur.execute("UPDATE tickets SET status = 'Tamamlandı' WHERE id = %s AND tenant_id = %s", (updated["ticket_id"], tid))
+                elif new_status in {"cancelled", "no_show"}:
+                    cur.execute("UPDATE tickets SET status = 'İptal' WHERE id = %s AND tenant_id = %s", (updated["ticket_id"], tid))
+                elif new_status == "confirmed":
+                    cur.execute("UPDATE tickets SET status = 'Yeni' WHERE id = %s AND tenant_id = %s AND status = 'İptal'", (updated["ticket_id"], tid))
 
             table_no = updated.get("table_no")
             if table_no is not None:
@@ -1836,21 +1925,25 @@ def api_staff_pin_login(slug):
     pin_code = (data.get("pin_code") or "").strip()
     if not pin_code:
         return jsonify({"ok": False, "error": "PIN kodu giriniz."}), 400
+    if rate_limited(f"pin:{request.remote_addr}:{slug}", 8, 600):
+        return jsonify({"ok": False, "error": "Çok fazla deneme. Birkaç dakika sonra tekrar deneyin."}), 429
 
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, staff_name, role
+                SELECT id, staff_name, role, pin_hash
                   FROM tenant_staff
-                 WHERE tenant_id = %s AND pin_hash = %s AND is_active = TRUE
-                 LIMIT 1;
+                 WHERE tenant_id = %s AND is_active = TRUE;
                 """,
-                (g.tenant["id"], hash_pin(pin_code)),
+                (g.tenant["id"],),
             )
-            staff = cur.fetchone()
+            staff = next((r for r in cur.fetchall() if verify_pin(r["pin_hash"], pin_code)), None)
             if not staff:
                 return jsonify({"ok": False, "error": "Hatali PIN kodu."}), 401
+            if re.fullmatch(r"[0-9a-f]{64}", staff["pin_hash"] or ""):
+                # eski tuzsuz kaydi giriste yeni formata yukselt
+                cur.execute("UPDATE tenant_staff SET pin_hash = %s WHERE id = %s", (hash_pin(pin_code), staff["id"]))
 
             session["tenant_role"] = staff["role"]
             session["tenant_staff_name"] = staff["staff_name"]
@@ -1864,7 +1957,7 @@ def api_staff_pin_login(slug):
 @app.get("/api/tenant/<slug>/webhooks/logs")
 @tenant_panel_required
 def api_list_webhook_logs(slug):
-    limit = max(1, min(int(request.args.get("limit") or 30), 100))
+    limit = safe_int(request.args.get("limit"), 30, 1, 100)
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -2109,8 +2202,18 @@ def notify_iban_payment(slug):
         if chosen_plan in {"starter", "pro"}:
             new_plan = chosen_plan
 
-    default_tables = 8 if new_mod in {"kafe-randevu", "masa-qr"} else (tenant.get("table_count") or 4)
-    qr_active = (new_plan == "pro") or bool(tenant.get("qr_addon_active"))
+    can_edit_plan = (not tenant_usable(tenant)) and is_logged_in
+    # Mevcut masa sayisi / QR eklentisi sadece modul-paket degisirse yeniden hesaplanir;
+    # yenileme bildiriminde (aktif uyelik) ayarlar bozulmaz.
+    if can_edit_plan and (new_mod != (tenant.get("module_type") or "genel")):
+        default_tables = 8 if new_mod in {"kafe-randevu", "masa-qr"} else (tenant.get("table_count") or 4)
+    else:
+        default_tables = tenant.get("table_count") or 8
+    if can_edit_plan:
+        # Onaylanmamis hesapta eklenti yoktur: QR hakki sadece Pro paketten gelir
+        qr_active = (new_plan == "pro")
+    else:
+        qr_active = bool(tenant.get("qr_addon_active"))
 
     with get_db() as conn:
         with conn.cursor() as cur:
@@ -2145,19 +2248,19 @@ def notify_iban_payment(slug):
 @app.route("/i/<slug>/mutfak", methods=["GET"])
 def kitchen_kds_screen(slug):
     tenant = device_tenant(slug, tenant_has_qr_access)
-    active_orders = load_tickets(tenant["id"], limit=100, statuses=["Yeni", "İnceleniyor"])
+    active_orders = load_kds_orders(tenant["id"])
+    count, sig = kds_stats(tenant["id"])
     return render_template(
         "kitchen_kds.html", tenant=tenant, active_orders=active_orders,
-        k=request.args.get("k", ""),
-        latest_id=active_orders[0]["id"] if active_orders else "",
+        k=request.args.get("k", ""), sig=sig,
     )
 
 
 @app.route("/i/<slug>/mutfak/poll", methods=["GET"])
 def kds_poll(slug):
     tenant = device_tenant(slug, tenant_has_qr_access)
-    st = ticket_stats(tenant["id"])
-    return jsonify({"active_count": st["active"], "latest_id": st["latest_active_id"]})
+    count, sig = kds_stats(tenant["id"])
+    return jsonify({"active_count": count, "sig": sig})
 
 
 @app.route("/i/<slug>/mutfak/update/<ticket_id>", methods=["POST"])
@@ -2222,9 +2325,11 @@ def field_agent_ping(slug):
             )
             existing = cur.fetchone()
             if existing:
+                # GPS gecici olarak yoksa son bilinen konumu silme
                 cur.execute(
                     """UPDATE field_agents SET active_package=%s, target_customer=%s, battery_level=%s, is_charging=%s,
-                       latitude=%s, longitude=%s, status_text=%s, updated_at=%s WHERE id=%s""",
+                       latitude=COALESCE(NULLIF(%s, ''), latitude), longitude=COALESCE(NULLIF(%s, ''), longitude),
+                       status_text=%s, updated_at=%s WHERE id=%s""",
                     (
                         active_package, target_customer, battery_level, is_charging,
                         lat, lng, status_text, now, existing["id"],
@@ -2307,10 +2412,13 @@ def tenant_qr_order_page(slug):
     menu_items = get_menu_items(tenant["id"])
 
     if request.method == "POST":
-        if rate_limited(f"qr:{request.remote_addr}:{slug}", 40, 600):
+        # Kafe wifi'sinde tum masalar ayni IP'den gelir: limit IP + masa bazli ve genis tutuldu
+        if rate_limited(f"qr:{request.remote_addr}:{slug}:{request.form.get('masa_name', '')[:12]}", 40, 600):
             abort(429)
         action_type = request.form.get("action_type", "siparis").strip()
-        masa_name = sanitize_masa(request.form.get("masa_name"), cap) or preselected_masa or "Masa 1"
+        masa_name = sanitize_masa(request.form.get("masa_name"), cap) or preselected_masa
+        if not masa_name:
+            return redirect(url_for("tenant_qr_order_page", slug=slug, err="masa"))
 
         if action_type in ("garson", "hesap"):
             service = "🔔 Garson Çağır" if action_type == "garson" else "💳 Hesap İste"
@@ -2326,10 +2434,19 @@ def tenant_qr_order_page(slug):
         note = clean_text(request.form.get("message"), 400)
         if note:
             parts.append(f"Not: {note}")
-        if parts:
-            add_ticket(tenant, masa_name, "", "🍽️ QR Masa Siparişi", " | ".join(parts))
+        if not parts:
+            # Sepet de not da bos: sahte "siparisiniz alindi" mesaji gosterme
+            return redirect(url_for("tenant_qr_order_page", slug=slug, masa=masa_name, err="bos"))
+        order_text = " | ".join(parts)
+        # Cift dokunus korumasi: ayni masadan ayni icerik 30 sn icinde tekrar gelirse yeni kayit acma
+        if not recent_duplicate(tenant["id"], masa_name, "🍽️ QR Masa Siparişi", 30, message=order_text):
+            add_ticket(tenant, masa_name, "", "🍽️ QR Masa Siparişi", order_text)
         return redirect(url_for("tenant_qr_order_page", slug=slug, masa=masa_name, sent="1", stype="siparis"))
 
+    err_msg = {
+        "masa": "Masa bilgisi okunamadı. Lütfen masadaki QR kodu tekrar okutun.",
+        "bos": "Sipariş boş görünüyor. Lütfen en az bir ürün seçin veya not yazın.",
+    }.get(request.args.get("err", ""), "")
     sent_msg = ""
     if request.args.get("sent") == "1":
         label = preselected_masa or "Masanız"
@@ -2343,7 +2460,7 @@ def tenant_qr_order_page(slug):
 
     return render_template(
         "tenant_qr_order.html", tenant=tenant, menu_items=menu_items,
-        preselected_masa=preselected_masa, sent=bool(sent_msg), sent_msg=sent_msg,
+        preselected_masa=preselected_masa, sent=bool(sent_msg), sent_msg=sent_msg, err_msg=err_msg,
     )
 
 
@@ -2412,6 +2529,8 @@ def tenant_public(slug):
                     return fail("invalid")
                 table_no = int(table_label.split()[1])
                 guest_count = clean_text(request.form.get("guest_count"), 40)
+                _gm = re.search(r"\d+", guest_count or "")
+                party_size = max(1, min(60, int(_gm.group()))) if _gm else 2
                 menu_pick = [clean_text(m, 120) for m in request.form.getlist("menu_order")[:30] if m.strip()]
                 service = f"Randevu {res_date.isoformat()} {slot_time} — {table_label}"
                 parts = [f"Tarih/Saat: {res_date.isoformat()} {slot_time}", f"Masa: {table_label}"]
@@ -2422,7 +2541,10 @@ def tenant_public(slug):
                 if raw_message:
                     parts.append(f"Not: {raw_message}")
                 message = " | ".join(parts)
-                reservation = {"kind": "table", "res_date": res_date, "slot": slot_time, "table_no": table_no}
+                reservation = {
+                    "kind": "table", "res_date": res_date, "slot": slot_time,
+                    "table_no": table_no, "party_size": party_size,
+                }
             else:
                 service = f"{raw_service or 'Salon Randevu'} ({res_date.isoformat()} {slot_time})"
                 parts = [f"Tarih: {res_date.isoformat()}", f"Saat: {slot_time}"]
@@ -2438,6 +2560,9 @@ def tenant_public(slug):
         try:
             add_ticket(tenant, name, phone, service, message, reservation)
         except SlotTaken:
+            # Cift tiklama: ilk kayit basariliysa kullaniciya hata gosterme
+            if recent_duplicate(tenant["id"], name, service, 120):
+                return redirect(url_for("tenant_public", slug=slug, date=selected.isoformat(), sent="1"))
             return fail("taken")
         return redirect(url_for("tenant_public", slug=slug, date=selected.isoformat(), sent="1"))
 
@@ -2529,11 +2654,13 @@ def tenant_panel(slug):
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, ticket_id, kind, res_date, slot, table_no, res_status, duration_minutes, party_size, is_active
-                  FROM reservations
-                 WHERE tenant_id = %s
-                 ORDER BY res_date DESC, slot DESC, id DESC
-                 LIMIT 50;
+                SELECT r.id, r.ticket_id, r.kind, r.res_date, r.slot, r.table_no, r.res_status,
+                       r.duration_minutes, r.party_size, r.is_active, t.name AS cust_name, t.phone AS cust_phone
+                  FROM reservations r
+                  LEFT JOIN tickets t ON t.id = r.ticket_id
+                 WHERE r.tenant_id = %s AND r.res_date >= CURRENT_DATE - 1
+                 ORDER BY r.res_date ASC, r.slot ASC, r.id ASC
+                 LIMIT 100;
                 """,
                 (tid,),
             )
@@ -2598,6 +2725,8 @@ def tenant_save_bot_config(slug):
     warnings = []
 
     def url_field(name, label):
+        if name not in request.form:
+            return old.get(name, "")
         val = clean_text(request.form.get(name), 400)
         if val and not is_safe_public_url(val):
             warnings.append(f"{label} geçersiz/erişilemez olduğu için kaydedilmedi")
@@ -2605,16 +2734,18 @@ def tenant_save_bot_config(slug):
         return val
 
     def secret_field(name):
+        if request.form.get("clear_" + name):
+            return ""
         return clean_text(request.form.get(name), 400) or old.get(name, "")
 
     hour = request.form.get("report_hour", "21:00").strip()
     cfg = {
         "wa_api_url": url_field("wa_api_url", "WhatsApp API URL"),
         "wa_api_token": secret_field("wa_api_token"),
-        "wa_template_name": clean_text(request.form.get("wa_template_name"), 80),
-        "wa_auto_reply": bool(request.form.get("wa_auto_reply")),
+        "wa_template_name": clean_text(request.form.get("wa_template_name"), 80) if "wa_template_name" in request.form else old.get("wa_template_name", ""),
+        "wa_auto_reply": bool(request.form.get("wa_auto_reply")) if "wa_template_name" in request.form else old.get("wa_auto_reply", False),
         "tg_bot_token": secret_field("tg_bot_token"),
-        "tg_chat_id": clean_text(request.form.get("tg_chat_id"), 60),
+        "tg_chat_id": clean_text(request.form.get("tg_chat_id"), 60) if "tg_chat_id" in request.form else old.get("tg_chat_id", ""),
         "tg_notify_enabled": bool(request.form.get("tg_notify_enabled")),
         "scraper_url": url_field("scraper_url", "Veri çekme URL"),
         "webhook_url": url_field("webhook_url", "Webhook URL"),
@@ -2677,21 +2808,25 @@ def tenant_pos_add_product(slug):
     barcode = clean_text(request.form.get("barcode"), 64)
     name = clean_text(request.form.get("name"), 120)
     try:
-        price = round(max(0.0, float(request.form.get("price", 0))), 2)
+        price = round(max(0.0, float(str(request.form.get("price", 0)).replace(",", "."))), 2)
         stock = max(0, int(request.form.get("stock", 0)))
     except ValueError:
         return back_to_panel(slug, "⚠️ Fiyat/stok geçersiz.", "pane-pos")
-    if not barcode or not name or price > 10_000_000:
-        return back_to_panel(slug, "⚠️ Barkod ve ürün adı zorunlu.", "pane-pos")
+    if not barcode or not name or price > 10_000_000 or stock > 10_000_000:
+        return back_to_panel(slug, "⚠️ Barkod ve ürün adı zorunlu, değerler makul aralıkta olmalı.", "pane-pos")
+    add_mode = bool(request.form.get("add_stock"))
     with get_db() as conn:
         with conn.cursor() as cur:
+            stock_expr = "pos_products.stock + EXCLUDED.stock" if add_mode else "EXCLUDED.stock"
             cur.execute(
-                """INSERT INTO pos_products (tenant_id, barcode, name, price, stock) VALUES (%s,%s,%s,%s,%s)
+                f"""INSERT INTO pos_products (tenant_id, barcode, name, price, stock) VALUES (%s,%s,%s,%s,%s)
                    ON CONFLICT (tenant_id, barcode)
-                   DO UPDATE SET name = EXCLUDED.name, price = EXCLUDED.price, stock = EXCLUDED.stock""",
+                   DO UPDATE SET name = EXCLUDED.name, price = EXCLUDED.price, stock = {stock_expr}
+                   RETURNING stock""",
                 (tenant["id"], barcode, name, price, stock),
             )
-    return back_to_panel(slug, f"Ürün kaydedildi: {name} ({barcode})", "pane-pos")
+            final_stock = cur.fetchone()["stock"]
+    return back_to_panel(slug, f"Ürün kaydedildi: {name} ({barcode}) — stok: {final_stock}", "pane-pos")
 
 
 @app.route("/i/<slug>/panel/pos/scan", methods=["POST"])
