@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>KOLAY Otomasyon — Mikro-SaaS &amp; Web Sistemleri</title>
+  <title>KOLAY Otomasyon — B2B Kurumsal &amp; Mikro-SaaS Sistemleri</title>
   <style>
     :root {
       --bg: #080d0b; --bg-soft: #0f1714; --card: rgba(17, 27, 23, 0.92);
@@ -74,11 +74,14 @@
     .card-footer { display: flex; align-items: center; justify-content: space-between; padding: 11px 18px 14px; border-top: 1px solid rgba(156, 163, 175, 0.12); }
     .detail-link { background: transparent; border: none; color: var(--accent-2); font-weight: 700; font-size: 0.88rem; cursor: pointer; }
 
-    .saas-grid { display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 18px; align-items: start; }
+    .saas-grid { display: grid; grid-template-columns: 1.08fr 0.92fr; gap: 18px; align-items: start; }
     .saas-card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 20px; display: grid; gap: 13px; }
+    .b2b-box { background: rgba(16, 185, 129, 0.06); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 12px; padding: 14px; display: grid; gap: 11px; }
+    .b2b-title { font-size: 0.84rem; font-weight: 800; color: var(--accent-bright); display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
     .iban-box { background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.35); border-radius: 12px; padding: 14px; display: grid; gap: 6px; }
     .iban-code { font-family: monospace; font-size: 0.88rem; font-weight: 800; color: #fcd34d; background: rgba(0, 0, 0, 0.35); padding: 8px 10px; border-radius: 8px; word-break: break-all; }
     .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
     label { display: block; font-size: 0.84rem; color: #d1d5db; margin-bottom: 5px; font-weight: 600; }
     input, select, textarea { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-soft); color: var(--text); font-size: 0.92rem; }
     .submit-btn { padding: 12px 16px; border-radius: 11px; border: none; cursor: pointer; font-weight: 800; font-size: 0.92rem; color: #04130d; background: linear-gradient(135deg, var(--accent-bright), var(--accent-2)); width: 100%; }
@@ -97,7 +100,7 @@
     footer a { color: var(--muted); text-decoration: none; }
 
     @media (max-width: 860px) {
-      .hero-grid, .saas-grid, .row-2 { grid-template-columns: 1fr; }
+      .hero-grid, .saas-grid, .row-2, .row-3 { grid-template-columns: 1fr; }
       .nav-links { width: 100%; justify-content: flex-start; }
       .hero-actions { flex-direction: column; }
       .hero-actions a, .hero-actions button { width: 100%; }
@@ -117,13 +120,13 @@
       <a href="#anasayfa" class="brand">
         <img src="/images/logo.png" alt="KOLAY Otomasyon" class="brand-logo-img" onerror="if(!this.dataset.fb){this.dataset.fb='1';this.src='/logo.png';}else{this.style.display='none';document.getElementById('fallbackBadge').style.display='grid';}" />
         <span id="fallbackBadge" class="brand-badge" style="display: none;">K</span>
-        <span class="brand-text">KOLAY <small>Mikro-SaaS &amp; Web Sistemleri</small></span>
+        <span class="brand-text">KOLAY <small>B2B Kurumsal &amp; Mikro-SaaS</small></span>
       </a>
       <nav class="nav-links">
         <a href="#anasayfa" class="nav-btn active">Anasayfa</a>
         <a href="#hizmetler" class="nav-btn">Modüller</a>
-        <a href="#saas-basla" class="nav-btn nav-cta">Hesap Aç &amp; IBAN</a>
-        <a href="https://wa.me/{{ wa_number }}?text={{ 'Merhaba KOLAY Otomasyon, IBAN odeme ve paketler hakkinda bilgi almak istiyorum.' | urlencode }}" target="_blank" rel="noopener noreferrer" class="nav-btn nav-wa" aria-label="WhatsApp">
+        <a href="#saas-basla" class="nav-btn nav-cta">B2B Hesap Aç &amp; IBAN</a>
+        <a href="https://wa.me/{{ wa_number }}?text={{ 'Merhaba KOLAY Otomasyon, B2B kurumsal uyelik ve paketler hakkinda bilgi almak istiyorum.' | urlencode }}" target="_blank" rel="noopener noreferrer" class="nav-btn nav-wa" aria-label="WhatsApp">
           <svg class="wp-icon"><use href="#icon-whatsapp"></use></svg>
           <span>WhatsApp</span>
         </a>
@@ -135,15 +138,15 @@
     <section id="anasayfa" class="hero">
       <div class="container hero-grid">
         <div>
-          <div class="badge">IBAN Ödemeli Mikro-SaaS</div>
-          <h1>İşletmen İçin <span>Kendi Panelini Aç</span>, Ödeme Onayıyla Aktif Et</h1>
+          <div class="badge">B2B Kurumsal Üyelik • Cari Limit • Toptan Sipariş</div>
+          <h1>Kurumsal Üyeliğini Aç, <span>B2B Cari &amp; Sipariş</span> Panelini Yönet</h1>
           <p>
-            İşletme hesabını oluştur, seçtiğin modül kilitli olarak tanımlansın, IBAN üzerinden ödemeni yap ve onaylandığında
-            müşteri linkin ile işletme yönetim panelin hemen aktif olsun.
+            VKN/vergi dairesi ve cari limit tanımlı kurumsal hesabını oluştur; toptan sipariş, bayi iskontosu,
+            cari bakiye ve işletme modüllerini tek panelden yönet.
           </p>
           <div class="hero-actions">
-            <a href="#saas-basla" class="btn-primary">İşletme Hesabı Oluştur</a>
-            <a href="https://wa.me/{{ wa_number }}?text={{ 'Merhaba KOLAY Otomasyon, yeni hesap acmak istiyorum.' | urlencode }}" target="_blank" rel="noopener noreferrer" class="btn-wa" aria-label="WhatsApp">
+            <a href="#saas-basla" class="btn-primary">B2B Kurumsal Hesap Oluştur</a>
+            <a href="https://wa.me/{{ wa_number }}?text={{ 'Merhaba KOLAY Otomasyon, B2B kurumsal hesap acmak istiyorum.' | urlencode }}" target="_blank" rel="noopener noreferrer" class="btn-wa" aria-label="WhatsApp">
               <svg class="wp-icon"><use href="#icon-whatsapp"></use></svg>
               <span>WhatsApp</span>
             </a>
@@ -151,11 +154,11 @@
         </div>
 
         <aside class="hero-panel">
-          <div class="panel-title">Paket &amp; Aktivasyon Akışı</div>
+          <div class="panel-title">B2B Üyelik &amp; Paket Akışı</div>
           <ul class="mini-list">
-            <li><span>Starter Paket (Temel Modül)</span><span class="pill">{{ price_starter }}</span></li>
-            <li><span>Pro Paket (Masa QR Dahil)</span><span class="pill-amber">{{ price_pro }}</span></li>
-            <li><span>Starter'da Masa QR Kilidi</span><span class="pill-amber">+{{ qr_addon_price }} Ek Açılım</span></li>
+            <li><span>Starter Paket (B2B / Temel)</span><span class="pill">{{ price_starter }}</span></li>
+            <li><span>Pro Paket (Masa QR &amp; Tam Yetki)</span><span class="pill-amber">{{ price_pro }}</span></li>
+            <li><span>Bayi Segmentleri</span><span class="pill">Standard / Silver / Gold / Ent.</span></li>
             <li><span>Aktivasyon</span><span class="pill">IBAN Onayı Sonrası</span></li>
           </ul>
         </aside>
@@ -166,8 +169,8 @@
       <div class="container">
         <div class="section-head">
           <span>Modüller</span>
-          <h2>İşletmene Uygun Çözümleri İncele</h2>
-          <p>Tüm modüller hazır ve çalışır durumdadır. Kartlara tıklayarak detayları inceleyip doğrudan o modülle hesap açabilirsin.</p>
+          <h2>Kurumsal &amp; Operasyonel Çözümleri İncele</h2>
+          <p>B2B cari/toptan sipariş altyapısından saha ve randevu modüllerine kadar tüm çözümleri inceleyip doğrudan hesap açabilirsin.</p>
         </div>
 
         <div class="services-grid">
@@ -196,14 +199,14 @@
     <section id="saas-basla" class="block">
       <div class="container">
         <div class="section-head">
-          <span>Hesap Açma &amp; IBAN Ödeme</span>
-          <h2>Yeni İşletme Hesabı Oluştur veya Paneline Gir</h2>
-          <p>Starter pakette kafe randevu açarsan Masa QR kısmı panelde kilitli gelir (+{{ qr_addon_price }} ile açılır); Pro pakette ise baştan açıktır.</p>
+          <span>B2B Kurumsal Üyelik &amp; IBAN Ödeme</span>
+          <h2>Kurumsal Üyelik Oluştur veya B2B Paneline Gir</h2>
+          <p>Kurumsal ünvan, vergi bilgileri, bayi kademesi ve cari limit ile hesabını aç; IBAN onayı sonrası B2B panelini kullanmaya başla.</p>
         </div>
 
         {% if created_tenant %}
         <div class="alert-ok" style="margin-bottom: 16px;">
-          <strong>{{ created_tenant.business_name }}</strong> (<code>/i/{{ created_tenant.slug }}</code>) hesabı oluşturuldu!
+          <strong>{{ created_tenant.company_legal_name or created_tenant.business_name }}</strong> (<code>/i/{{ created_tenant.slug }}</code>) B2B hesabı oluşturuldu!
           Durumu: <strong>{% if created_tenant.is_active %}AKTİF{% else %}ÖDEME ONAYI BEKLİYOR{% endif %}</strong>.
           Panel: <a href="{{ url_for('tenant_panel', slug=created_tenant.slug) }}" style="color:#fff;text-decoration:underline;">/i/{{ created_tenant.slug }}/panel</a>
         </div>
@@ -216,28 +219,71 @@
         <div class="saas-grid">
           <form class="saas-card" method="POST" action="{{ url_for('register_tenant') }}">
             <div>
-              <h3 style="font-size: 1.12rem; margin-bottom: 4px;">Yeni İşletme Hesabı Aç</h3>
-              <p style="color: var(--muted); font-size: 0.86rem;">Seçtiğin modül üyelik sonrası panelden değiştirilemez şekilde kilitlenir.</p>
+              <h3 style="font-size: 1.12rem; margin-bottom: 4px;">Yeni B2B Kurumsal Hesabı Aç</h3>
+              <p style="color: var(--muted); font-size: 0.86rem;">Kurumsal üyelik bilgileri ve bayi cari limiti tanımlanır.</p>
             </div>
 
             <div class="row-2">
               <div>
-                <label for="business_name">İşletme Adı</label>
-                <input id="business_name" type="text" name="business_name" placeholder="Örn: Yıldız Kafe" required />
+                <label for="business_name">Kısa Marka / İşletme Adı</label>
+                <input id="business_name" type="text" name="business_name" placeholder="Örn: Düzgünler Tedarik" required />
               </div>
               <div>
                 <label for="slug">Özel URL Adresi (Slug)</label>
-                <input id="slug" type="text" name="slug" placeholder="Örn: yildiz-kafe" />
+                <input id="slug" type="text" name="slug" placeholder="Örn: duzgunler-b2b" />
+              </div>
+            </div>
+
+            <div>
+              <label for="company_legal_name">Resmi Firma Ünvanı (B2B Fatura / Cari)</label>
+              <input id="company_legal_name" type="text" name="company_legal_name" placeholder="Örn: Düzgünler Gıda ve Tedarik Ltd. Şti." />
+            </div>
+
+            <div class="b2b-box">
+              <div class="b2b-title">
+                <span>Kurumsal Vergi &amp; Cari Limit Bilgileri</span>
+                <span class="pill">B2B Cari Aktif</span>
+              </div>
+
+              <div class="row-2">
+                <div>
+                  <label for="tax_office">Vergi Dairesi</label>
+                  <input id="tax_office" type="text" name="tax_office" placeholder="Örn: Ümraniye" />
+                </div>
+                <div>
+                  <label for="tax_number">Vergi / T.C. No (VKN)</label>
+                  <input id="tax_number" type="text" name="tax_number" placeholder="Örn: 1234567890" />
+                </div>
+              </div>
+
+              <div class="row-3">
+                <div>
+                  <label for="b2b_tier">Bayi Kademesi</label>
+                  <select id="b2b_tier" name="b2b_tier">
+                    <option value="standard">Standard (%0)</option>
+                    <option value="silver">Silver (%5)</option>
+                    <option value="gold">Gold (%10)</option>
+                    <option value="enterprise">Enterprise (%15)</option>
+                  </select>
+                </div>
+                <div>
+                  <label for="credit_limit">Cari Limit (TL)</label>
+                  <input id="credit_limit" type="number" step="100" min="0" name="credit_limit" value="50000" />
+                </div>
+                <div>
+                  <label for="payment_term_days">Vade (Gün)</label>
+                  <input id="payment_term_days" type="number" min="0" max="365" name="payment_term_days" value="30" />
+                </div>
               </div>
             </div>
 
             <div class="row-2">
               <div>
-                <label for="owner_email">E-posta</label>
-                <input id="owner_email" type="email" name="owner_email" placeholder="sahip@isletme.com" required />
+                <label for="owner_email">Kurumsal E-posta</label>
+                <input id="owner_email" type="email" name="owner_email" placeholder="satinalma@firma.com" required />
               </div>
               <div>
-                <label for="whatsapp_number">İşletme WhatsApp (Opsiyonel)</label>
+                <label for="whatsapp_number">Yetkili WhatsApp (Opsiyonel)</label>
                 <input id="whatsapp_number" type="text" name="whatsapp_number" placeholder="05xx xxx xx xx" />
               </div>
             </div>
@@ -250,21 +296,22 @@
               <div>
                 <label for="plan">Paket Seçimi</label>
                 <select id="plan" name="plan">
-                  <option value="starter">Starter — {{ price_starter }} (Masa QR Kilitli)</option>
-                  <option value="pro">Pro — {{ price_pro }} (Tüm Özellikler Açık)</option>
+                  <option value="starter">Starter — {{ price_starter }}</option>
+                  <option value="pro">Pro — {{ price_pro }}</option>
                 </select>
               </div>
             </div>
 
             <div>
-              <label for="module_type">Modül Seçimi (Üyelik Sonrası Kilitlenir)</label>
+              <label for="module_type">Ana Çalışma Modülü</label>
               <select id="module_type" name="module_type">
+                <option value="b2b-ticaret" selected>B2B Kurumsal Üyelik, Toptan Sipariş &amp; Cari</option>
+                <option value="web-otomasyon">Web Panelleri, Formlar &amp; Botlar</option>
+                <option value="masaustu-otomasyon">Masaüstü Kasa, Barkod &amp; Stok Otomasyonu</option>
+                <option value="mobil-saha">Mobil Uygulama &amp; Saha Akışları</option>
                 <option value="kafe-randevu">Kafe &amp; Restoran Masa Randevu + Masa QR</option>
                 <option value="masa-qr">Masa QR Menü, Sipariş &amp; Garson Çağır</option>
                 <option value="berber-randevu">Berber &amp; Kuaför Saat Randevu</option>
-                <option value="mobil-saha">Mobil Uygulama &amp; Saha Akışları</option>
-                <option value="web-otomasyon">Web Panelleri, Formlar &amp; Botlar</option>
-                <option value="masaustu-otomasyon">Masaüstü Kasa, Barkod &amp; Stok Otomasyonu</option>
                 <option value="genel">Genel Talep / Müşteri Formu</option>
               </select>
             </div>
@@ -273,20 +320,20 @@
               <strong style="color: #fcd34d; font-size: 0.88rem;">IBAN Ödeme Bilgileri</strong>
               <span style="font-size: 0.82rem; color: #e5e7eb;">Alıcı: <strong>{{ iban_holder }}</strong> • Banka: {{ iban_bank }}</span>
               <div class="iban-code">{{ iban_number }}</div>
-              <span style="font-size: 0.78rem; color: var(--muted);">Açıklamaya işletme adını yazarak ödeme yapabilirsin.</span>
+              <span style="font-size: 0.78rem; color: var(--muted);">Açıklamaya resmi firma ünvanını veya slug bilgisini yazarak ödeme yapabilirsin.</span>
             </div>
 
-            <button type="submit" class="submit-btn">Hesabı Oluştur (Onaya Gönder)</button>
+            <button type="submit" class="submit-btn">B2B Hesabı Oluştur (Onaya Gönder)</button>
           </form>
 
           <form class="saas-card" method="POST" action="{{ url_for('tenant_quick_login') }}">
             <div>
-              <h3 style="font-size: 1.12rem; margin-bottom: 4px;">İşletme Paneline Giriş</h3>
-              <p style="color: var(--muted); font-size: 0.86rem;">Ödeme durumunu görmek veya aktif panelini yönetmek için giriş yap.</p>
+              <h3 style="font-size: 1.12rem; margin-bottom: 4px;">B2B / İşletme Paneline Giriş</h3>
+              <p style="color: var(--muted); font-size: 0.86rem;">Cari limitini, toptan siparişlerini ve panelini yönetmek için giriş yap.</p>
             </div>
 
             <div>
-              <label for="login_slug">İşletme Slug</label>
+              <label for="login_slug">Kurumsal / İşletme Slug</label>
               <input id="login_slug" type="text" name="slug" placeholder="kolay-vitrin" required />
             </div>
 
@@ -295,11 +342,11 @@
               <input id="login_password" type="password" name="password" required />
             </div>
 
-            <button type="submit" class="btn-secondary" style="width:100%;padding:12px 16px;">İşletme Paneline Gir</button>
+            <button type="submit" class="btn-secondary" style="width:100%;padding:12px 16px;">B2B Paneline Gir</button>
 
             <div class="iban-box">
               <strong style="color: var(--accent-bright); font-size: 0.86rem;">Hızlı Erişim Bilgisi</strong>
-              <span style="font-size: 0.82rem; color: var(--muted);">Örnek müşteri linki: <a href="{{ url_for('tenant_public', slug='kolay-vitrin') }}" style="color: var(--accent-bright);">/i/kolay-vitrin</a></span>
+              <span style="font-size: 0.82rem; color: var(--muted);">Örnek vitrin / B2B linki: <a href="{{ url_for('tenant_public', slug='kolay-vitrin') }}" style="color: var(--accent-bright);">/i/kolay-vitrin</a></span>
             </div>
           </form>
         </div>
@@ -309,11 +356,11 @@
 
   <footer>
     <div class="container footer-inner">
-      <span>© 2026 KOLAY Otomasyon Mikro-SaaS</span>
+      <span>© 2026 KOLAY Otomasyon B2B &amp; Mikro-SaaS</span>
       <span>
         <a href="#anasayfa">Anasayfa</a> •
         <a href="#hizmetler">Modüller</a> •
-        <a href="#saas-basla">Hesap Aç</a>
+        <a href="#saas-basla">B2B Hesap Aç</a>
       </span>
     </div>
   </footer>
@@ -337,11 +384,11 @@
 
   <script>
     const SERVICES = {{ services | tojson }};
-    let currentModalModule = "kafe-randevu";
+    let currentModalModule = "b2b-ticaret";
     function openServiceModal(id) {
       const item = SERVICES.find(s => s.id === id);
       if (!item) return;
-      currentModalModule = item.module_key || "genel";
+      currentModalModule = item.module_key || "b2b-ticaret";
       document.getElementById("modalTag").textContent = item.tag;
       document.getElementById("modalTitle").textContent = item.title;
       document.getElementById("modalDesc").textContent = item.details;
