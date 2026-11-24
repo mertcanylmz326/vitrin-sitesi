@@ -347,12 +347,13 @@ def _get_pool():
             if _pool is None:
                 host = urlparse(DATABASE_URL).hostname or ""
                 _pool = psycopg2.pool.ThreadedConnectionPool(
-                    1,
-                    int(os.environ.get("DB_POOL_MAX", "8")),
+                    1, int(os.environ.get("DB_POOL_MAX", "8")),
                     dsn=DATABASE_URL,
                     cursor_factory=RealDictCursor,
                     sslmode="require" if "supabase" in host else "prefer",
                     connect_timeout=10,
+                    keepalives=1, keepalives_idle=30,
+                    keepalives_interval=10, keepalives_count=5,
                 )
     return _pool
 
